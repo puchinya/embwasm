@@ -83,6 +83,28 @@ TEST(WasmEngineTest, NormalExecution) {
     EXPECT_EQ(embwasm::g_last_printed_value, 30);
 }
 
+TEST(WasmEngineTest, UserData) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // 初期値は nullptr であること
+    EXPECT_EQ(engine.GetUserData(), nullptr);
+
+    // ユーザーデータを設定できること
+    int mock_user_data = 12345;
+    engine.SetUserData(&mock_user_data);
+    EXPECT_EQ(engine.GetUserData(), &mock_user_data);
+
+    // 変更できること
+    int mock_user_data2 = 67890;
+    engine.SetUserData(&mock_user_data2);
+    EXPECT_EQ(engine.GetUserData(), &mock_user_data2);
+
+    // nullptr を再設定できること
+    engine.SetUserData(nullptr);
+    EXPECT_EQ(engine.GetUserData(), nullptr);
+}
+
 TEST(WasmEngineTest, LoadErrors) {
     embwasm::WasmMemoryPool pool;
     embwasm::WasmEngine engine(pool);

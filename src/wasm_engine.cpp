@@ -193,7 +193,8 @@ WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
 #if EMBWASM_ENABLE_MULTITHREADING
       scheduler_(nullptr),
 #endif
-      max_call_stack_depth_(0), max_stack_depth_(0) {
+      max_call_stack_depth_(0), max_stack_depth_(0),
+      user_data_(nullptr) {
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
         exports_[i] = {};

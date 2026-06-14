@@ -57,6 +57,10 @@ public:
     std::size_t GetMaxCallStackDepth() const noexcept { return max_call_stack_depth_; }
     std::size_t GetMaxStackDepth() const noexcept { return max_stack_depth_; }
 
+    // ユーザーデータの設定と取得（Host関数向け）
+    void* GetUserData() const noexcept { return user_data_; }
+    void SetUserData(void* user_data) noexcept { user_data_ = user_data; }
+
 #if EMBWASM_ENABLE_MULTITHREADING
     WasmThreadContext* GetContext() const noexcept { return ctx_; }
 
@@ -123,6 +127,9 @@ private:
     // 統計情報
     std::size_t max_call_stack_depth_;
     std::size_t max_stack_depth_;
+
+    // ユーザーデータ
+    void* user_data_;
 };
 
 } // namespace embwasm
