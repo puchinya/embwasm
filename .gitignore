@@ -28,3 +28,6 @@ compile_commands.json
 CTestTestfile.cmake
 *_tests.cmake
 *_include.cmake
+wasm_api_static.hpp
+wasm_api_static.cpp
+wasm_api.h

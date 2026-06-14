@@ -10,8 +10,8 @@
   C++側のメインロジック。メモリプール（`WasmMemoryPool`）と実行エンジン（`WasmEngine`）を初期化し、埋め込まれたWASMバイナリを実行します。また、最大ネスト数やスタック深度の統計を表示します。
 * **[host_apis.cpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/host_apis.cpp) / [host_apis.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/host_apis.hpp)**:
   WASM側からインポートされるC++のホストAPIの実体（`PrintChar`, `PrintVal`）。
-* **[module_config.yaml](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/module_config.yaml)**:
-  WASMがインポートする環境関数と、C++側のホスト関数のマッピングを定義する静的構成ファイル。
+* **[hostapi.wit](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/hostapi.wit)**:
+  WASMがインポートする環境関数と、C++側のホスト関数のマッピング、およびインターフェースを定義するファイル。
 * **[wasm/main.c](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/wasm/main.c)**:
   WebAssembly側（C言語）のソースコード。ホストAPIを通じて "Hello" の文字と、数値 "100" を出力する処理が記述されています。
 
@@ -25,7 +25,7 @@ CMakeビルド時に、以下のコード生成（コードジェネレータ）
    * `clang` を用いて [wasm/main.c](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/wasm/main.c) を `main.wasm` バイナリへコンパイルします。
    * [wasm_to_cpp.py](file:///Users/nabeshimamasataka/CLionProjects/embwasm/tools/codegen/wasm_to_cpp.py) により、`main.wasm` からC++形式の静的バイト配列（`main_wasm.cpp` / `main_wasm.hpp`）を生成し、メモリ配置します。
 2. **関数ポインタを排除した直接ディスパッチャの生成**:
-   * [gen_api.py](file:///Users/nabeshimamasataka/CLionProjects/embwasm/tools/codegen/gen_api.py) が [module_config.yaml](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/module_config.yaml) を解析します。
+   * [gen_api.py](file:///Users/nabeshimamasataka/CLionProjects/embwasm/tools/codegen/gen_api.py) が [hostapi.wit](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo/hello/hostapi.wit) を解析します。
    * インポート探索コード（`LookupStaticHostFunctionId`）と、**関数ポインタ（間接呼び出し）を排除して `switch` 文による直接呼び出しを行うディスパッチャ（`DispatchHostFunction`）**が自動生成されます。これにより、スタック消費量を静的に正確に見積もることが可能になります。
 
 ---

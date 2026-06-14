@@ -1,0 +1,16 @@
+package embwasm:threads;
+
+/// @cpp-header: "embwasm_hostmodule_thread.hpp"
+world threads {
+    /// @cpp-func: embwasm::hostmodules::thread::ThreadSpawn
+    import thread-spawn: func(func-idx: i32) -> i32;
+
+    /// @cpp-func: embwasm::hostmodules::thread::ThreadYield
+    import thread-yield: func();
+
+    /// @cpp-func: embwasm::hostmodules::thread::EventWait
+    import event-wait: func(event-id: i32);
+
+    /// @cpp-func: embwasm::hostmodules::thread::EventSignal
+    import event-signal: func(event-id: i32);
+}

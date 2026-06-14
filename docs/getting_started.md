@@ -10,7 +10,7 @@ WASMを実行するまでの基本的な手順は以下の通りです。
 
 ```mermaid
 graph TD
-    A[1. module_config.yaml にインポート関数を定義] --> B[2. wasm_host_apis.hpp にC++前方宣言を追加]
+    A[1. WIT ファイルにインポート関数とメタデータを定義] --> B[2. C++ヘッダーにホスト関数の前方宣言を追加]
     B --> C[3. tools/codegen/gen_api.py を実行して静的検索コードを生成]
     C --> D[4. ホストAPIの実装を追加]
     D --> E[5. メモリプールとエンジンの初期化・WASMバイナリのロード]
@@ -21,17 +21,17 @@ graph TD
 
 ## 2. 各ステップの詳細
 
-### ステップ 1: API設定ファイルの記述
+### ステップ 1: API設定ファイル (WIT) の記述
 WASMモジュール内で呼び出すホストAPIを設定します。
-* **[module_config.yaml](file:///Users/nabeshimamasataka/CLionProjects/embwasm/module_config.yaml)** の `headers` セクションに任意のヘッダーファイル名を追加し、`modules` セクションにモジュール名をキーとしてAPIの対応関係を記述します。
+* **WIT ファイル**（例: `hostapi.wit`）に、`import` 関数と、それに対応するC++関数名（`/// @cpp-func:`）およびインクルードヘッダー（`/// @cpp-header:`）を記述します。
 * 指定したヘッダー（例: **[include/host_apis.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/host_apis.hpp)**）に、ホスト関数のC++プロトタイプ宣言を記述します。
 
 ### ステップ 2: 静的検索コードの生成
-設定ファイルを元に、二分探索用のC++ソースコードを自動生成します。
+WITファイルを元に、二分探索用のC++ソースコードを自動生成します。
 以下のコマンドを実行します。
 
 ```bash
-python3 tools/codegen/gen_api.py
+python3 tools/codegen/gen_api.py hostapi.wit
 ```
 これにより、指定したヘッダー（例: `host_apis.hpp`）を `#include` した、静的ルックアップ処理用の [src/wasm_api_static.cpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src/wasm_api_static.cpp) が生成されます。
 

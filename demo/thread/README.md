@@ -8,8 +8,8 @@
 
 * **[main.cpp](main.cpp)**:
   C++側のメインロジック。`WasmScheduler` を初期化し、WASMバイナリ内の `main` 関数をメインスレッドとして開始します。
-* **[module_config.yaml](module_config.yaml)**:
-  WASMがインポートするスレッド制御API（`thread_spawn`, `thread_yield`, `event_wait`, `event_signal`）とホスト側の関数のマッピングを定義します。
+* **[hostapi.wit](hostapi.wit)**:
+  WASMがインポートするスレッド制御API（`thread_spawn`, `thread_yield`, `event_wait`, `event_signal`）やハローAPIと、ホスト側の関数のマッピングを定義します。
 * **[wasm/main.c](wasm/main.c)**:
   WebAssembly側（C言語）のソースコード。`thread_spawn` でサブスレッドを生成し、`thread_yield` によるコンテキストスイッチや `event_wait`/`event_signal` による同期処理を行います。
 

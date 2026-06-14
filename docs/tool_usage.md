@@ -7,81 +7,62 @@
 ## 1. 概要
 本プロジェクトでは、組み込み環境における実行時メモリ消費の削減と高速検索（`O(log N)`）を両立するため、ホスト関数の登録に静的コードジェネレータを使用します。
 
-Pythonスクリプトが [module_config.yaml](file:///Users/nabeshimamasataka/CLionProjects/embwasm/module_config.yaml) から設定情報を読み込み、探索キー（`module_name`, `field_name`）を辞書順でソートしたうえで、C++ソース・ヘッダーを自動生成します。
+Pythonスクリプトが WIT (WebAssembly Interface Type) ファイルから設定情報を読み込み、探索キー（`module_name`, `field_name`）を辞書順でソートしたうえで、C++ソース・ヘッダーを自動生成します。
 
 ---
 
 ## 2. 前提環境
 * **Python 3.x** がインストールされていること。
-  - `PyYAML` パッケージが利用可能な場合はそれを使用しますが、インストールされていないクリーンな環境でも、Python標準ライブラリのみで動作する簡易フォールバックパーサーが自動的に有効になります。
 
 ---
 
-## 3. 設定ファイル `module_config.yaml` の仕様
+## 3. 設定ファイル (WIT) の仕様
 
-`module_config.yaml` に、インポートするAPIの対応関係をYAML形式で定義します。
+WASM Interface Type (WIT) ファイルを直接インポートします。WIT ファイル内にメタデータとして C++ 関数のマッピング情報を記述することで、インターフェース定義と実装の紐付けを一箇所で管理できます。
 
-### 3.1 基本フォーマット
+### 3.1 基本フォーマット (`hostapi.wit`)
 
-```yaml
-# WASM Host Module Configuration
-# This file maps WASM import module and field names to C++ functions.
+```wit
+package embwasm:demo;
 
-headers:
-  - "host_apis.hpp"
+/// @cpp-header: "host_apis.hpp"
+world hello {
+    /// @cpp-func: embwasm::Print
+    import print: func(val: i32);
 
-modules:
-  env:
-    apis:
-      - field: print_val
-        function: embwasm::PrintVal
-
-      - field: dummy
-        function: embwasm::DummyHostFunc
-
-  wasi:
-    apis:
-      - field: proc_exit
-        function: embwasm::ProcExit
+    /// @cpp-func: embwasm::PrintChar
+    import print-char: func(character: i32);
+}
 ```
 
-### 3.2 キー定義:
-* `headers`: 生成される `.cpp` ファイルにインクルードするヘッダーファイルのリスト。
-* `modules`: モジュール名をキーとするマップ。
-  * `<module_name>`: WASM側でインポート宣言する際のモジュール名（例: `(import "env" "print_val" ...)` の `env`）。
-    * `apis`: そのモジュールに属するAPIエントリのリスト。
-      * `field`: WASM側でインポート宣言する際の関数名（例: `print_val`）。
-      * `function`: C++側で実装する実関数のフルパス（名前空間修飾付き）。
+### 3.2 メタデータタグ
+* `/// @cpp-func: <C++関数名>`: インポート関数に対応する C++ 関数のフルパスを指定します。
+* `/// @cpp-header: <ヘッダー名>`: 生成コードに必要なインクルードヘッダーを指定します（`world` または各 `import` の直前に記述可能）。
+* `/// @wit-import: <WITファイルパス>`: 別の WIT ファイルをインポートします（相対パス）。
+
+WIT 内の `import` 名が `kebab-case`（例: `print-char`）の場合、WASM の慣習に従って自動的に `snake_case`（例: `print_char`）に変換されて登録されます。
 
 ### 3.3 複数ファイルのインポート
 
-`imports:` キーを使って、別の `module_config.yaml` をインポートできます。パスはインポート元ファイルを基準とした **相対パス** で指定します。
+`/// @wit-import:` タグを使って、別の `.wit` ファイルをインポートできます。パスはインポート元ファイルを基準とした **相対パス** で指定します。
 
-```yaml
-# module_config.yaml (エントリポイント)
-imports:
-  - "common/module_config.yaml"   # 共通 API 定義
-  - "extra/module_config.yaml"    # 追加 API 定義
+```wit
+package embwasm:demo;
 
-headers:
-  - "my_host_apis.hpp"
-
-modules:
-  env:
-    apis:
-      - field: my_func
-        function: embwasm::MyFunc
+/// @wit-import: "common.wit"   # 共通 API 定義
+/// @wit-import: "extra.wit"    # 追加 API 定義
+world my-world {
+    // ...
+}
 ```
 
-インポートされたファイル側にも `imports:` / `headers:` / `modules:` を記述できます（多段インポート対応）。
-
 **マージルール:**
-* `headers:` はすべてのファイルから収集され、**重複排除**（最初に現れたものを優先）されます。
-* `modules.<name>.apis:` は `(module, field)` の組み合わせをキーとして**重複排除**されます（最初に定義されたものを優先）。
+* `@cpp-header` はすべてのファイルから収集され、**重複排除**されます。
+* インポート関数は `(module, field)` の組み合わせをキーとして**重複排除**されます。
 * **循環インポート**は自動検出してスキップし、標準エラーへ警告を出力します。
 
 > [!WARNING]
-> ここで指定するホスト関数は、必ず [include/wasm_host_apis.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_host_apis.hpp) にプロトタイプ宣言（前方宣言）を追加してください。宣言がない場合、自動生成された C++ コードのビルド時にコンパイルエラーとなります。
+> ここで指定するホスト関数は、必ず C++ のヘッダーファイルでプロトタイプ宣言（前方宣言）を追加してください。宣言がない場合、自動生成された C++ コードのビルド時にコンパイルエラーとなります。
 
 ---
 
@@ -90,18 +71,20 @@ modules:
 ターミナルまたはビルドスクリプトから以下のように実行します。
 
 ```bash
-# 基本実行 (デフォルトパスで生成)
-python3 tools/codegen/gen_api.py
-
-# 明示的にパスを指定して実行
-# 第1引数: 設定ファイル(YAML)
-# 第2引数: 出力先C++ソースファイル(.cpp)
-# 第3引数: 出力先ヘッダーファイル(.hpp)
+# WIT ファイルを入力として実行
 python3 tools/codegen/gen_api.py \
-  module_config.yaml \
+  hostapi.wit \
   src/wasm_api_static.cpp \
-  include/wasm_api_static.hpp
+  include/wasm_api_static.hpp \
+  wasm/wasm_api.h
 ```
+
+### 4.1 引数の仕様
+* **第1引数**: 設定ファイル (WIT)。
+* **第2引数**: 出力先 C++ ソースファイル (`.cpp`)。
+* **第3引数**: 出力先 C++ ヘッダーファイル (`.hpp`)。
+* **第4引数 (オプション)**: 出力先 WASM クライアント用 C ヘッダーファイル (`.h`)。
+  - 指定した場合、WASM 側（C/C++）でインポート宣言として使用できるヘッダーを自動生成します。
 
 ---
 
@@ -110,6 +93,8 @@ python3 tools/codegen/gen_api.py \
 スクリプト実行後、以下のファイルが上書き（再生成）されます。
 
 1. **[include/wasm_api_static.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_api_static.hpp)**:
-   高速検索インターフェースである `LookupStaticHostFunction` の宣言。
+   高速検索インターフェースである `LookupStaticHostFunctionId` の宣言。
 2. **[src/wasm_api_static.cpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src/wasm_api_static.cpp)**:
    ソート済みの静的APIテーブルの実体および二分探索の実装。
+3. **WASM クライアント用ヘッダー (オプション)**:
+   WASM 側でホスト関数を呼び出すための `__attribute__((import_module(...)))` 付きの C 関数宣言。

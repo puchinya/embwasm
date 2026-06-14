@@ -2,17 +2,18 @@
 # embwasm Demo CMakeLists.txt
 # =============================================================================
 
-set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/module_config.yaml)
+set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/hostapi.wit)
 set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
 set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
 set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
+set(GEN_WASM_H ${CMAKE_CURRENT_SOURCE_DIR}/wasm/wasm_api.h)
 
-# module_config.yaml の変更を検知して自動生成します
+# WIT ファイルの変更を検知して自動生成します
 add_custom_command(
-    OUTPUT ${GEN_CPP} ${GEN_H}
-    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H}
+    OUTPUT ${GEN_CPP} ${GEN_H} ${GEN_WASM_H}
+    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H} ${GEN_WASM_H}
     DEPENDS ${DEMO_CONFIG_FILE} ${GEN_SCRIPT}
-    COMMENT "Generating static API lookup tables for demo from module_config.yaml"
+    COMMENT "Generating static API lookup tables and WASM client header from hostapi.wit"
 )
 
 # 1. WebAssembly用の clang を探索 (Homebrewの LLVM などを優先)
@@ -50,7 +51,7 @@ set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.hpp)
 add_custom_command(
     OUTPUT ${WASM_OUT}
     COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -Wl,--export=thread2 -o ${WASM_OUT} ${WASM_SRC}
-    DEPENDS ${WASM_SRC}
+    DEPENDS ${WASM_SRC} ${GEN_WASM_H}
     COMMENT "Compiling main.c to WASM using ${WASM_CLANG}"
 )
 

@@ -1,9 +1,4 @@
-// ホストAPIの宣言 (envモジュールからインポート)
-__attribute__((import_module("env"), import_name("print_char")))
-void print_char(int character);
-
-__attribute__((import_module("env"), import_name("print")))
-void print_val(int val);
+#include "wasm_api.h"
 
 // エクスポートされる関数
 __attribute__((export_name("main")))

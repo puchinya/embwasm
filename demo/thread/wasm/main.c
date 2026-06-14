@@ -1,21 +1,4 @@
-// ホストAPIの宣言 (envモジュールからインポート)
-__attribute__((import_module("env"), import_name("print_char")))
-void print_char(int character);
-
-__attribute__((import_module("env"), import_name("print")))
-void print_val(int val);
-
-__attribute__((import_module("env"), import_name("thread_spawn")))
-int thread_spawn(int func_idx);
-
-__attribute__((import_module("env"), import_name("thread_yield")))
-void thread_yield(void);
-
-__attribute__((import_module("env"), import_name("event_wait")))
-void event_wait(int event_id);
-
-__attribute__((import_module("env"), import_name("event_signal")))
-void event_signal(int event_id);
+#include "wasm_api.h"
 
 // スレッド2の本体
 __attribute__((export_name("thread2")))

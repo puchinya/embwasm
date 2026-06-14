@@ -1,0 +1,14 @@
+package embwasm:demo;
+
+/// @cpp-header: "../hello/host_apis.hpp"
+/// @wit-import: "../../wasm_host_modules/threads/threads.wit"
+world host-api {
+    /// @cpp-func: embwasm::Print
+    import print: func(val: i32);
+
+    /// @cpp-func: embwasm::PrintChar
+    import print-char: func(character: i32);
+
+    /// @cpp-func: embwasm::PrintVal
+    import print-val: func(val: i32);
+}

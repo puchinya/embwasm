@@ -90,23 +90,21 @@ WasmResult WriteLedValue(
 } // namespace embwasm
 ```
 
-### 手順 2: YAML設定ファイルへの記述
+### 手順 2: WITファイルへの記述
 
-定義したホストAPIをエンジンに認識させるため、`module_config.yaml` にマッピング情報を記述します。
+定義したホストAPIをエンジンに認識させるため、WIT (WebAssembly Interface Type) ファイルにマッピング情報を記述します。
 
-```yaml
-# module_config.yaml
-headers:
-  - "sensor_apis.hpp"  # 手順1で定義した関数の宣言を含むヘッダー
+```wit
+package embwasm:sensor;
 
-modules:
-  env:
-    apis:
-      - field: get_sensor_value
-        function: embwasm::GetSensorValue
+/// @cpp-header: "sensor_apis.hpp"  // 手順1で定義した関数の宣言を含むヘッダー
+world sensor-api {
+    /// @cpp-func: embwasm::GetSensorValue
+    import get-sensor-value: func() -> i32;
 
-      - field: write_led_value
-        function: embwasm::WriteLedValue
+    /// @cpp-func: embwasm::WriteLedValue
+    import write-led-value: func(val: i32);
+}
 ```
 
 ### 手順 3: コード生成の実行
@@ -114,7 +112,7 @@ modules:
 `tools/codegen/gen_api.py` を実行して、静的なルックアップテーブルとディスパッチャを自動生成します。
 
 ```bash
-python3 tools/codegen/gen_api.py module_config.yaml
+python3 tools/codegen/gen_api.py sensor.wit
 ```
 
 これにより、ビルド時に $O(\log N)$ の二分探索でホスト関数が解決されるようになります。詳細は [docs/tool_usage.md](tool_usage.md) を参照してください。

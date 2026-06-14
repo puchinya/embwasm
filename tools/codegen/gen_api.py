@@ -1,29 +1,98 @@
 #!/usr/bin/env python3
 """gen_api.py - WASM Host API スタティック C++ コード生成スクリプト
 
-設定ファイル (module_config.yaml) を読み込み、ホスト関数のルックアップテーブルと
+WIT (WebAssembly Interface Type) ファイルを読み込み、ホスト関数のルックアップテーブルと
 ディスパッチャを自動生成します。
 
-設定ファイルのフォーマット:
-    imports:                          # 他の module_config.yaml をインポート（相対パス）
-      - "common/module_config.yaml"
-
-    headers:                          # 生成 .cpp にインクルードするヘッダー
-      - "host_apis.h"
-
-    modules:                          # モジュール名をキーにした API 定義
-      env:
-        apis:
-          - field: print_val
-            function: embwasm::PrintVal
-      wasi:
-        apis:
-          - field: proc_exit
-            function: embwasm::ProcExit
+WIT ファイルのメタデータタグ:
+    /// @cpp-func: <C++関数名>    # インポート関数に対応する C++ 関数のフルパス
+    /// @cpp-header: <ヘッダー名> # インクルードするヘッダーファイル
+    /// @wit-import: <WITファイル> # 別の WIT ファイルをインポート (相対パス)
 """
 
 import os
 import sys
+import re
+
+
+# ---------------------------------------------------------------------------
+# WIT パーサー (簡易版)
+# ---------------------------------------------------------------------------
+
+def _parse_wit(wit_path):
+    """WIT ファイルをパースして (imports, headers, apis_flat) を返す。
+    WIT にはメタデータとして C++ 関数名を埋め込む形式を想定。
+    例:
+      /// @cpp-func: embwasm::Print
+      import print: func(val: i32);
+    """
+    apis_flat = []
+    headers = []
+    
+    # 簡単なパース処理
+    current_module = "env" # WITのデフォルトモジュール名としてenvを仮定 (後で調整可能)
+    
+    with open(wit_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # メタ情報の抽出 (ファイル全体から)
+    # @cpp-header の抽出
+    header_matches = re.findall(r"^///\s*@cpp-header:\s*[\"']?([\w./-]+)[\"']?", content, re.MULTILINE)
+    for h in header_matches:
+        if h not in headers:
+            headers.append(h)
+
+    # @wit-import の抽出
+    wit_imports = re.findall(r"^///\s*@wit-import:\s*[\"']?([\w./-]+\.wit)[\"']?", content, re.MULTILINE)
+
+    lines = content.splitlines()
+    cpp_func = None
+    for line in lines:
+        line = line.strip()
+        
+        # Doc comment からメタ情報を抽出 (行単位)
+        if line.startswith("///"):
+            match = re.search(r"@cpp-func:\s*([\w:]+)", line)
+            if match:
+                cpp_func = match.group(1)
+            continue
+            
+        # import 行を抽出
+        if line.startswith("import "):
+            # 例: import print: func(val: i32);
+            # フィールド名を取得
+            parts = line.split(":")
+            field_name_raw = parts[0].replace("import ", "").strip()
+                
+            # kebab-case を snake_case に変換 (WASMの慣習)
+            field_name = field_name_raw.replace("-", "_")
+                
+            # シグネチャ情報の簡易抽出 (C宣言生成用)
+            # import print-char: func(character: i32);
+            #                    ^--- ここから
+            sig_part = line.split(":", 1)[1].strip() if ":" in line else ""
+                
+            if cpp_func:
+                apis_flat.append({
+                    'module': current_module,
+                    'field': field_name,
+                    'function': cpp_func,
+                    'wit_field': field_name_raw,
+                    'wit_sig': sig_part
+                })
+                cpp_func = None
+            else:
+                # C++関数名が指定されていない場合は、警告を出すかデフォルト推論
+                print(f"Warning: No @cpp-func specified for import '{field_name}' in {wit_path}", file=sys.stderr)
+        
+        # world 名をモジュール名として使う検討もできるが、
+        # 現状の embwasm は import_module を重視するため、
+        # メタデータで指定できるようにするのが良さそう。
+        if line.startswith("world "):
+            # @cpp-module: env のような指定があれば上書き
+            pass
+
+    return wit_imports, headers, apis_flat
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +255,9 @@ def _parse_yaml_fallback(config_path):
 
 
 def _parse_one_file(config_path, use_pyyaml):
-    """1 つの YAML ファイルをパースして (imports, headers, apis_flat) を返す。"""
+    """1 つの YAML または WIT ファイルをパースして (imports, headers, apis_flat) を返す。"""
+    if config_path.endswith('.wit'):
+        return _parse_wit(config_path)
     if use_pyyaml:
         return _parse_yaml_with_pyyaml(config_path)
     else:
@@ -262,9 +333,10 @@ def load_all_configs(entry_path):
 # ---------------------------------------------------------------------------
 
 def main():
-    config_path = sys.argv[1] if len(sys.argv) > 1 else 'module_config.yaml'
+    config_path = sys.argv[1] if len(sys.argv) > 1 else 'hostapi.wit'
     out_cpp_path = sys.argv[2] if len(sys.argv) > 2 else 'src/wasm_api_static.cpp'
     out_h_path = sys.argv[3] if len(sys.argv) > 3 else 'include/wasm_api_static.hpp'
+    out_wasm_h_path = sys.argv[4] if len(sys.argv) > 4 else None
 
     if not os.path.exists(config_path):
         print(f"Error: Configuration file '{config_path}' not found.", file=sys.stderr)
@@ -274,6 +346,79 @@ def main():
 
     # 二分探索のため (module, field) の辞書順でソート
     apis.sort(key=lambda x: (x['module'], x['field']))
+
+    # WASM クライアント用ヘッダーの生成
+    if out_wasm_h_path:
+        wasm_h_lines = [
+            "// =============================================================================",
+            "// Copyright (c) 2026 embwasm Project. All rights reserved.",
+            "// [Auto-generated by gen_api.py] - DO NOT EDIT DIRECTLY",
+            "// =============================================================================",
+            "",
+            "#ifndef EMBWASM_GENERATED_WASM_API_H_",
+            "#define EMBWASM_GENERATED_WASM_API_H_",
+            "",
+            "#ifdef __cplusplus",
+            "extern \"C\" {",
+            "#endif",
+            ""
+        ]
+
+        def wit_type_to_c(wit_type):
+            wit_type = wit_type.strip()
+            if wit_type == "i32": return "int"
+            if wit_type == "i64": return "long long"
+            if wit_type == "f32": return "float"
+            if wit_type == "f64": return "double"
+            return "void"
+
+        for api in apis:
+            mod = api['module']
+            field = api['field']
+            sig = api.get('wit_sig', 'func()')
+            
+            # 極めて簡易的なシグネチャパース: func(arg: type, ...) -> ret
+            ret_type = "void"
+            args_str = "void"
+            
+            if "func(" in sig:
+                # 引数部分と戻り値部分を分離
+                if "->" in sig:
+                    sig_body, ret_part = sig.split("->")
+                    ret_type = wit_type_to_c(ret_part)
+                else:
+                    sig_body = sig
+                
+                args_part = sig_body.split("func(")[1].split(")")[0].strip()
+                if args_part:
+                    args_list = []
+                    # 引数が「name: type」の形式か「type」のみかを確認
+                    for arg in args_part.split(","):
+                        arg = arg.strip()
+                        if ":" in arg:
+                            arg_name, arg_type = arg.split(":")
+                            arg_name = arg_name.strip().replace("-", "_")
+                            args_list.append(f"{wit_type_to_c(arg_type)} {arg_name}")
+                        else:
+                            args_list.append(wit_type_to_c(arg))
+                    args_str = ", ".join(args_list)
+            
+            wasm_h_lines.append(f"__attribute__((import_module(\"{mod}\"), import_name(\"{field}\")))")
+            wasm_h_lines.append(f"{ret_type} {field}({args_str});")
+            wasm_h_lines.append("")
+
+        wasm_h_lines.extend([
+            "#ifdef __cplusplus",
+            "}",
+            "#endif",
+            "",
+            "#endif // EMBWASM_GENERATED_WASM_API_H_"
+        ])
+        
+        os.makedirs(os.path.dirname(os.path.abspath(out_wasm_h_path)), exist_ok=True)
+        with open(out_wasm_h_path, 'w', encoding='utf-8') as f:
+            f.write("\n".join(wasm_h_lines) + "\n")
+        print(f"Generated WASM client header: {out_wasm_h_path}")
 
     # HostFunctionId 定数の定義を生成
     enum_members = []
