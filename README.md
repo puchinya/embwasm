@@ -12,7 +12,7 @@
   - RTTI の禁止 (`-fno-rtti`)
   - STL コンテナの使用禁止
 - **高速な静的ホストAPIルックアップ**: 
-  YAML設定ファイル（例: `api_config.yaml`）に基づいてビルド中に C++ ホスト関数のルックアップテーブルを自動生成し、二分探索で高速（$O(\log N)$）に解決します。
+  YAML設定ファイル（例: `module_config.yaml`）に基づいてビルド中に C++ ホスト関数のルックアップテーブルを自動生成し、二分探索で高速（$O(\log N)$）に解決します。
 - **高い移植性**: GCC / Clang に対応し、Cortex-M シリーズやPC（ARM/ARM64, x86/x86_64）の各種OS（macOS, Linux, Windows）および RTOS（FreeRTOS, uITRON）で動作します。
 
 ## ディレクトリ構成

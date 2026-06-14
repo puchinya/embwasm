@@ -2,17 +2,17 @@
 # embwasm Demo CMakeLists.txt
 # =============================================================================
 
-set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/api_config.yaml)
+set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/module_config.yaml)
 set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
 set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
 set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.h)
 
-# api_config.yaml の変更を検知して自動生成します
+# module_config.yaml の変更を検知して自動生成します
 add_custom_command(
     OUTPUT ${GEN_CPP} ${GEN_H}
     COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H}
     DEPENDS ${DEMO_CONFIG_FILE} ${GEN_SCRIPT}
-    COMMENT "Generating static API lookup tables for demo from api_config.yaml"
+    COMMENT "Generating static API lookup tables for demo from module_config.yaml"
 )
 
 # 1. WebAssembly用の clang を探索 (Homebrewの LLVM などを優先)
