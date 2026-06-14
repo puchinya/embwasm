@@ -8,8 +8,8 @@ world test-env {
     import dummy: func();
 
     /// @cpp-func: embwasm::PrintChar
-    import print-char: func(character: i32);
+    import print-char: func(character: s32);
 
     /// @cpp-func: embwasm::PrintVal
-    import print-val: func(val: i32);
+    import print-val: func(val: s32);
 }

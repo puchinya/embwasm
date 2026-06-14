@@ -641,9 +641,6 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
         return WasmResult::kErrorRuntimeError;
     }
 
-    // デバッグ用出力
-    // std::cout << "ExecuteInternal: func_idx=" << func_index << " call_stack_top=" << ctx_->call_stack_top << std::endl;
-
     // 既存のコードとの互換性のためのエイリアス
     std::size_t& stack_top_ = ctx_->stack_top;
     WasmValue* stack_ = ctx_->stack;

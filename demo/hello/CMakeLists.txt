@@ -6,14 +6,25 @@ set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/hostapi.wit)
 set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
 set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
 set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
-set(GEN_WASM_H ${CMAKE_CURRENT_SOURCE_DIR}/wasm/wasm_api.h)
+set(GEN_WASM_WIT ${CMAKE_CURRENT_BINARY_DIR}/wasm_host_api.wit)
+set(GEN_WASM_DIR ${CMAKE_CURRENT_BINARY_DIR}/wasm_gen)
+set(GEN_WASM_H ${GEN_WASM_DIR}/wasm_host_api.h)
+set(GEN_WASM_C ${GEN_WASM_DIR}/wasm_host_api.c)
 
-# WIT ファイルの変更を検知して自動生成します
+# WIT ファイルの変更を検知して自動生成します (ホスト側および WASM 用 WIT)
 add_custom_command(
-    OUTPUT ${GEN_CPP} ${GEN_H} ${GEN_WASM_H}
-    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H} ${GEN_WASM_H}
+    OUTPUT ${GEN_CPP} ${GEN_H} ${GEN_WASM_WIT}
+    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H} ${GEN_WASM_WIT}
     DEPENDS ${DEMO_CONFIG_FILE} ${GEN_SCRIPT}
-    COMMENT "Generating static API lookup tables and WASM client header from hostapi.wit"
+    COMMENT "Generating static API lookup tables and merged WIT from hostapi.wit"
+)
+
+# wit-bindgen で WASM クライアント用ヘッダー/ソースを生成
+add_custom_command(
+    OUTPUT ${GEN_WASM_H} ${GEN_WASM_C}
+    COMMAND wit-bindgen c --out-dir ${GEN_WASM_DIR} ${GEN_WASM_WIT}
+    DEPENDS ${GEN_WASM_WIT}
+    COMMENT "Generating WASM client bindings using wit-bindgen"
 )
 
 # 1. WebAssembly用の clang を探索 (Homebrewの LLVM などを優先)
@@ -48,10 +59,12 @@ set(WASM_OUT ${CMAKE_CURRENT_BINARY_DIR}/main.wasm)
 set(WASM_GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.cpp)
 set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.hpp)
 
+set(WASM_COMMON_INC ${CMAKE_CURRENT_SOURCE_DIR}/../common/wasm/include)
+
 add_custom_command(
     OUTPUT ${WASM_OUT}
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -o ${WASM_OUT} ${WASM_SRC}
-    DEPENDS ${WASM_SRC} ${GEN_WASM_H}
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -Wl,-z,stack-size=1024 -Wl,--stack-first -o ${WASM_OUT} ${WASM_SRC} ${GEN_WASM_C} -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
+    DEPENDS ${WASM_SRC} ${GEN_WASM_H} ${GEN_WASM_C}
     COMMENT "Compiling main.c to WASM using ${WASM_CLANG}"
 )
 
