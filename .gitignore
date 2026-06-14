@@ -1,0 +1,30 @@
+# Build directories
+cmake-build-*/
+build/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# CMake / Build artifacts
+CMakeCache.txt
+CMakeFiles/
+CMakeSpecification.log
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+*_tests.cmake
+*_include.cmake

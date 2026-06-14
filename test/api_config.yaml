@@ -1,0 +1,20 @@
+# WASM Host API Configuration for Testing
+# Maps WASM imports to C++ host functions.
+
+# 静的検索コードにインクルードするヘッダーファイル一覧
+headers:
+  - "host_apis.h"
+
+# API のマッピング一覧 ( module と field の辞書順で自動ソートされます )
+apis:
+  - module: env
+    field: print_val
+    function: embwasm::PrintVal
+
+  - module: env
+    field: print_char
+    function: embwasm::PrintChar
+
+  - module: env
+    field: dummy
+    function: embwasm::DummyHostFunc
