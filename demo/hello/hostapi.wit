@@ -2,6 +2,7 @@ package embwasm:demo;
 
 /// @wit-import: "../../wasm_host_modules/stdio/stdio.wit"
 /// @cpp-header: "host_apis.hpp"
-world host-api {
+world wasm-host-api {
+    import embwasm:stdio/stdio;
 }
 

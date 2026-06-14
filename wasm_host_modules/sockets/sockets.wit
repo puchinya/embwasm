@@ -6,18 +6,18 @@ package wasi:sockets;
 /// @cpp-header: "embwasm_hostmodule_socket.hpp"
 /// @cpp-init:   embwasm::hostmodules::socket::Initialize
 /// @cpp-deinit: embwasm::hostmodules::socket::Deinitialize
-world sockets {
+interface sockets {
     // =========================================================================
     // ソケット ライフサイクル
     // =========================================================================
 
     /// TCP ソケットを作成する。成功時は非負のソケットハンドル、失敗時は -1 を返す。
     /// @cpp-func: embwasm::hostmodules::socket::SocketCreate
-    import socket-create: func(domain: s32, type: s32, protocol: s32) -> s32;
+    socket-create: func(domain: s32, %type: s32, protocol: s32) -> s32;
 
     /// ソケットを閉じる。成功時は 0、失敗時は -1 を返す。
     /// @cpp-func: embwasm::hostmodules::socket::SocketClose
-    import socket-close: func(sock: s32) -> s32;
+    socket-close: func(sock: s32) -> s32;
 
     // =========================================================================
     // バインド / リッスン / アクセプト（サーバー側）
@@ -26,16 +26,16 @@ world sockets {
     /// ソケットにアドレスをバインドする。
     /// addr_ptr は WASM 線形メモリ上の sockaddr_in 互換構造体へのオフセット。
     /// @cpp-func: embwasm::hostmodules::socket::SocketBind
-    import socket-bind: func(sock: s32, addr_ptr: s32, addr_len: s32) -> s32;
+    socket-bind: func(sock: s32, addr-ptr: s32, addr-len: s32) -> s32;
 
     /// バックログキューを持つサーバーソケットをリッスン状態にする。
     /// @cpp-func: embwasm::hostmodules::socket::SocketListen
-    import socket-listen: func(sock: s32, backlog: s32) -> s32;
+    socket-listen: func(sock: s32, backlog: s32) -> s32;
 
     /// 接続を受け付ける。成功時は新しいソケットハンドル、失敗時は -1 を返す。
     /// peer_addr_ptr / peer_addr_len_ptr は省略可能 (0 を渡してよい)。
     /// @cpp-func: embwasm::hostmodules::socket::SocketAccept
-    import socket-accept: func(sock: s32, peer_addr_ptr: s32, peer_addr_len_ptr: s32) -> s32;
+    socket-accept: func(sock: s32, peer-addr-ptr: s32, peer-addr-len-ptr: s32) -> s32;
 
     // =========================================================================
     // 接続（クライアント側）
@@ -44,7 +44,7 @@ world sockets {
     /// リモートアドレスへ接続する。
     /// addr_ptr は WASM 線形メモリ上の sockaddr_in 互換構造体へのオフセット。
     /// @cpp-func: embwasm::hostmodules::socket::SocketConnect
-    import socket-connect: func(sock: s32, addr_ptr: s32, addr_len: s32) -> s32;
+    socket-connect: func(sock: s32, addr-ptr: s32, addr-len: s32) -> s32;
 
     // =========================================================================
     // データ送受信
@@ -52,19 +52,19 @@ world sockets {
 
     /// データを送信する。送信バイト数、または -1（エラー）を返す。
     /// @cpp-func: embwasm::hostmodules::socket::SocketSend
-    import socket-send: func(sock: s32, buf_ptr: s32, buf_len: s32, flags: s32) -> s32;
+    socket-send: func(sock: s32, buf-ptr: s32, buf-len: s32, %flags: s32) -> s32;
 
     /// データを受信する。受信バイト数（0 は接続終了）、または -1（エラー）を返す。
     /// @cpp-func: embwasm::hostmodules::socket::SocketRecv
-    import socket-recv: func(sock: s32, buf_ptr: s32, buf_len: s32, flags: s32) -> s32;
+    socket-recv: func(sock: s32, buf-ptr: s32, buf-len: s32, %flags: s32) -> s32;
 
     /// UDP 向け送信。addr_ptr に送信先アドレス（sockaddr_in）を指定する。
     /// @cpp-func: embwasm::hostmodules::socket::SocketSendTo
-    import socket-send-to: func(sock: s32, buf_ptr: s32, buf_len: s32, flags: s32, addr_ptr: s32, addr_len: s32) -> s32;
+    socket-send-to: func(sock: s32, buf-ptr: s32, buf-len: s32, %flags: s32, addr-ptr: s32, addr-len: s32) -> s32;
 
     /// UDP 向け受信。src_addr_ptr / src_addr_len_ptr に送信元アドレスが書き込まれる。
     /// @cpp-func: embwasm::hostmodules::socket::SocketRecvFrom
-    import socket-recv-from: func(sock: s32, buf_ptr: s32, buf_len: s32, flags: s32, src_addr_ptr: s32, src_addr_len_ptr: s32) -> s32;
+    socket-recv-from: func(sock: s32, buf-ptr: s32, buf-len: s32, %flags: s32, src-addr-ptr: s32, src-addr-len-ptr: s32) -> s32;
 
     // =========================================================================
     // ソケットオプション
@@ -72,11 +72,11 @@ world sockets {
 
     /// ソケットオプションを設定する（setsockopt 相当）。
     /// @cpp-func: embwasm::hostmodules::socket::SocketSetOpt
-    import socket-set-opt: func(sock: s32, level: s32, optname: s32, optval_ptr: s32, optlen: s32) -> s32;
+    socket-set-opt: func(sock: s32, level: s32, optname: s32, optval-ptr: s32, optlen: s32) -> s32;
 
     /// ソケットオプションを取得する（getsockopt 相当）。
     /// @cpp-func: embwasm::hostmodules::socket::SocketGetOpt
-    import socket-get-opt: func(sock: s32, level: s32, optname: s32, optval_ptr: s32, optlen_ptr: s32) -> s32;
+    socket-get-opt: func(sock: s32, level: s32, optname: s32, optval-ptr: s32, optlen-ptr: s32) -> s32;
 
     // =========================================================================
     // ノンブロッキング / select
@@ -84,12 +84,12 @@ world sockets {
 
     /// ソケットのブロッキングモードを設定する（0: ブロッキング、1: ノンブロッキング）。
     /// @cpp-func: embwasm::hostmodules::socket::SocketSetNonBlocking
-    import socket-set-non-blocking: func(sock: s32, nonblocking: s32) -> s32;
+    socket-set-non-blocking: func(sock: s32, nonblocking: s32) -> s32;
 
     /// 単一ソケットに対する簡易 poll（タイムアウト: ミリ秒、-1 で無限待ち）。
     /// ready_mask を返す：bit0=readable、bit1=writable、bit2=error。
     /// @cpp-func: embwasm::hostmodules::socket::SocketPoll
-    import socket-poll: func(sock: s32, events: s32, timeout_ms: s32) -> s32;
+    socket-poll: func(sock: s32, events: s32, timeout-ms: s32) -> s32;
 
     // =========================================================================
     // アドレスユーティリティ
@@ -98,15 +98,15 @@ world sockets {
     /// IPv4 アドレス文字列 (WASM 線形メモリ上) を 32bit ネットワークバイトオーダーに変換する。
     /// 変換失敗時は 0 を返す。
     /// @cpp-func: embwasm::hostmodules::socket::InetAddr
-    import inet-addr: func(addr_str_ptr: s32) -> s32;
+    inet-addr: func(addr-str-ptr: s32) -> s32;
 
     /// ホストバイトオーダーの16bit値をネットワークバイトオーダーに変換する。
     /// @cpp-func: embwasm::hostmodules::socket::HostToNetShort
-    import host-to-net-short: func(host_short: s32) -> s32;
+    host-to-net-short: func(host-short: s32) -> s32;
 
     /// ネットワークバイトオーダーの16bit値をホストバイトオーダーに変換する。
     /// @cpp-func: embwasm::hostmodules::socket::NetToHostShort
-    import net-to-host-short: func(net_short: s32) -> s32;
+    net-to-host-short: func(net-short: s32) -> s32;
 
     // =========================================================================
     // エラー情報
@@ -114,5 +114,5 @@ world sockets {
 
     /// 最後に発生したソケットエラーコードを返す（errno / WSAGetLastError 相当）。
     /// @cpp-func: embwasm::hostmodules::socket::SocketGetLastError
-    import socket-get-last-error: func() -> s32;
+    socket-get-last-error: func() -> s32;
 }

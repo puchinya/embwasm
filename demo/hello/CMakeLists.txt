@@ -6,25 +6,29 @@ set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/hostapi.wit)
 set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
 set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
 set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
-set(GEN_WASM_WIT ${CMAKE_CURRENT_BINARY_DIR}/wasm_host_api.wit)
+set(GEN_WASM_WIT_DIR ${CMAKE_CURRENT_BINARY_DIR}/wit)
+set(GEN_WASM_WIT ${GEN_WASM_WIT_DIR}/wasm_host_api.wit)
 set(GEN_WASM_DIR ${CMAKE_CURRENT_BINARY_DIR}/wasm_gen)
 set(GEN_WASM_H ${GEN_WASM_DIR}/wasm_host_api.h)
 set(GEN_WASM_C ${GEN_WASM_DIR}/wasm_host_api.c)
 
-# WIT ファイルの変更を検知して自動生成します (ホスト側および WASM 用 WIT)
+# WIT ファイルの変更を検知して自動生成します (ホスト側 API ルックアップテーブルの生成)
 add_custom_command(
-    OUTPUT ${GEN_CPP} ${GEN_H} ${GEN_WASM_WIT}
-    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H} ${GEN_WASM_WIT}
+    OUTPUT ${GEN_CPP} ${GEN_H}
+    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H}
     DEPENDS ${DEMO_CONFIG_FILE} ${GEN_SCRIPT}
-    COMMENT "Generating static API lookup tables and merged WIT from hostapi.wit"
+    COMMENT "Generating static API lookup tables from hostapi.wit"
 )
 
-# wit-bindgen で WASM クライアント用ヘッダー/ソースを生成
+# wit-bindgen で WASM クライアント用ヘッダー/ソースを生成 (deps ディレクトリ構成を使用)
 add_custom_command(
     OUTPUT ${GEN_WASM_H} ${GEN_WASM_C}
-    COMMAND wit-bindgen c --out-dir ${GEN_WASM_DIR} ${GEN_WASM_WIT}
-    DEPENDS ${GEN_WASM_WIT}
-    COMMENT "Generating WASM client bindings using wit-bindgen"
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GEN_WASM_WIT_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy ${DEMO_CONFIG_FILE} ${GEN_WASM_WIT}
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../../wasm_host_modules ${GEN_WASM_WIT_DIR}/deps
+    COMMAND wit-bindgen c --out-dir ${GEN_WASM_DIR} --world wasm-host-api ${GEN_WASM_WIT_DIR}
+    DEPENDS ${DEMO_CONFIG_FILE} ${GEN_CPP}
+    COMMENT "Generating WASM client bindings using wit-bindgen with deps"
 )
 
 # 1. WebAssembly用の clang を探索 (Homebrewの LLVM などを優先)

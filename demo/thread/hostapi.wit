@@ -3,6 +3,7 @@ package embwasm:demo;
 /// @cpp-header: "../hello/host_apis.hpp"
 /// @wit-import: "../../wasm_host_modules/threads/threads.wit"
 /// @wit-import: "../../wasm_host_modules/stdio/stdio.wit"
-world host-api {
+world wasm-host-api {
+    import embwasm:threads/threads;
+    import embwasm:stdio/stdio;
 }
-
