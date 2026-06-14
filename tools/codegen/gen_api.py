@@ -55,6 +55,10 @@ def _parse_wit(wit_path):
             match = re.search(r"@cpp-func:\s*([\w:]+)", line)
             if match:
                 cpp_func = match.group(1)
+            # @cpp-module をパース
+            match_mod = re.search(r"@cpp-module:\s*([\w:-]+)", line)
+            if match_mod:
+                current_module = match_mod.group(1).replace("-", "_")
             continue
             
         # import 行を抽出
@@ -286,6 +290,7 @@ def load_all_configs(entry_path):
     seen_headers = set()
     merged_apis = []
     seen_api_keys = set()  # (module, field)
+    seen_modules = {}  # module -> file_path
 
     entry_abs = os.path.abspath(entry_path)
     stack = [entry_abs]
@@ -307,6 +312,14 @@ def load_all_configs(entry_path):
 
         current_dir = os.path.dirname(current_path)
         file_imports, file_headers, file_apis = _parse_one_file(current_path, use_pyyaml)
+
+        # モジュールの定義重複チェック
+        file_modules = set(api.get('module', '') for api in file_apis)
+        for m in file_modules:
+            if m in seen_modules and seen_modules[m] != current_path:
+                print(f"Error: Duplicate module definition '{m}' found in '{current_path}' (already defined in '{seen_modules[m]}').", file=sys.stderr)
+                sys.exit(1)
+            seen_modules[m] = current_path
 
         for h in file_headers:
             if h not in seen_headers:
@@ -346,6 +359,9 @@ def main():
 
     # 二分探索のため (module, field) の辞書順でソート
     apis.sort(key=lambda x: (x['module'], x['field']))
+
+    # モジュールのリストを重複排除してソート
+    modules = sorted(list(set(api['module'] for api in apis)))
 
     # WASM クライアント用ヘッダーの生成
     if out_wasm_h_path:
@@ -421,6 +437,14 @@ def main():
             f.write("\n".join(wasm_h_lines) + "\n")
         print(f"Generated WASM client header: {out_wasm_h_path}")
 
+    # HostModuleId 定数の定義を生成
+    module_enum_members = []
+    for idx, mod in enumerate(modules):
+        mod_clean = re.sub(r'[^a-zA-Z0-9_]', '_', mod)
+        mod_part = "".join(word.capitalize() for word in mod_clean.split("_") if word)
+        module_enum_members.append(f"    k{mod_part} = {idx},")
+    module_enum_members_str = "\n".join(module_enum_members)
+
     # HostFunctionId 定数の定義を生成
     enum_members = []
     for idx, api in enumerate(apis):
@@ -445,8 +469,15 @@ def main():
 
 namespace embwasm {{
 
+// ホストモジュールのID定義
+enum class HostModuleId : uint32_t {{
+{module_enum_members_str}
+}};
+
 // 各ホスト関数のID定義
 {enum_members_str}
+
+HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept;
 
 HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
 
@@ -520,6 +551,16 @@ WasmResult DispatchHostFunction(
     }
     return HostFunctionId::kInvalid;"""
 
+    # モジュールID探索ロジックの生成
+    module_lookup_cases = []
+    for idx, mod in enumerate(modules):
+        mod_clean = re.sub(r'[^a-zA-Z0-9_]', '_', mod)
+        mod_part = "".join(word.capitalize() for word in mod_clean.split("_") if word)
+        module_lookup_cases.append(
+            f'    if (std::strcmp(module_name, "{mod}") == 0) return HostModuleId::k{mod_part};'
+        )
+    module_lookup_cases_str = "\n".join(module_lookup_cases)
+
     # ソースファイルの内容生成
     cpp_content = f"""// =============================================================================
 // Copyright (c) 2026 embwasm Project. All rights reserved.
@@ -531,6 +572,13 @@ WasmResult DispatchHostFunction(
 #include <cstring>
 
 namespace embwasm {{
+
+extern const std::size_t kHostModuleCount = {len(modules)};
+
+HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept {{
+{module_lookup_cases_str}
+    return static_cast<HostModuleId>(0xFFFFFFFF);
+}}
 
 struct StaticApiEntry {{
     const char* module_name;

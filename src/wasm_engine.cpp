@@ -194,7 +194,16 @@ WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
       scheduler_(nullptr),
 #endif
       max_call_stack_depth_(0), max_stack_depth_(0),
-      user_data_(nullptr) {
+      user_data_(nullptr),
+      module_user_datas_(nullptr) {
+    if (kHostModuleCount > 0) {
+        module_user_datas_ = static_cast<void**>(pool_.Allocate(kHostModuleCount * sizeof(void*)));
+        if (module_user_datas_) {
+            for (std::size_t i = 0; i < kHostModuleCount; ++i) {
+                module_user_datas_[i] = nullptr;
+            }
+        }
+    }
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
         exports_[i] = {};
@@ -2152,6 +2161,21 @@ const char* WasmEngine::CopyString(const uint8_t*& ptr, uint32_t len, const uint
     str[len] = '\0';
     ptr += len;
     return str;
+}
+
+void* WasmEngine::GetModuleUserData(HostModuleId module_id) const noexcept {
+    uint32_t idx = static_cast<uint32_t>(module_id);
+    if (module_user_datas_ && idx < kHostModuleCount) {
+        return module_user_datas_[idx];
+    }
+    return nullptr;
+}
+
+void WasmEngine::SetModuleUserData(HostModuleId module_id, void* user_data) noexcept {
+    uint32_t idx = static_cast<uint32_t>(module_id);
+    if (module_user_datas_ && idx < kHostModuleCount) {
+        module_user_datas_[idx] = user_data;
+    }
 }
 
 } // namespace embwasm

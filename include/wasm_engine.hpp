@@ -61,6 +61,10 @@ public:
     void* GetUserData() const noexcept { return user_data_; }
     void SetUserData(void* user_data) noexcept { user_data_ = user_data; }
 
+    // モジュールごとのユーザーデータ設定と取得
+    void* GetModuleUserData(HostModuleId module_id) const noexcept;
+    void SetModuleUserData(HostModuleId module_id, void* user_data) noexcept;
+
 #if EMBWASM_ENABLE_MULTITHREADING
     WasmThreadContext* GetContext() const noexcept { return ctx_; }
 
@@ -130,6 +134,7 @@ private:
 
     // ユーザーデータ
     void* user_data_;
+    void** module_user_datas_;
 };
 
 } // namespace embwasm

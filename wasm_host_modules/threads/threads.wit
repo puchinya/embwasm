@@ -1,5 +1,6 @@
 package embwasm:threads;
 
+/// @cpp-module: threads
 /// @cpp-header: "embwasm_hostmodule_thread.hpp"
 world threads {
     /// @cpp-func: embwasm::hostmodules::thread::ThreadSpawn

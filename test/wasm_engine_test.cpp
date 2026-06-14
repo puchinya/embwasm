@@ -5,6 +5,7 @@
 #include "wasm_memory_pool.hpp"
 #include "wasm_api.hpp"
 #include "wasm_engine.hpp"
+#include "wasm_api_static.hpp"
 
 // モック側で定義されているテスト用のグローバル状態
 namespace embwasm {
@@ -103,6 +104,29 @@ TEST(WasmEngineTest, UserData) {
     // nullptr を再設定できること
     engine.SetUserData(nullptr);
     EXPECT_EQ(engine.GetUserData(), nullptr);
+}
+
+TEST(WasmEngineTest, ModuleUserData) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // lookup関数の動作確認
+    EXPECT_EQ(embwasm::LookupStaticHostModuleId("env"), embwasm::HostModuleId::kEnv);
+    EXPECT_EQ(static_cast<uint32_t>(embwasm::LookupStaticHostModuleId("invalid_module")), 0xFFFFFFFF);
+
+    // 初期値が nullptr であること
+    EXPECT_EQ(engine.GetModuleUserData(embwasm::HostModuleId::kEnv), nullptr);
+
+    // 設定・取得ができること
+    int env_user_data = 555;
+    engine.SetModuleUserData(embwasm::HostModuleId::kEnv, &env_user_data);
+    EXPECT_EQ(engine.GetModuleUserData(embwasm::HostModuleId::kEnv), &env_user_data);
+
+    // 範囲外のモジュールIDの場合は nullptr が返る、または何もしないことの検証
+    EXPECT_EQ(engine.GetModuleUserData(static_cast<embwasm::HostModuleId>(999)), nullptr);
+    int invalid_user_data = 999;
+    engine.SetModuleUserData(static_cast<embwasm::HostModuleId>(999), &invalid_user_data);
+    EXPECT_EQ(engine.GetModuleUserData(static_cast<embwasm::HostModuleId>(999)), nullptr);
 }
 
 TEST(WasmEngineTest, LoadErrors) {

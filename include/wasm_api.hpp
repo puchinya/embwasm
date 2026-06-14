@@ -11,6 +11,13 @@ enum class HostFunctionId : uint32_t {
     kInvalid = 0xFFFFFFFF
 };
 
+// ホストモジュールのIDを表す型（自動生成）
+enum class HostModuleId : uint32_t;
+extern const std::size_t kHostModuleCount;
+
+// 静的に登録されたホストモジュールのIDを検索します。
+HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept;
+
 // 静的に登録されたホストAPIのIDを検索します。
 HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
 
