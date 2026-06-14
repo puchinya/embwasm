@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
-#include "wasm_thread.h"
-#include "wasm_engine.h"
-#include "wasm_memory_pool.h"
-#include "embwasm_hostmodule_thread.h"
+#include "wasm_thread.hpp"
+#include "wasm_engine.hpp"
+#include "wasm_memory_pool.hpp"
+#include "embwasm_hostmodule_thread.hpp"
 
 #if EMBWASM_ENABLE_MULTITHREADING
 

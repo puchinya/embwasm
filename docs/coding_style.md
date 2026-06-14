@@ -41,7 +41,7 @@
 
 基本的にはGoogleの命名規則に従います。
 
-* **ファイル名**: `snake_case.cpp`, `snake_case.h`
+* **ファイル名**: `snake_case.cpp`, `snake_case.hpp`
 * **型名（クラス、構造体、エイリアス、enum）**: `CamelCase` (例: `SensorManager`, `ErrorCode`)
 * **変数名**: `snake_case` (例: `loop_count`, `sensor_value`)
 * **クラスメンバ変数**: `snake_case_`（末尾にアンダースコア、例: `raw_value_`）

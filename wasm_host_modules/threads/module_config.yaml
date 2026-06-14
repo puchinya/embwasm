@@ -1,6 +1,6 @@
 # WASM Host Module Configuration for Threads
 headers:
-  - "embwasm_hostmodule_thread.h"
+  - "embwasm_hostmodule_thread.hpp"
 
 modules:
   env:

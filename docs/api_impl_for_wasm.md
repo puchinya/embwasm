@@ -30,7 +30,7 @@ WasmResult HostFunction(
 例えば、WASMモジュールに対して「センサーから現在値を取得するAPI（`get_sensor_value`）」と「値をLEDに書き込むAPI（`write_led_value`）」を提供したい場合のコード例です。
 
 ```cpp
-#include "wasm_types.h"
+#include "wasm_types.hpppp"
 
 namespace embwasm {
 
@@ -97,7 +97,7 @@ WasmResult WriteLedValue(
 ```yaml
 # module_config.yaml
 headers:
-  - "sensor_apis.h"  # 手順1で定義した関数の宣言を含むヘッダー
+  - "sensor_apis.hpp"  # 手順1で定義した関数の宣言を含むヘッダー
 
 modules:
   env:
@@ -152,7 +152,7 @@ WASM（WebAssembly Text Format）側で上記で定義した API をインポー
 
 ## 4. 設定値の変更
 
-ホストAPIの数や実行時のスタック制限などは、`include/wasm_config.h` の設定値を書き換えてビルドすることで調整可能です。
+ホストAPIの数や実行時のスタック制限などは、`include/wasm_config.hpp` の設定値を書き換えてビルドすることで調整可能です。
 
-* **[include/wasm_config.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.h)**:
+* **[include/wasm_config.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.hpp)**:
   - `kWasmStackSize`: WASM実行スタックの最大深度。

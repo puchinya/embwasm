@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "wasm_api_static.h"
+#include "wasm_api_static.hpp"
 
 namespace embwasm {
 extern int32_t g_last_printed_value;

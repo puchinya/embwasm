@@ -6,7 +6,7 @@
 // scratch to mock embedded behavior on Windows test systems.
 // =============================================================================
 
-#include "wasm_platform.h"
+#include "wasm_platform.hpp"
 
 namespace embwasm {
 

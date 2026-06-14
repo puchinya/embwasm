@@ -7,8 +7,8 @@
 // on standard dynamic heap allocators or external libraries.
 // =============================================================================
 
-#include "wasm_memory_pool.h"
-#include "wasm_platform.h"
+#include "wasm_memory_pool.hpp"
+#include "wasm_platform.hpp"
 
 namespace embwasm {
 

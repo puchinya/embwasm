@@ -1,6 +1,6 @@
 #include <iostream>
-#include "embwasm.h"
-#include "main_wasm.h"
+#include "embwasm.hpp"
+#include "main_wasm.hpp"
 
 int main() {
     std::cout << "=== Embedded WASM Engine Demo ===" << std::endl;

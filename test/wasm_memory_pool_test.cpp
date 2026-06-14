@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
-#include "wasm_config.h"
-#include "wasm_memory_pool.h"
+#include "wasm_config.hpp"
+#include "wasm_memory_pool.hpp"
 
 TEST(WasmMemoryPoolTest, AllFunctions) {
     embwasm::WasmMemoryPool pool;

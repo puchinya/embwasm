@@ -28,7 +28,7 @@ Pythonスクリプトが [module_config.yaml](file:///Users/nabeshimamasataka/CL
 # This file maps WASM import module and field names to C++ functions.
 
 headers:
-  - "host_apis.h"
+  - "host_apis.hpp"
 
 modules:
   env:
@@ -64,7 +64,7 @@ imports:
   - "extra/module_config.yaml"    # 追加 API 定義
 
 headers:
-  - "my_host_apis.h"
+  - "my_host_apis.hpp"
 
 modules:
   env:
@@ -81,7 +81,7 @@ modules:
 * **循環インポート**は自動検出してスキップし、標準エラーへ警告を出力します。
 
 > [!WARNING]
-> ここで指定するホスト関数は、必ず [include/wasm_host_apis.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_host_apis.h) にプロトタイプ宣言（前方宣言）を追加してください。宣言がない場合、自動生成された C++ コードのビルド時にコンパイルエラーとなります。
+> ここで指定するホスト関数は、必ず [include/wasm_host_apis.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_host_apis.hpp) にプロトタイプ宣言（前方宣言）を追加してください。宣言がない場合、自動生成された C++ コードのビルド時にコンパイルエラーとなります。
 
 ---
 
@@ -96,11 +96,11 @@ python3 tools/codegen/gen_api.py
 # 明示的にパスを指定して実行
 # 第1引数: 設定ファイル(YAML)
 # 第2引数: 出力先C++ソースファイル(.cpp)
-# 第3引数: 出力先ヘッダーファイル(.h)
+# 第3引数: 出力先ヘッダーファイル(.hpp)
 python3 tools/codegen/gen_api.py \
   module_config.yaml \
   src/wasm_api_static.cpp \
-  include/wasm_api_static.h
+  include/wasm_api_static.hpp
 ```
 
 ---
@@ -109,7 +109,7 @@ python3 tools/codegen/gen_api.py \
 
 スクリプト実行後、以下のファイルが上書き（再生成）されます。
 
-1. **[include/wasm_api_static.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_api_static.h)**:
+1. **[include/wasm_api_static.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_api_static.hpp)**:
    高速検索インターフェースである `LookupStaticHostFunction` の宣言。
 2. **[src/wasm_api_static.cpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src/wasm_api_static.cpp)**:
    ソート済みの静的APIテーブルの実体および二分探索の実装。

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "wasm_platform.h"
+#include "wasm_platform.hpp"
 
 TEST(WasmPlatformTest, CountLeadingZeros) {
     // 0のリーディングゼロは32

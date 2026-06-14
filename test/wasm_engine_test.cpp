@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
-#include "wasm_types.h"
-#include "wasm_memory_pool.h"
-#include "wasm_api.h"
-#include "wasm_engine.h"
+#include "wasm_types.hpp"
+#include "wasm_memory_pool.hpp"
+#include "wasm_api.hpp"
+#include "wasm_engine.hpp"
 
 // モック側で定義されているテスト用のグローバル状態
 namespace embwasm {

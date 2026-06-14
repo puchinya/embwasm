@@ -1,8 +1,8 @@
 #include <iostream>
-#include "embwasm.h"
-#include "main_wasm.h"
-#include "wasm_thread.h"
-#include "embwasm_hostmodule_thread.h"
+#include "embwasm.hpp"
+#include "main_wasm.hpp"
+#include "wasm_thread.hpp"
+#include "embwasm_hostmodule_thread.hpp"
 
 int main() {
 #if EMBWASM_ENABLE_MULTITHREADING

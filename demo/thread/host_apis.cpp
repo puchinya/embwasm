@@ -1,5 +1,5 @@
 #include <iostream>
-#include "host_apis.h"
+#include "host_apis.hpp"
 
 namespace embwasm {
 

@@ -5,7 +5,7 @@
 set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/module_config.yaml)
 set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
 set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
-set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.h)
+set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
 
 # module_config.yaml の変更を検知して自動生成します
 add_custom_command(
@@ -45,7 +45,7 @@ endif()
 set(WASM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/wasm/main.c)
 set(WASM_OUT ${CMAKE_CURRENT_BINARY_DIR}/main.wasm)
 set(WASM_GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.cpp)
-set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.h)
+set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.hpp)
 
 add_custom_command(
     OUTPUT ${WASM_OUT}
@@ -54,7 +54,7 @@ add_custom_command(
     COMMENT "Compiling main.c to WASM using ${WASM_CLANG}"
 )
 
-# 2. WASM バイナリから .cpp (実データ) と .h (extern 宣言のみ) を生成するカスタムコマンド
+# 2. WASM バイナリから .cpp (実データ) と .hpp (extern 宣言のみ) を生成するカスタムコマンド
 set(WASM_TO_CPP_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/wasm_to_cpp.py)
 add_custom_command(
     OUTPUT ${WASM_GEN_CPP} ${WASM_GEN_H}

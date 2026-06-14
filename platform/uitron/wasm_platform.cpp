@@ -6,7 +6,7 @@
 // scratch using uITRON standard kernel API primitives.
 // =============================================================================
 
-#include "wasm_platform.h"
+#include "wasm_platform.hpp"
 #include <kernel.h>
 
 namespace embwasm {

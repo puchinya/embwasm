@@ -3,7 +3,7 @@
 
 # 静的検索コードにインクルードするヘッダーファイル一覧
 headers:
-  - "host_apis.h"
+  - "host_apis.hpp"
 
 # モジュール名をキーにした API のマッピング一覧
 # ( module と field の辞書順で自動ソートされます )

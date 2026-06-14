@@ -3,8 +3,8 @@
 
 # 静的検索コードにインクルードするヘッダーファイル一覧
 headers:
-  - "host_apis.h"
-  - "embwasm_hostmodule_thread.h"
+  - "host_apis.hpp"
+  - "embwasm_hostmodule_thread.hpp"
 
 # モジュール名をキーにした API のマッピング一覧
 # ( module と field の辞書順で自動ソートされます )

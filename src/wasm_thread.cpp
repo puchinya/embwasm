@@ -1,5 +1,5 @@
-#include "wasm_thread.h"
-#include "wasm_engine.h"
+#include "wasm_thread.hpp"
+#include "wasm_engine.hpp"
 
 namespace embwasm {
 

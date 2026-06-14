@@ -19,7 +19,7 @@ if(BUILD_TESTING)
     set(TEST_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/module_config.yaml)
     set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../tools/codegen/gen_api.py)
     set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
-    set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.h)
+    set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
 
     # module_config.yaml の変更を検知して自動生成します
     add_custom_command(

@@ -8,8 +8,8 @@
 // has been copied, referenced, or adapted.
 // =============================================================================
 
-#include "wasm_engine.h"
-#include "wasm_platform.h"
+#include "wasm_engine.hpp"
+#include "wasm_platform.hpp"
 #include <cstring>
 
 namespace embwasm {

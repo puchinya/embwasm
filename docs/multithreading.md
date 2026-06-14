@@ -87,9 +87,9 @@ scheduler.Run();
 
 ---
 
-## 5. 設定定数 (`include/wasm_config.h`)
+## 5. 設定定数 (`include/wasm_config.hpp`)
 
-マルチスレッドに関する制限値は `wasm_config.h` で変更可能です。
+マルチスレッドに関する制限値は `wasm_config.hpp` で変更可能です。
 
 - `kMaxThreads`: 同時に存在できる最大スレッド数（デフォルト: 4）。
 - `kMaxEvents`: 利用可能なイベントオブジェクトの最大数（デフォルト: 8）。

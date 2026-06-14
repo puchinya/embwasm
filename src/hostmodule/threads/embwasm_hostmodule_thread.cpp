@@ -1,6 +1,6 @@
-#include "wasm_thread.h"
-#include "wasm_engine.h"
-#include "embwasm_hostmodule_thread.h"
+#include "wasm_thread.hpp"
+#include "wasm_engine.hpp"
+#include "embwasm_hostmodule_thread.hpp"
 
 namespace embwasm {
 namespace hostmodules {

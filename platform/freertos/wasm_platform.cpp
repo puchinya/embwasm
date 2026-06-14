@@ -6,9 +6,9 @@
 // scratch using FreeRTOS kernel API primitives.
 // =============================================================================
 
-#include "wasm_platform.h"
-#include "FreeRTOS.h"
-#include "task.h"
+#include "wasm_platform.hpp"
+#include "FreeRTOS.hpp"
+#include "task.hpp"
 
 namespace embwasm {
 

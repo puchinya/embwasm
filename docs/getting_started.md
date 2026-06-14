@@ -10,7 +10,7 @@ WASMを実行するまでの基本的な手順は以下の通りです。
 
 ```mermaid
 graph TD
-    A[1. module_config.yaml にインポート関数を定義] --> B[2. wasm_host_apis.h にC++前方宣言を追加]
+    A[1. module_config.yaml にインポート関数を定義] --> B[2. wasm_host_apis.hpp にC++前方宣言を追加]
     B --> C[3. tools/codegen/gen_api.py を実行して静的検索コードを生成]
     C --> D[4. ホストAPIの実装を追加]
     D --> E[5. メモリプールとエンジンの初期化・WASMバイナリのロード]
@@ -24,7 +24,7 @@ graph TD
 ### ステップ 1: API設定ファイルの記述
 WASMモジュール内で呼び出すホストAPIを設定します。
 * **[module_config.yaml](file:///Users/nabeshimamasataka/CLionProjects/embwasm/module_config.yaml)** の `headers` セクションに任意のヘッダーファイル名を追加し、`modules` セクションにモジュール名をキーとしてAPIの対応関係を記述します。
-* 指定したヘッダー（例: **[include/host_apis.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/host_apis.h)**）に、ホスト関数のC++プロトタイプ宣言を記述します。
+* 指定したヘッダー（例: **[include/host_apis.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/host_apis.hpp)**）に、ホスト関数のC++プロトタイプ宣言を記述します。
 
 ### ステップ 2: 静的検索コードの生成
 設定ファイルを元に、二分探索用のC++ソースコードを自動生成します。
@@ -33,7 +33,7 @@ WASMモジュール内で呼び出すホストAPIを設定します。
 ```bash
 python3 tools/codegen/gen_api.py
 ```
-これにより、指定したヘッダー（例: `host_apis.h`）を `#include` した、静的ルックアップ処理用の [src/wasm_api_static.cpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src/wasm_api_static.cpp) が生成されます。
+これにより、指定したヘッダー（例: `host_apis.hpp`）を `#include` した、静的ルックアップ処理用の [src/wasm_api_static.cpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src/wasm_api_static.cpp) が生成されます。
 
 ### ステップ 3: プラットフォーム（OS）の選択
 プロジェクトの対象ターゲット（OS/ベアメタル）に応じたプラットフォームファイルをビルド対象に選択します。
@@ -50,13 +50,13 @@ C++側で、WASMから呼び出されるホストAPIを実装します。
 
 ### ステップ 5: メモリプールとエンジンの初期化
 動的ヒープを使用しないため、専用のメモリプールインスタンスを作成してエンジンに渡します。
-メモリプールの容量は [include/wasm_config.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.h#L14) の `kMemoryPoolSize` で定義されます。
+メモリプールの容量は [include/wasm_config.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.hpp#L14) の `kMemoryPoolSize` で定義されます。
 
 ```cpp
-#include "wasm_config.h"
-#include "wasm_memory_pool.h"
-#include "wasm_api.h"
-#include "wasm_engine.h"
+#include "wasm_config.hpppp"
+#include "wasm_memory_pool.hpppp"
+#include "wasm_api.hpppp"
+#include "wasm_engine.hpppp"
 
 // 1. 専用メモリプールの作成
 embwasm::WasmMemoryPool pool;
