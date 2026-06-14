@@ -9,6 +9,13 @@ namespace embwasm {
 class WasmEngine;
 struct WasmFunction;
 
+// 制御ブロックのラベル情報
+struct WasmLabel {
+    const uint8_t* pc;         // ブロック終了（end）またはループ開始のIP
+    std::size_t stack_top;     // 入場時のスタックトップ（br時にここまで戻す）
+    uint8_t opcode;            // ブロックの種類（0x01: block, 0x02: loop, 0x04: if）
+};
+
 // WASM関数呼び出しのフレーム情報
 struct WasmFrame {
     const WasmFunction* func;
@@ -16,6 +23,10 @@ struct WasmFrame {
     const uint8_t* limit;
     WasmValue locals[kMaxLocals];
     uint32_t total_locals;
+
+    // ラベルスタック（制御フロー用）
+    WasmLabel labels[kMaxLabels];
+    std::size_t label_stack_top;
 };
 
 // スレッドの実行状態

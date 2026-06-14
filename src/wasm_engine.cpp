@@ -85,6 +85,7 @@ static inline int64_t DecodeVarInt64(const uint8_t*& cursor, const uint8_t* limi
 
 WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
     : pool_(pool), signature_count_(0), function_count_(0), export_count_(0),
+      global_count_(0),
       linear_memory_ptr_(nullptr), linear_memory_size_(0), ctx_(nullptr),
       max_call_stack_depth_(0), max_stack_depth_(0) {
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
@@ -93,6 +94,9 @@ WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
     }
     for (std::size_t i = 0; i < kMaxWasmTypes; ++i) {
         signatures_[i] = {};
+    }
+    for (std::size_t i = 0; i < kMaxGlobals; ++i) {
+        globals_[i] = {};
     }
 }
 
@@ -218,8 +222,8 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
             }
 
             case 7: { // Export Section (公開関数)
-                uint32_t export_count = DecodeVarUint32(ptr, section_end);
-                for (uint32_t i = 0; i < export_count; ++i) {
+                uint32_t num_exports = DecodeVarUint32(ptr, section_end);
+                for (uint32_t i = 0; i < num_exports; ++i) {
                     uint32_t name_len = DecodeVarUint32(ptr, section_end);
                     const char* name = CopyString(ptr, name_len, section_end);
                     if (!name) return WasmResult::kErrorOutOfMemory;
@@ -234,6 +238,31 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         exports_[export_count_] = {name, idx};
                         export_count_++;
                     }
+                }
+                break;
+            }
+
+            case 6: { // Global Section
+                uint32_t num_globals = DecodeVarUint32(ptr, section_end);
+                for (uint32_t i = 0; i < num_globals; ++i) {
+                    if (global_count_ >= kMaxGlobals) return WasmResult::kErrorOutOfMemory;
+                    
+                    WasmType type = static_cast<WasmType>(*ptr++);
+                    bool is_mutable = (*ptr++ != 0);
+                    
+                    // Init expression
+                    uint8_t opcode = *ptr++;
+                    WasmValue val = {};
+                    if (opcode == 0x41) { // i32.const
+                        val = {WasmType::kI32, {0}};
+                        val.value.i32 = DecodeVarInt32(ptr, section_end);
+                    } else if (opcode == 0x42) { // i64.const
+                        val = {WasmType::kI64, {0}};
+                        val.value.i64 = DecodeVarInt64(ptr, section_end);
+                    }
+                    if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
+                    
+                    globals_[global_count_++] = {type, is_mutable, val};
                 }
                 break;
             }
@@ -481,6 +510,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
             frame.ip = initial_func->internal_func.code_ptr;
             frame.limit = initial_func->internal_func.code_ptr + initial_func->internal_func.code_size;
             frame.total_locals = total_locals;
+            frame.label_stack_top = 0; // ラベルスタックを初期化
 
             // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
             if (ctx_->stack_top < sig.param_count) {
@@ -518,11 +548,110 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 case 0x00: // nop
                     break;
 
+                case 0x01:   // block
+                case 0x02: { // loop
+                    uint8_t block_type = *ip++; // とりあえず単一戻り値か無しの簡易対応
+                    (void)block_type;
+                    
+                    if (frame.label_stack_top >= kMaxLabels) return WasmResult::kErrorStackOverflow;
+                    
+                    WasmLabel& label = frame.labels[frame.label_stack_top++];
+                    label.opcode = op;
+                    label.stack_top = stack_top_;
+                    
+                    if (op == 0x01) { // block
+                        // 対応する end を探す (ネストを考慮)
+                        const uint8_t* search_ptr = ip;
+                        int nest_level = 0;
+                        while (search_ptr < limit) {
+                            uint8_t s_op = *search_ptr++;
+                            if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) nest_level++;
+                            else if (s_op == 0x0B) {
+                                if (nest_level == 0) {
+                                    label.pc = search_ptr - 1; // end の位置
+                                    break;
+                                }
+                                nest_level--;
+                            }
+                        }
+                    } else { // loop
+                        label.pc = ip - 1; // loop 命令自体の位置に戻る
+                    }
+                    break;
+                }
+
+                case 0x04: { // if
+                    uint8_t block_type = *ip++;
+                    (void)block_type;
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    int32_t cond = stack_[--stack_top_].value.i32;
+
+                    if (frame.label_stack_top >= kMaxLabels) return WasmResult::kErrorStackOverflow;
+                    WasmLabel& label = frame.labels[frame.label_stack_top++];
+                    label.opcode = 0x04;
+                    label.stack_top = stack_top_;
+
+                    // 対応する else または end を探す
+                    const uint8_t* search_ptr = ip;
+                    const uint8_t* else_ptr = nullptr;
+                    int nest_level = 0;
+                    while (search_ptr < limit) {
+                        uint8_t s_op = *search_ptr++;
+                        if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) nest_level++;
+                        else if (s_op == 0x05) { // else
+                            if (nest_level == 0) else_ptr = search_ptr; 
+                        }
+                        else if (s_op == 0x0B) {
+                            if (nest_level == 0) {
+                                label.pc = search_ptr - 1; // end
+                                break;
+                            }
+                            nest_level--;
+                        }
+                    }
+
+                    if (cond == 0) {
+                        // 条件不成立: else があればそこへ、なければ end へ
+                        ip = else_ptr ? else_ptr : label.pc;
+                    }
+                    break;
+                }
+
+                case 0x05: { // else
+                    // if ブロックの実行が終わって else に到達した場合は end までジャンプ
+                    if (frame.label_stack_top == 0) return WasmResult::kErrorRuntimeError;
+                    ip = frame.labels[frame.label_stack_top - 1].pc;
+                    break;
+                }
+
+                case 0x0C:   // br <label_idx>
+                case 0x0D: { // br_if <label_idx>
+                    uint32_t label_idx = DecodeVarUint32(ip, limit);
+                    bool jump = true;
+                    if (op == 0x0D) {
+                        if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                        jump = (stack_[--stack_top_].value.i32 != 0);
+                    }
+
+                    if (jump) {
+                        if (label_idx >= frame.label_stack_top) return WasmResult::kErrorRuntimeError;
+                        WasmLabel& label = frame.labels[frame.label_stack_top - 1 - label_idx];
+                        ip = label.pc;
+                        // stack_top_ = label.stack_top; // 本来は戻り値を考慮して調整が必要
+                        frame.label_stack_top -= (label_idx + 1);
+                        goto frame_changed; // ip を更新したのでループを抜ける
+                    }
+                    break;
+                }
+
                 case 0x0F: // return
                 case 0x0B: // end
-                    // 関数の終了。データスタックから戻り値をポップせずに、
-                    // 呼び出し元の期待する数だけ残してポップする必要がある。
-                    // (本来はブロック深度等も管理すべきだが、簡易実装では関数の戻り値のみ考慮)
+                    if (op == 0x0B && frame.label_stack_top > 0) {
+                        // ブロックの終了
+                        frame.label_stack_top--;
+                        break;
+                    }
+                    // 関数の終了
                     if (ctx_->call_stack_top > 0) {
                         // ExecuteInternal の最上位呼び出しでない場合
                         --ctx_->call_stack_top;
@@ -598,6 +727,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         new_frame.ip = target_func->internal_func.code_ptr;
                         new_frame.limit = target_func->internal_func.code_ptr + target_func->internal_func.code_size;
                         new_frame.total_locals = target_total_locals;
+                        new_frame.label_stack_top = 0;
 
                         if (ctx_->stack_top < sig.param_count) {
                             return WasmResult::kErrorRuntimeError;
@@ -659,10 +789,52 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     break;
                 }
 
+                case 0x23: { // global.get <global_idx>
+                    uint32_t idx = DecodeVarUint32(ip, limit);
+                    if (idx >= global_count_) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+                    stack_[stack_top_++] = globals_[idx].value;
+                    break;
+                }
+
+                case 0x24: { // global.set <global_idx>
+                    uint32_t idx = DecodeVarUint32(ip, limit);
+                    if (idx >= global_count_ || !globals_[idx].is_mutable) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    globals_[idx].value = stack_[--stack_top_];
+                    break;
+                }
+
+                case 0x28: { // i32.load
+                    /* uint32_t align = */ DecodeVarUint32(ip, limit);
+                    uint32_t offset = DecodeVarUint32(ip, limit);
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                    uint32_t addr = base + offset;
+                    if (!linear_memory_ptr_ || addr + 4 > linear_memory_size_) return WasmResult::kErrorRuntimeError;
+                    int32_t val;
+                    std::memcpy(&val, &linear_memory_ptr_[addr], 4);
+                    stack_[stack_top_++] = WasmValue{WasmType::kI32, {val}};
+                    break;
+                }
+
+                case 0x36: { // i32.store
+                    /* uint32_t align = */ DecodeVarUint32(ip, limit);
+                    uint32_t offset = DecodeVarUint32(ip, limit);
+                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    int32_t val = stack_[--stack_top_].value.i32;
+                    uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                    uint32_t addr = base + offset;
+                    if (!linear_memory_ptr_ || addr + 4 > linear_memory_size_) return WasmResult::kErrorRuntimeError;
+                    std::memcpy(&linear_memory_ptr_[addr], &val, 4);
+                    break;
+                }
+
                 case 0x41: { // i32.const <value>
                     int32_t val = DecodeVarInt32(ip, limit);
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
-                    stack_[stack_top_++] = WasmValue{WasmType::kI32, {val}};
+                    stack_[stack_top_++] = WasmValue{WasmType::kI32, {0}};
+                    stack_[stack_top_ - 1].value.i32 = val;
                     if (stack_top_ > max_stack_depth_) {
                         max_stack_depth_ = stack_top_;
                     }
@@ -672,7 +844,34 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 case 0x42: { // i64.const <value>
                     int64_t val = DecodeVarInt64(ip, limit);
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
-                    stack_[stack_top_++] = WasmValue{WasmType::kI64, {val}};
+                    stack_[stack_top_++] = WasmValue{WasmType::kI64, {0}};
+                    stack_[stack_top_ - 1].value.i64 = val;
+                    if (stack_top_ > max_stack_depth_) {
+                        max_stack_depth_ = stack_top_;
+                    }
+                    break;
+                }
+
+                case 0x43: { // f32.const <value>
+                    float val;
+                    std::memcpy(&val, ip, 4);
+                    ip += 4;
+                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+                    stack_[stack_top_++] = WasmValue{WasmType::kF32, {0}};
+                    stack_[stack_top_ - 1].value.f32 = val;
+                    if (stack_top_ > max_stack_depth_) {
+                        max_stack_depth_ = stack_top_;
+                    }
+                    break;
+                }
+
+                case 0x44: { // f64.const <value>
+                    double val;
+                    std::memcpy(&val, ip, 8);
+                    ip += 8;
+                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+                    stack_[stack_top_++] = WasmValue{WasmType::kF64, {0}};
+                    stack_[stack_top_ - 1].value.f64 = val;
                     if (stack_top_ > max_stack_depth_) {
                         max_stack_depth_ = stack_top_;
                     }
@@ -793,6 +992,49 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         case 0x85: res = a.value.i64 ^ b.value.i64; break;
                     }
                     stack_[stack_top_++] = WasmValue{WasmType::kI64, {res}};
+                    break;
+                }
+
+                // f32 / f64 基本演算 (簡易対応)
+                case 0x92:   // f32.add
+                case 0x93:   // f32.sub
+                case 0x94:   // f32.mul
+                case 0x95: { // f32.div
+                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    WasmValue b = stack_[--stack_top_];
+                    WasmValue a = stack_[--stack_top_];
+                    float res = 0;
+                    switch (op) {
+                        case 0x92: res = a.value.f32 + b.value.f32; break;
+                        case 0x93: res = a.value.f32 - b.value.f32; break;
+                        case 0x94: res = a.value.f32 * b.value.f32; break;
+                        case 0x95: res = a.value.f32 / b.value.f32; break;
+                    }
+                    WasmValue result_val;
+                    result_val.type = WasmType::kF32;
+                    result_val.value.f32 = res;
+                    stack_[stack_top_++] = result_val;
+                    break;
+                }
+
+                case 0xA0:   // f64.add
+                case 0xA1:   // f64.sub
+                case 0xA2:   // f64.mul
+                case 0xA3: { // f64.div
+                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    WasmValue b = stack_[--stack_top_];
+                    WasmValue a = stack_[--stack_top_];
+                    double res = 0;
+                    switch (op) {
+                        case 0xA0: res = a.value.f64 + b.value.f64; break;
+                        case 0xA1: res = a.value.f64 - b.value.f64; break;
+                        case 0xA2: res = a.value.f64 * b.value.f64; break;
+                        case 0xA3: res = a.value.f64 / b.value.f64; break;
+                    }
+                    WasmValue result_val;
+                    result_val.type = WasmType::kF64;
+                    result_val.value.f64 = res;
+                    stack_[stack_top_++] = result_val;
                     break;
                 }
 

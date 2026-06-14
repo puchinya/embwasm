@@ -31,6 +31,12 @@ constexpr std::size_t kWasmCallStackSize = 16;
 // 1つの関数で利用可能な最大ローカル変数（引数＋ローカル変数）の数
 constexpr std::size_t kMaxLocals = 32;
 
+// 1つの関数内の制御ブロック（block, loop, if）の最大ネスト数
+constexpr std::size_t kMaxLabels = 8;
+
+// サポートする最大グローバル変数数
+constexpr std::size_t kMaxGlobals = 16;
+
 // マルチスレッド機能の有効化
 // true に設定すると、WasmScheduler および関連するホストAPIが有効になります。
 #define EMBWASM_ENABLE_MULTITHREADING 1

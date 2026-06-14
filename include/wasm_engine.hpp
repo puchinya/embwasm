@@ -23,6 +23,13 @@ struct WasmFunction {
     };
 };
 
+// グローバル変数を表す構造体
+struct WasmGlobal {
+    WasmType type;
+    bool is_mutable;
+    WasmValue value;
+};
+
 // WASMエクスポートを表す構造体
 struct WasmExportEntry {
     const char* name;
@@ -85,6 +92,10 @@ private:
 
     WasmExportEntry exports_[kMaxWasmFunctions];
     std::size_t export_count_;
+
+    // グローバル変数
+    WasmGlobal globals_[kMaxGlobals];
+    std::size_t global_count_;
 
     // 線形メモリ（Memory section / Data section）
     uint8_t* linear_memory_ptr_;

@@ -206,7 +206,7 @@ TEST(WasmEngineTest, ExecutionErrors) {
         0x03, 0x02, 0x01, 0x00,
         0x07, 0x08, 0x01, 0x04, 't', 'e', 's', 't', 0x00, 0x00,
         0x0a, 0x05, 0x01, 0x03, 0x00,
-          0x01, // 未サポートのオペコード
+          0xff, // 未サポートのオペコード (0x01 は block として実装済み)
           0x0b
     };
     ASSERT_EQ(engine5.Load(kWasmUnsupportedOpcode, sizeof(kWasmUnsupportedOpcode)), embwasm::WasmResult::kOk);
@@ -499,4 +499,298 @@ TEST(WasmEngineTest, CallStackOverflow) {
     embwasm::WasmValue result;
     // C++の再帰呼び出しを排除しているため、プロセスがクラッシュせずに安全にkErrorStackOverflowを返す
     EXPECT_EQ(engine.Execute("infinite_call", args, 1, &result, 1), embwasm::WasmResult::kErrorStackOverflow);
+}
+
+// =============================================================================
+// 新機能（制御フロー、グローバル、メモリ、浮動小数点）のテスト
+// =============================================================================
+
+TEST(WasmEngineTest, ControlFlowBlock) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // block { i32.const 1; br 0; i32.const 2; } i32.const 3; i32.add
+    // 結果: 1 + 3 = 4
+    constexpr uint8_t kWasmBlockBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x09, 0x01, 0x05, 'b', 'l', 'o', 'c', 'k', 0x00, 0x00,
+        0x0a, 0x0f, 0x01, 0x0d, 0x00,
+          0x01, 0x40,       // block void
+            0x41, 0x01,     // i32.const 1
+            0x0c, 0x00,     // br 0
+            0x41, 0x02,     // i32.const 2 (skipped)
+          0x0b,             // end
+          0x41, 0x03,       // i32.const 3
+          0x6a,             // i32.add
+          0x0b              // end
+    };
+
+    ASSERT_EQ(engine.Load(kWasmBlockBinary, sizeof(kWasmBlockBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+    ASSERT_EQ(engine.Execute("block", nullptr, 0, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 4);
+}
+
+TEST(WasmEngineTest, ControlFlowLoop) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // (i32) -> i32
+    // i32.const 0 (sum)
+    // local.get 0 (count)
+    // loop {
+    //   local.get 0
+    //   i32.eqz
+    //   br_if 1 (exit loop)
+    //   local.get 0
+    //   i32.add (sum += count)
+    //   local.get 0
+    //   i32.const 1
+    //   i32.sub
+    //   local.set 0 (count--)
+    //   br 0 (repeat)
+    // }
+    // 結果: 1からnまでの和
+    constexpr uint8_t kWasmLoopBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x08, 0x01, 0x04, 'l', 'o', 'o', 'p', 0x00, 0x00,
+        0x0a, 0x1f, 0x01, 0x1d, 0x00,
+          0x41, 0x00,       // sum = 0
+          0x01, 0x40,       // block void (for break)
+            0x03, 0x40,     // loop void
+              0x20, 0x00,   // local.get 0
+              0x45,         // i32.eqz
+              0x0d, 0x01,   // br_if 1 (break)
+              0x20, 0x00,   // local.get 0
+              0x6a,         // i32.add
+              0x20, 0x00,   // local.get 0
+              0x41, 0x01,   // i32.const 1
+              0x6b,         // i32.sub
+              0x21, 0x00,   // local.set 0
+              0x0c, 0x00,   // br 0 (continue)
+            0x0b,           // end loop
+          0x0b,             // end block
+          0x0b              // end func
+    };
+
+    ASSERT_EQ(engine.Load(kWasmLoopBinary, sizeof(kWasmLoopBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue args[1] = {{embwasm::WasmType::kI32, {10}}};
+    embwasm::WasmValue result;
+    ASSERT_EQ(engine.Execute("loop", args, 1, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 55);
+}
+
+TEST(WasmEngineTest, ControlFlowIfElse) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // (i32) -> i32
+    // local.get 0
+    // if (void) { i32.const 10 } else { i32.const 20 }
+    constexpr uint8_t kWasmIfElseBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x06, 0x01, 0x02, 'i', 'f', 0x00, 0x00,
+        0x0a, 0x0e, 0x01, 0x0c, 0x00,
+          0x20, 0x00,
+          0x04, 0x40,       // if void
+            0x41, 0x0a,
+          0x05,             // else
+            0x41, 0x14,
+          0x0b,             // end
+          0x0b              // end func
+    };
+
+    ASSERT_EQ(engine.Load(kWasmIfElseBinary, sizeof(kWasmIfElseBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+
+    // True (non-zero)
+    embwasm::WasmValue args1[1] = {{embwasm::WasmType::kI32, {1}}};
+    ASSERT_EQ(engine.Execute("if", args1, 1, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 10);
+
+    // False (zero)
+    embwasm::WasmValue args0[1] = {{embwasm::WasmType::kI32, {0}}};
+    ASSERT_EQ(engine.Execute("if", args0, 1, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 20);
+}
+
+TEST(WasmEngineTest, GlobalVariables) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // Global section: mutable i32 (init 100)
+    // func1: global.get 0
+    // func2: i32.const 50, global.set 0
+    constexpr uint8_t kWasmGlobalBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60, 0x00, 0x00,
+        0x03, 0x03, 0x02, 0x00, 0x01,
+        0x06, 0x06, 0x01, 0x7f, 0x01, 0x41, 0x64, 0x0b, // mutable i32, init 100
+        0x07, 0x11, 0x02, 0x03, 'g', 'e', 't', 0x00, 0x00, 0x03, 's', 'e', 't', 0x00, 0x01,
+        0x0a, 0x0b, 0x02,
+          0x04, 0x00, 0x23, 0x00, 0x0b, // body 0: global.get 0, end
+          0x04, 0x00, 0x41, 0x32, 0x24, 0x00, 0x0b  // body 1: i32.const 50, global.set 0, end
+    };
+
+    ASSERT_EQ(engine.Load(kWasmGlobalBinary, sizeof(kWasmGlobalBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+
+    // Initial value
+    ASSERT_EQ(engine.Execute("get", nullptr, 0, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 100);
+
+    // Set new value
+    ASSERT_EQ(engine.Execute("set", nullptr, 0, nullptr, 0), embwasm::WasmResult::kOk);
+
+    // New value
+    ASSERT_EQ(engine.Execute("get", nullptr, 0, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 50);
+}
+
+TEST(WasmEngineTest, MemoryLoadStore) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // Memory section (1 page)
+    // Data section (init 0x00 with "ABCD" = 0x44434241)
+    // load: i32.const 0, i32.load (0, 0)
+    // store: i32.const 4, i32.const 0x12345678, i32.store (0, 0)
+    constexpr uint8_t kWasmMemBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60, 0x00, 0x00,
+        0x03, 0x03, 0x02, 0x00, 0x01,
+        0x05, 0x03, 0x01, 0x00, 0x01, // Memory, 1 page
+        0x07, 0x13, 0x02, 0x04, 'l', 'o', 'a', 'd', 0x00, 0x00, 0x05, 's', 't', 'o', 'r', 'e', 0x00, 0x01,
+        0x0a, 0x11, 0x02,
+          0x06, 0x00, 0x41, 0x00, 0x28, 0x00, 0x00, 0x0b, // load: i32.const 0, i32.load
+          0x08, 0x00, 0x41, 0x04, 0x41, 0xf8, 0xac, 0xd1, 0x91, 0x01, 0x36, 0x00, 0x00, 0x0b, // store: i32.const 4, i32.const ..., i32.store
+        0x0b, 0x08, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x04, 'A', 'B', 'C', 'D' // Data: offset 0, "ABCD"
+    };
+
+    ASSERT_EQ(engine.Load(kWasmMemBinary, sizeof(kWasmMemBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+
+    // Load initial "ABCD"
+    ASSERT_EQ(engine.Execute("load", nullptr, 0, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.value.i32, 0x44434241);
+
+    // Store new value at offset 4
+    ASSERT_EQ(engine.Execute("store", nullptr, 0, nullptr, 0), embwasm::WasmResult::kOk);
+
+    // Check new value (change code to load from offset 4)
+    // 手抜きで、直接 linear_memory を覗く
+    const uint8_t* mem = engine.GetLinearMemory();
+    int32_t val;
+    std::memcpy(&val, mem + 4, 4);
+    EXPECT_EQ(val, 0x12345678);
+}
+
+TEST(WasmEngineTest, FloatingPointOperations) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // (f32, f32) -> f32 (f32.add)
+    // (f64, f64) -> f64 (f64.mul)
+    constexpr uint8_t kWasmFloatBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x0b, 0x02, 
+          0x60, 0x02, 0x7d, 0x7d, 0x01, 0x7d,
+          0x60, 0x02, 0x7c, 0x7c, 0x01, 0x7c,
+        0x03, 0x03, 0x02, 0x00, 0x01,
+        0x07, 0x13, 0x02, 
+          0x07, 'f', '3', '2', '_', 'a', 'd', 'd', 0x00, 0x00,
+          0x07, 'f', '6', '4', '_', 'm', 'u', 'l', 0x00, 0x01,
+        0x0a, 0x0d, 0x02,
+          0x04, 0x00, 0x20, 0x00, 0x20, 0x01, 0x92, 0x0b, // f32.add
+          0x04, 0x00, 0x20, 0x00, 0x20, 0x01, 0xa2, 0x0b  // f64.mul
+    };
+
+    ASSERT_EQ(engine.Load(kWasmFloatBinary, sizeof(kWasmFloatBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+
+    // f32.add(1.5, 2.25) = 3.75
+    embwasm::WasmValue args32[2] = {
+        {embwasm::WasmType::kF32, {0}},
+        {embwasm::WasmType::kF32, {0}}
+    };
+    args32[0].value.f32 = 1.5f;
+    args32[1].value.f32 = 2.25f;
+    // results[0] = stack_[--stack_top_] されるので [0] に 3.75f が入る
+    ASSERT_EQ(engine.Execute("f32_add", args32, 2, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.type, embwasm::WasmType::kF32);
+    EXPECT_FLOAT_EQ(result.value.f32, 3.75f);
+
+    // f64.mul(2.0, 3.5) = 7.0
+    embwasm::WasmValue args64[2] = {
+        {embwasm::WasmType::kF64, {0}},
+        {embwasm::WasmType::kF64, {0}}
+    };
+    args64[0].value.f64 = 2.0;
+    args64[1].value.f64 = 3.5;
+    // results[0] = stack_[--stack_top_] されるので [0] に 7.0 が入る
+    ASSERT_EQ(engine.Execute("f64_mul", args64, 2, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.type, embwasm::WasmType::kF64);
+    EXPECT_DOUBLE_EQ(result.value.f64, 7.0);
+}
+
+TEST(WasmEngineTest, ControlFlowBlockSimple) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // block void; i32.const 42; end
+    // [0] magic, [4] version
+    // [8] type section: size 5, 1 type, func, 0 params, 1 res (i32)
+    // [15] func section: size 2, 1 func, type idx 0
+    // [19] export section: size 8, 1 export, "test", func 0
+    // [29] code section: size 7, 1 body, size 5, 0 locals, block void (0x01 0x40), i32.const 42 (0x41 0x2a), end (0x0b), end (0x0b)
+    constexpr uint8_t kWasmBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x08, 0x01, 0x04, 't', 'e', 's', 't', 0x00, 0x00,
+        0x0a, 0x07, 0x01, 0x05, 0x00,
+          0x01, 0x40,       // block void
+          0x41, 0x2a,       // i32.const 42
+          0x0b,             // end (block)
+          0x0b              // end (func)
+    };
+
+    EXPECT_EQ(engine.Load(kWasmBinary, sizeof(kWasmBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+    if (engine.GetExportFunctionIndex("test") != -1) {
+        engine.Execute("test", nullptr, 0, &result, 1);
+    }
+}
+
+TEST(WasmEngineTest, FloatingPointOperationsI64) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // f64.div(10.0, 4.0) = 2.5
+    // Global section: mutable f64 (init 0.0)
+    constexpr uint8_t kWasmFloatI64Binary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x06, 0x01, 0x60, 0x00, 0x01, 0x7c, // () -> f64
+        0x03, 0x02, 0x01, 0x00,
+        0x06, 0x06, 0x01, 0x7c, 0x01, 0x42, 0x00, 0x0b, // mutable f64, init 0.0 (using i64.const 0 as placeholder)
+        0x07, 0x07, 0x01, 0x03, 'd', 'i', 'v', 0x00, 0x00,
+        0x0a, 0x17, 0x01, 0x15, 0x00,
+          0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x40, // f64.const 10.0
+          0x44, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x40, // f64.const 4.0
+          0xa3, // f64.div
+          0x0b
+    };
+
+    ASSERT_EQ(engine.Load(kWasmFloatI64Binary, sizeof(kWasmFloatI64Binary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue result;
+
+    ASSERT_EQ(engine.Execute("div", nullptr, 0, &result, 1), embwasm::WasmResult::kOk);
+    EXPECT_EQ(result.type, embwasm::WasmType::kF64);
+    EXPECT_DOUBLE_EQ(result.value.f64, 2.5);
 }
