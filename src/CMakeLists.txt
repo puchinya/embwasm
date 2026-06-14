@@ -18,7 +18,6 @@ endif()
 # コアライブラリの定義 (自動生成された GEN_CPP は除外)
 add_library(embwasm
     wasm_memory_pool.cpp
-    wasm_api.cpp
     wasm_engine.cpp
     ${PLATFORM_SRC}
 )

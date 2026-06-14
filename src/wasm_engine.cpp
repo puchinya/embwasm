@@ -400,265 +400,279 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
     while (call_stack_top_ > 0) {
         WasmFrame& frame = call_stack_[call_stack_top_ - 1];
 
-        if (frame.ip >= frame.limit) {
-            --call_stack_top_;
-            continue;
-        }
+        // 高速化のため、現在実行中のフレーム状態（IP、LIMIT、ローカル変数）をローカル変数にキャッシュ
+        const uint8_t* ip = frame.ip;
+        const uint8_t* limit = frame.limit;
+        WasmValue* locals = frame.locals;
+        uint32_t total_locals = frame.total_locals;
 
-        uint8_t op = *frame.ip++;
-        switch (op) {
-            case 0x00: // nop
-                break;
+        while (ip < limit) {
+            uint8_t op = *ip++;
+            switch (op) {
+                case 0x00: // nop
+                    break;
 
-            case 0x0F: // return
-            case 0x0B: // end
-                // 現在のフレームをポップ
-                --call_stack_top_;
-                break;
+                case 0x0F: // return
+                case 0x0B: // end
+                    // 現在のフレームをポップ
+                    --call_stack_top_;
+                    goto frame_changed;
 
-            case 0x10: { // call <func_index>
-                uint32_t target_idx = DecodeVarUint32(frame.ip, frame.limit);
-                if (target_idx >= function_count_) return WasmResult::kErrorFunctionNotFound;
-                const WasmFunction* target_func = &functions_[target_idx];
+                case 0x10: { // call <func_index>
+                    uint32_t target_idx = DecodeVarUint32(ip, limit);
+                    if (target_idx >= function_count_) return WasmResult::kErrorFunctionNotFound;
+                    const WasmFunction* target_func = &functions_[target_idx];
 
-                if (target_func->is_import) {
-                    if (target_func->type_index >= signature_count_) {
-                        return WasmResult::kErrorRuntimeError;
-                    }
-                    const WasmTypeSignature& sig = signatures_[target_func->type_index];
+                    if (target_func->is_import) {
+                        if (target_func->type_index >= signature_count_) {
+                            return WasmResult::kErrorRuntimeError;
+                        }
+                        const WasmTypeSignature& sig = signatures_[target_func->type_index];
 
-                    if (stack_top_ < sig.param_count) {
-                        return WasmResult::kErrorRuntimeError;
-                    }
+                        if (stack_top_ < sig.param_count) {
+                            return WasmResult::kErrorRuntimeError;
+                        }
 
-                    WasmValue call_args[WasmTypeSignature::kMaxParams];
-                    for (uint32_t i = 0; i < sig.param_count; ++i) {
-                        call_args[sig.param_count - 1 - i] = stack_[--stack_top_];
-                    }
+                        WasmValue call_args[WasmTypeSignature::kMaxParams];
+                        for (uint32_t i = 0; i < sig.param_count; ++i) {
+                            call_args[sig.param_count - 1 - i] = stack_[--stack_top_];
+                        }
 
-                    WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-                    WasmResult res = target_func->host_func(call_args, sig.param_count, call_results, sig.result_count, nullptr);
-                    if (res != WasmResult::kOk) return res;
+                        WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
+                        WasmResult res = target_func->host_func(call_args, sig.param_count, call_results, sig.result_count, nullptr);
+                        if (res != WasmResult::kOk) return res;
 
-                    for (uint32_t i = 0; i < sig.result_count; ++i) {
-                        if (stack_top_ >= kWasmStackSize) {
+                        for (uint32_t i = 0; i < sig.result_count; ++i) {
+                            if (stack_top_ >= kWasmStackSize) {
+                                return WasmResult::kErrorStackOverflow;
+                            }
+                            stack_[stack_top_++] = call_results[i];
+                            if (stack_top_ > max_stack_depth_) {
+                                max_stack_depth_ = stack_top_;
+                            }
+                        }
+                    } else {
+                        // 内部関数の実行（新しいフレームをコールスタックに積む）
+                        if (call_stack_top_ >= kWasmCallStackSize) {
                             return WasmResult::kErrorStackOverflow;
                         }
-                        stack_[stack_top_++] = call_results[i];
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
+                        if (target_func->type_index >= signature_count_) {
+                            return WasmResult::kErrorRuntimeError;
                         }
-                    }
-                } else {
-                    // 内部関数の実行（新しいフレームをコールスタックに積む）
-                    if (call_stack_top_ >= kWasmCallStackSize) {
-                        return WasmResult::kErrorStackOverflow;
-                    }
-                    if (target_func->type_index >= signature_count_) {
-                        return WasmResult::kErrorRuntimeError;
-                    }
-                    const WasmTypeSignature& sig = signatures_[target_func->type_index];
-                    uint32_t total_locals = sig.param_count + target_func->internal_func.local_count;
-                    if (total_locals > kMaxLocals) {
-                        return WasmResult::kErrorOutOfMemory;
-                    }
+                        const WasmTypeSignature& sig = signatures_[target_func->type_index];
+                        uint32_t target_total_locals = sig.param_count + target_func->internal_func.local_count;
+                        if (target_total_locals > kMaxLocals) {
+                            return WasmResult::kErrorOutOfMemory;
+                        }
 
-                    WasmFrame& new_frame = call_stack_[call_stack_top_++];
-                    if (call_stack_top_ > max_call_stack_depth_) {
-                        max_call_stack_depth_ = call_stack_top_;
-                    }
-                    new_frame.func = target_func;
-                    new_frame.ip = target_func->internal_func.code_ptr;
-                    new_frame.limit = target_func->internal_func.code_ptr + target_func->internal_func.code_size;
-                    new_frame.total_locals = total_locals;
+                        // 遷移前に現在のフレームのIPを書き戻す
+                        frame.ip = ip;
 
-                    if (stack_top_ < sig.param_count) {
-                        return WasmResult::kErrorRuntimeError;
+                        WasmFrame& new_frame = call_stack_[call_stack_top_++];
+                        if (call_stack_top_ > max_call_stack_depth_) {
+                            max_call_stack_depth_ = call_stack_top_;
+                        }
+                        new_frame.func = target_func;
+                        new_frame.ip = target_func->internal_func.code_ptr;
+                        new_frame.limit = target_func->internal_func.code_ptr + target_func->internal_func.code_size;
+                        new_frame.total_locals = target_total_locals;
+
+                        if (stack_top_ < sig.param_count) {
+                            return WasmResult::kErrorRuntimeError;
+                        }
+                        for (uint32_t i = 0; i < sig.param_count; ++i) {
+                            new_frame.locals[sig.param_count - 1 - i] = stack_[--stack_top_];
+                        }
+                        
+                        for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
+                            new_frame.locals[i] = WasmValue{WasmType::kI32, {0}};
+                        }
+                        goto frame_changed;
                     }
-                    for (uint32_t i = 0; i < sig.param_count; ++i) {
-                        new_frame.locals[sig.param_count - 1 - i] = stack_[--stack_top_];
+                    break;
+                }
+
+                case 0x1A: { // drop
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    --stack_top_;
+                    break;
+                }
+
+                case 0x20: { // local.get <local_idx>
+                    uint32_t local_idx = DecodeVarUint32(ip, limit);
+                    if (local_idx >= total_locals) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+                    stack_[stack_top_++] = locals[local_idx];
+                    if (stack_top_ > max_stack_depth_) {
+                        max_stack_depth_ = stack_top_;
                     }
+                    break;
+                }
+
+                case 0x21: { // local.set <local_idx>
+                    uint32_t local_idx = DecodeVarUint32(ip, limit);
+                    if (local_idx >= total_locals) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    locals[local_idx] = stack_[--stack_top_];
+                    break;
+                }
+
+                case 0x22: { // local.tee <local_idx>
+                    uint32_t local_idx = DecodeVarUint32(ip, limit);
+                    if (local_idx >= total_locals) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    locals[local_idx] = stack_[stack_top_ - 1]; // ポップせずにコピー
+                    break;
+                }
+
+                case 0x41: { // i32.const <value>
+                    int32_t val = DecodeVarInt32(ip, limit);
+                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+                    stack_[stack_top_++] = WasmValue{WasmType::kI32, {val}};
+                    if (stack_top_ > max_stack_depth_) {
+                        max_stack_depth_ = stack_top_;
+                    }
+                    break;
+                }
+
+                case 0x42: { // i64.const <value>
+                    int64_t val = DecodeVarInt64(ip, limit);
+                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+                    stack_[stack_top_++] = WasmValue{WasmType::kI64, {val}};
+                    if (stack_top_ > max_stack_depth_) {
+                        max_stack_depth_ = stack_top_;
+                    }
+                    break;
+                }
+
+                case 0x45: { // i32.eqz
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    WasmValue val = stack_[stack_top_ - 1];
+                    if (val.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
+                    stack_[stack_top_ - 1] = WasmValue{WasmType::kI32, {(val.value.i32 == 0) ? 1 : 0}};
+                    break;
+                }
+
+                // i32 比較演算子
+                case 0x46:   // i32.eq
+                case 0x47:   // i32.ne
+                case 0x48:   // i32.lt_s
+                case 0x49:   // i32.lt_u
+                case 0x4A:   // i32.gt_s
+                case 0x4B:   // i32.gt_u
+                case 0x4C:   // i32.le_s
+                case 0x4D:   // i32.le_u
+                case 0x4E:   // i32.ge_s
+                case 0x4F: { // i32.ge_u
+                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    WasmValue b = stack_[--stack_top_];
+                    WasmValue a = stack_[--stack_top_];
+                    if (a.type != WasmType::kI32 || b.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
                     
-                    for (uint32_t i = sig.param_count; i < total_locals; ++i) {
-                        new_frame.locals[i] = WasmValue{WasmType::kI32, {0}};
+                    int32_t res = 0;
+                    switch (op) {
+                        case 0x46: res = (a.value.i32 == b.value.i32) ? 1 : 0; break;
+                        case 0x47: res = (a.value.i32 != b.value.i32) ? 1 : 0; break;
+                        case 0x48: res = (a.value.i32 < b.value.i32) ? 1 : 0; break;
+                        case 0x49: res = (static_cast<uint32_t>(a.value.i32) < static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
+                        case 0x4A: res = (a.value.i32 > b.value.i32) ? 1 : 0; break;
+                        case 0x4B: res = (static_cast<uint32_t>(a.value.i32) > static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
+                        case 0x4C: res = (a.value.i32 <= b.value.i32) ? 1 : 0; break;
+                        case 0x4D: res = (static_cast<uint32_t>(a.value.i32) <= static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
+                        case 0x4E: res = (a.value.i32 >= b.value.i32) ? 1 : 0; break;
+                        case 0x4F: res = (static_cast<uint32_t>(a.value.i32) >= static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
                     }
+                    stack_[stack_top_++] = WasmValue{WasmType::kI32, {res}};
+                    break;
                 }
-                break;
-            }
 
-            case 0x1A: { // drop
-                if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
-                --stack_top_;
-                break;
-            }
-
-            case 0x20: { // local.get <local_idx>
-                uint32_t local_idx = DecodeVarUint32(frame.ip, frame.limit);
-                if (local_idx >= frame.total_locals) return WasmResult::kErrorRuntimeError;
-                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
-                stack_[stack_top_++] = frame.locals[local_idx];
-                if (stack_top_ > max_stack_depth_) {
-                    max_stack_depth_ = stack_top_;
+                case 0x67: { // i32.clz
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    WasmValue val = stack_[stack_top_ - 1];
+                    if (val.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
+                    
+                    stack_[stack_top_ - 1] = WasmValue{WasmType::kI32, {static_cast<int32_t>(CountLeadingZeros(static_cast<uint32_t>(val.value.i32)))}};
+                    break;
                 }
-                break;
-            }
 
-            case 0x21: { // local.set <local_idx>
-                uint32_t local_idx = DecodeVarUint32(frame.ip, frame.limit);
-                if (local_idx >= frame.total_locals) return WasmResult::kErrorRuntimeError;
-                if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
-                frame.locals[local_idx] = stack_[--stack_top_];
-                break;
-            }
+                // i32 算術・論理演算子
+                case 0x6A:   // i32.add
+                case 0x6B:   // i32.sub
+                case 0x6C:   // i32.mul
+                case 0x6D:   // i32.div_s
+                case 0x6E:   // i32.div_u
+                case 0x71:   // i32.and
+                case 0x72:   // i32.or
+                case 0x73:   // i32.xor
+                case 0x74:   // i32.shl
+                case 0x75:   // i32.shr_s
+                case 0x76: { // i32.shr_u
+                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    WasmValue b = stack_[--stack_top_];
+                    WasmValue a = stack_[--stack_top_];
+                    if (a.type != WasmType::kI32 || b.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
 
-            case 0x22: { // local.tee <local_idx>
-                uint32_t local_idx = DecodeVarUint32(frame.ip, frame.limit);
-                if (local_idx >= frame.total_locals) return WasmResult::kErrorRuntimeError;
-                if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
-                frame.locals[local_idx] = stack_[stack_top_ - 1]; // ポップせずにコピー
-                break;
-            }
-
-            case 0x41: { // i32.const <value>
-                int32_t val = DecodeVarInt32(frame.ip, frame.limit);
-                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
-                stack_[stack_top_++] = WasmValue{WasmType::kI32, {val}};
-                if (stack_top_ > max_stack_depth_) {
-                    max_stack_depth_ = stack_top_;
+                    int32_t res = 0;
+                    switch (op) {
+                        case 0x6A: res = a.value.i32 + b.value.i32; break;
+                        case 0x6B: res = a.value.i32 - b.value.i32; break;
+                        case 0x6C: res = a.value.i32 * b.value.i32; break;
+                        case 0x6D: 
+                            if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
+                            res = a.value.i32 / b.value.i32; 
+                            break;
+                        case 0x6E: 
+                            if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
+                            res = static_cast<int32_t>(static_cast<uint32_t>(a.value.i32) / static_cast<uint32_t>(b.value.i32)); 
+                            break;
+                        case 0x71: res = a.value.i32 & b.value.i32; break;
+                        case 0x72: res = a.value.i32 | b.value.i32; break;
+                        case 0x73: res = a.value.i32 ^ b.value.i32; break;
+                        case 0x74: res = a.value.i32 << (b.value.i32 & 31); break;
+                        case 0x75: res = a.value.i32 >> (b.value.i32 & 31); break;
+                        case 0x76: res = static_cast<int32_t>(static_cast<uint32_t>(a.value.i32) >> (b.value.i32 & 31)); break;
+                    }
+                    stack_[stack_top_++] = WasmValue{WasmType::kI32, {res}};
+                    break;
                 }
-                break;
-            }
 
-            case 0x42: { // i64.const <value>
-                int64_t val = DecodeVarInt64(frame.ip, frame.limit);
-                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
-                stack_[stack_top_++] = WasmValue{WasmType::kI64, {val}};
-                if (stack_top_ > max_stack_depth_) {
-                    max_stack_depth_ = stack_top_;
+                // i64 算術・論理演算子
+                case 0x7C:   // i64.add
+                case 0x7D:   // i64.sub
+                case 0x7E:   // i64.mul
+                case 0x83:   // i64.and
+                case 0x84:   // i64.or
+                case 0x85: { // i64.xor
+                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    WasmValue b = stack_[--stack_top_];
+                    WasmValue a = stack_[--stack_top_];
+                    if (a.type != WasmType::kI64 || b.type != WasmType::kI64) return WasmResult::kErrorRuntimeError;
+
+                    int64_t res = 0;
+                    switch (op) {
+                        case 0x7C: res = a.value.i64 + b.value.i64; break;
+                        case 0x7D: res = a.value.i64 - b.value.i64; break;
+                        case 0x7E: res = a.value.i64 * b.value.i64; break;
+                        case 0x83: res = a.value.i64 & b.value.i64; break;
+                        case 0x84: res = a.value.i64 | b.value.i64; break;
+                        case 0x85: res = a.value.i64 ^ b.value.i64; break;
+                    }
+                    stack_[stack_top_++] = WasmValue{WasmType::kI64, {res}};
+                    break;
                 }
-                break;
+
+                default:
+                    // 未対応のオペコード
+                    return WasmResult::kErrorRuntimeError;
             }
-
-            case 0x45: { // i32.eqz
-                if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
-                WasmValue val = stack_[stack_top_ - 1];
-                if (val.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
-                stack_[stack_top_ - 1] = WasmValue{WasmType::kI32, {(val.value.i32 == 0) ? 1 : 0}};
-                break;
-            }
-
-            // i32 比較演算子
-            case 0x46:   // i32.eq
-            case 0x47:   // i32.ne
-            case 0x48:   // i32.lt_s
-            case 0x49:   // i32.lt_u
-            case 0x4A:   // i32.gt_s
-            case 0x4B:   // i32.gt_u
-            case 0x4C:   // i32.le_s
-            case 0x4D:   // i32.le_u
-            case 0x4E:   // i32.ge_s
-            case 0x4F: { // i32.ge_u
-                if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
-                WasmValue b = stack_[--stack_top_];
-                WasmValue a = stack_[--stack_top_];
-                if (a.type != WasmType::kI32 || b.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
-                
-                int32_t res = 0;
-                switch (op) {
-                    case 0x46: res = (a.value.i32 == b.value.i32) ? 1 : 0; break;
-                    case 0x47: res = (a.value.i32 != b.value.i32) ? 1 : 0; break;
-                    case 0x48: res = (a.value.i32 < b.value.i32) ? 1 : 0; break;
-                    case 0x49: res = (static_cast<uint32_t>(a.value.i32) < static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
-                    case 0x4A: res = (a.value.i32 > b.value.i32) ? 1 : 0; break;
-                    case 0x4B: res = (static_cast<uint32_t>(a.value.i32) > static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
-                    case 0x4C: res = (a.value.i32 <= b.value.i32) ? 1 : 0; break;
-                    case 0x4D: res = (static_cast<uint32_t>(a.value.i32) <= static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
-                    case 0x4E: res = (a.value.i32 >= b.value.i32) ? 1 : 0; break;
-                    case 0x4F: res = (static_cast<uint32_t>(a.value.i32) >= static_cast<uint32_t>(b.value.i32)) ? 1 : 0; break;
-                }
-                stack_[stack_top_++] = WasmValue{WasmType::kI32, {res}};
-                break;
-            }
-
-            case 0x67: { // i32.clz
-                if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
-                WasmValue val = stack_[stack_top_ - 1];
-                if (val.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
-                
-                stack_[stack_top_ - 1] = WasmValue{WasmType::kI32, {static_cast<int32_t>(CountLeadingZeros(static_cast<uint32_t>(val.value.i32)))}};
-                break;
-            }
-
-            // i32 算術・論理演算子
-            case 0x6A:   // i32.add
-            case 0x6B:   // i32.sub
-            case 0x6C:   // i32.mul
-            case 0x6D:   // i32.div_s
-            case 0x6E:   // i32.div_u
-            case 0x71:   // i32.and
-            case 0x72:   // i32.or
-            case 0x73:   // i32.xor
-            case 0x74:   // i32.shl
-            case 0x75:   // i32.shr_s
-            case 0x76: { // i32.shr_u
-                if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
-                WasmValue b = stack_[--stack_top_];
-                WasmValue a = stack_[--stack_top_];
-                if (a.type != WasmType::kI32 || b.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
-
-                int32_t res = 0;
-                switch (op) {
-                    case 0x6A: res = a.value.i32 + b.value.i32; break;
-                    case 0x6B: res = a.value.i32 - b.value.i32; break;
-                    case 0x6C: res = a.value.i32 * b.value.i32; break;
-                    case 0x6D: 
-                        if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
-                        res = a.value.i32 / b.value.i32; 
-                        break;
-                    case 0x6E: 
-                        if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
-                        res = static_cast<int32_t>(static_cast<uint32_t>(a.value.i32) / static_cast<uint32_t>(b.value.i32)); 
-                        break;
-                    case 0x71: res = a.value.i32 & b.value.i32; break;
-                    case 0x72: res = a.value.i32 | b.value.i32; break;
-                    case 0x73: res = a.value.i32 ^ b.value.i32; break;
-                    case 0x74: res = a.value.i32 << (b.value.i32 & 31); break;
-                    case 0x75: res = a.value.i32 >> (b.value.i32 & 31); break;
-                    case 0x76: res = static_cast<int32_t>(static_cast<uint32_t>(a.value.i32) >> (b.value.i32 & 31)); break;
-                }
-                stack_[stack_top_++] = WasmValue{WasmType::kI32, {res}};
-                break;
-            }
-
-            // i64 算術・論理演算子
-            case 0x7C:   // i64.add
-            case 0x7D:   // i64.sub
-            case 0x7E:   // i64.mul
-            case 0x83:   // i64.and
-            case 0x84:   // i64.or
-            case 0x85: { // i64.xor
-                if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
-                WasmValue b = stack_[--stack_top_];
-                WasmValue a = stack_[--stack_top_];
-                if (a.type != WasmType::kI64 || b.type != WasmType::kI64) return WasmResult::kErrorRuntimeError;
-
-                int64_t res = 0;
-                switch (op) {
-                    case 0x7C: res = a.value.i64 + b.value.i64; break;
-                    case 0x7D: res = a.value.i64 - b.value.i64; break;
-                    case 0x7E: res = a.value.i64 * b.value.i64; break;
-                    case 0x83: res = a.value.i64 & b.value.i64; break;
-                    case 0x84: res = a.value.i64 | b.value.i64; break;
-                    case 0x85: res = a.value.i64 ^ b.value.i64; break;
-                }
-                stack_[stack_top_++] = WasmValue{WasmType::kI64, {res}};
-                break;
-            }
-
-            default:
-                // 未対応のオペコード
-                return WasmResult::kErrorRuntimeError;
         }
+
+        // 関数の末尾に達した場合は暗黙のリターン
+        frame.ip = ip;
+        --call_stack_top_;
+
+    frame_changed:
+        continue;
     }
 
     return WasmResult::kOk;
