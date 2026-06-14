@@ -26,11 +26,16 @@ static inline uint32_t DecodeVarUint32(const uint8_t*& cursor, const uint8_t* li
     
     while (cursor < limit) {
         uint8_t raw_byte = *cursor++;
-        decoded_value |= static_cast<uint32_t>(raw_byte & 0x7F) << shift_amount;
+        if (shift_amount < 32) {
+            decoded_value |= static_cast<uint32_t>(raw_byte & 0x7F) << shift_amount;
+        }
         if ((raw_byte & 0x80) == 0) {
             break;
         }
         shift_amount += 7;
+        if (shift_amount >= 35) { // 32-bit LEB128 is at most 5 bytes
+            break;
+        }
     }
     return decoded_value;
 }
@@ -43,16 +48,21 @@ static inline int32_t DecodeVarInt32(const uint8_t*& cursor, const uint8_t* limi
     
     while (cursor < limit) {
         raw_byte = *cursor++;
-        decoded_value |= static_cast<int32_t>(raw_byte & 0x7F) << shift_amount;
+        if (shift_amount < 32) {
+            decoded_value |= static_cast<int32_t>(raw_byte & 0x7F) << shift_amount;
+        }
         shift_amount += 7;
         if ((raw_byte & 0x80) == 0) {
+            break;
+        }
+        if (shift_amount >= 35) { // 32-bit LEB128 is at most 5 bytes
             break;
         }
     }
     
     // Sign extension for negative LEB128 numbers
     if ((shift_amount < 32) && (raw_byte & 0x40)) {
-        decoded_value |= (~0U << shift_amount);
+        decoded_value |= static_cast<int32_t>(~0U << shift_amount);
     }
     return decoded_value;
 }
@@ -65,9 +75,14 @@ static inline int64_t DecodeVarInt64(const uint8_t*& cursor, const uint8_t* limi
     
     while (cursor < limit) {
         raw_byte = *cursor++;
-        decoded_value |= static_cast<int64_t>(raw_byte & 0x7F) << shift_amount;
+        if (shift_amount < 64) {
+            decoded_value |= static_cast<int64_t>(raw_byte & 0x7F) << shift_amount;
+        }
         shift_amount += 7;
         if ((raw_byte & 0x80) == 0) {
+            break;
+        }
+        if (shift_amount >= 70) { // 64-bit LEB128 is at most 10 bytes
             break;
         }
     }
@@ -124,8 +139,8 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
     while (ptr < end) {
         uint8_t section_id = *ptr++;
         uint32_t section_size = DecodeVarUint32(ptr, end);
+        if (section_size > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorRuntimeError;
         const uint8_t* section_end = ptr + section_size;
-        if (section_end > end) return WasmResult::kErrorRuntimeError;
 
         switch (section_id) {
             case 1: { // Type Section (型定義)
@@ -261,12 +276,17 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         val.value.i64 = DecodeVarInt64(ptr, section_end);
                     } else if (opcode == 0x43) { // f32.const
                         val = {WasmType::kF32, {0}};
+                        if (4 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
                         std::memcpy(&val.value.f32, ptr, 4);
                         ptr += 4;
                     } else if (opcode == 0x44) { // f64.const
                         val = {WasmType::kF64, {0}};
+                        if (8 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
                         std::memcpy(&val.value.f64, ptr, 8);
                         ptr += 8;
+                    } else {
+                        // 未サポートまたは無効な初期化式
+                        return WasmResult::kErrorRuntimeError;
                     }
                     if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
                     
@@ -285,9 +305,14 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     }
                     
                     // 1ページ = 64KB。ベアメタルでは制限値を上限として確保する。
-                    std::size_t size_to_alloc = initial_pages * 65536;
-                    if (size_to_alloc > kMaxLinearMemorySize) {
+                    std::size_t size_to_alloc = 0;
+                    if (initial_pages > (kMaxLinearMemorySize / 65536) + 1) {
                         size_to_alloc = kMaxLinearMemorySize;
+                    } else {
+                        size_to_alloc = static_cast<std::size_t>(initial_pages) * 65536;
+                        if (size_to_alloc > kMaxLinearMemorySize) {
+                            size_to_alloc = kMaxLinearMemorySize;
+                        }
                     }
                     
                     linear_memory_ptr_ = static_cast<uint8_t*>(pool_.Allocate(size_to_alloc));
@@ -307,14 +332,19 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     
                     // Offset expression (e.g., i32.const offset)
                     uint8_t opcode = *ptr++;
-                    uint32_t offset = 0;
-                    if (opcode == 0x41) { // i32.const
-                        offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
+                    if (opcode != 0x41) { // i32.const のみをサポート
+                        return WasmResult::kErrorRuntimeError;
                     }
+                    uint32_t offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
                     if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
                     
                     uint32_t data_size = DecodeVarUint32(ptr, section_end);
-                    if (linear_memory_ptr_ && offset + data_size <= linear_memory_size_) {
+                    if (data_size > static_cast<std::size_t>(section_end - ptr)) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
+                    
+                    uint64_t end_offset = static_cast<uint64_t>(offset) + data_size;
+                    if (linear_memory_ptr_ && end_offset <= linear_memory_size_) {
                         std::memcpy(linear_memory_ptr_ + offset, ptr, data_size);
                     }
                     ptr += data_size;
@@ -326,6 +356,9 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                 uint32_t code_count = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < code_count; ++i) {
                     uint32_t body_size = DecodeVarUint32(ptr, section_end);
+                    if (body_size > static_cast<std::size_t>(section_end - ptr)) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
                     const uint8_t* body_end = ptr + body_size;
 
                     // ローカル変数の宣言数をパース
@@ -333,6 +366,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     uint32_t local_count = 0;
                     for (uint32_t j = 0; j < local_decls; ++j) {
                         uint32_t count = DecodeVarUint32(ptr, body_end);
+                        if (ptr >= body_end) return WasmResult::kErrorRuntimeError;
                         uint8_t type = *ptr++;
                         (void)type;
                         local_count += count;
@@ -553,11 +587,14 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
         while (ip < limit) {
             uint8_t op = *ip++;
             switch (op) {
-                case 0x00: // nop
+                case 0x00: // unreachable
+                    return WasmResult::kErrorRuntimeError;
+
+                case 0x01: // nop
                     break;
 
-                case 0x01:   // block
-                case 0x02: { // loop
+                case 0x02:   // block
+                case 0x03: { // loop
                     uint8_t block_type = *ip++; // とりあえず単一戻り値か無しの簡易対応
                     (void)block_type;
                     
@@ -567,14 +604,14 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     label.opcode = op;
                     label.stack_top = stack_top_;
                     
-                    if (op == 0x01) { // block
+                    if (op == 0x02) { // block
                         // 対応する end を探す (ネストを考慮)
                         // 各オペコードの引数バイトを正しくスキップしながら探索する
                         const uint8_t* search_ptr = ip;
                         int nest_level = 0;
                         while (search_ptr < limit) {
                             uint8_t s_op = *search_ptr++;
-                            if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) {
+                            if (s_op == 0x02 || s_op == 0x03 || s_op == 0x04) {
                                 // block / loop / if: ブロック型バイト1バイトをスキップ
                                 if (search_ptr < limit) search_ptr++;
                                 nest_level++;
@@ -653,7 +690,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     int nest_level = 0;
                     while (search_ptr < limit) {
                         uint8_t s_op = *search_ptr++;
-                        if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) {
+                        if (s_op == 0x02 || s_op == 0x03 || s_op == 0x04) {
                             if (search_ptr < limit) search_ptr++;
                             nest_level++;
                         } else if (s_op == 0x05) { // else
@@ -705,6 +742,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     // if ブロックの実行が終わって else に到達した場合は end までジャンプ
                     if (frame.label_stack_top == 0) return WasmResult::kErrorRuntimeError;
                     ip = frame.labels[frame.label_stack_top - 1].pc;
+                    frame.label_stack_top--; // if ブロックのラベルをポップする
                     break;
                 }
 
@@ -720,11 +758,38 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     if (jump) {
                         if (label_idx >= frame.label_stack_top) return WasmResult::kErrorRuntimeError;
                         WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - label_idx];
+
+                        // データスタックの巻き戻し (Unwind)
+                        // 脱出するブロックが結果を返す場合 (スタックトップが元の位置より高い場合) は結果を保護する
+                        // ただし、loopの場合は結果ではなくループ入力を指すため保護しない
+                        WasmValue ret_val = {};
+                        bool has_result = false;
+                        if (target_label.opcode != 0x03) {
+                            if (stack_top_ > target_label.stack_top) {
+                                ret_val = stack_[stack_top_ - 1];
+                                has_result = true;
+                            }
+                        }
+
+                        stack_top_ = target_label.stack_top;
+                        if (has_result) {
+                            stack_[stack_top_++] = ret_val;
+                        }
+
                         // label.pc は:
                         //   block/if の場合: end の次のバイト（end 後）を指す
                         //   loop の場合: ループ本体の先頭を指す
                         ip = target_label.pc;
-                        frame.label_stack_top -= (label_idx + 1);
+                        frame.ip = ip;
+
+                        if (target_label.opcode == 0x03) {
+                            // loop の場合はループ先頭に戻るため、loop ラベル自体はポップせず、それより内側のラベルのみポップする
+                            frame.label_stack_top -= label_idx;
+                        } else {
+                            // block / if の場合はブロックを抜けるため、そのラベルも含めてポップする
+                            frame.label_stack_top -= (label_idx + 1);
+                        }
+
                         goto frame_changed; // ip を更新したのでループを抜ける
                     }
                     break;
@@ -896,7 +961,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     uint32_t offset = DecodeVarUint32(ip, limit);
                     if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
                     uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
-                    uint32_t addr = base + offset;
+                    uint64_t addr = static_cast<uint64_t>(base) + offset;
                     if (!linear_memory_ptr_ || addr + 4 > linear_memory_size_) return WasmResult::kErrorRuntimeError;
                     int32_t val;
                     std::memcpy(&val, &linear_memory_ptr_[addr], 4);
@@ -910,7 +975,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
                     int32_t val = stack_[--stack_top_].value.i32;
                     uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
-                    uint32_t addr = base + offset;
+                    uint64_t addr = static_cast<uint64_t>(base) + offset;
                     if (!linear_memory_ptr_ || addr + 4 > linear_memory_size_) return WasmResult::kErrorRuntimeError;
                     std::memcpy(&linear_memory_ptr_[addr], &val, 4);
                     break;
@@ -1145,7 +1210,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 }
 
 const char* WasmEngine::CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept {
-    if (ptr + len > end) return nullptr;
+    if (len > static_cast<std::size_t>(end - ptr)) return nullptr;
     char* str = static_cast<char*>(pool_.Allocate(len + 1));
     if (!str) return nullptr;
     std::memcpy(str, ptr, len);
