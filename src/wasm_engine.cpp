@@ -903,6 +903,15 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     break;
                 }
 
+                case 0x1B: { // select
+                    if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                    int32_t cond = stack_[--stack_top_].value.i32;
+                    WasmValue val2 = stack_[--stack_top_];
+                    WasmValue val1 = stack_[--stack_top_];
+                    stack_[stack_top_++] = (cond != 0) ? val1 : val2;
+                    break;
+                }
+
                 case 0x20: { // local.get <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
                     if (local_idx >= total_locals) {
@@ -1127,7 +1136,10 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 case 0x7E:   // i64.mul
                 case 0x83:   // i64.and
                 case 0x84:   // i64.or
-                case 0x85: { // i64.xor
+                case 0x85:   // i64.xor
+                case 0x86:   // i64.shl
+                case 0x87:   // i64.shr_s
+                case 0x88: { // i64.shr_u
                     if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
@@ -1141,6 +1153,9 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         case 0x83: res = a.value.i64 & b.value.i64; break;
                         case 0x84: res = a.value.i64 | b.value.i64; break;
                         case 0x85: res = a.value.i64 ^ b.value.i64; break;
+                        case 0x86: res = a.value.i64 << (b.value.i64 & 63); break;
+                        case 0x87: res = a.value.i64 >> (b.value.i64 & 63); break;
+                        case 0x88: res = static_cast<int64_t>(static_cast<uint64_t>(a.value.i64) >> (b.value.i64 & 63)); break;
                     }
                     stack_[stack_top_++] = WasmValue{WasmType::kI64, {res}};
                     break;
@@ -1186,6 +1201,32 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     result_val.type = WasmType::kF64;
                     result_val.value.f64 = res;
                     stack_[stack_top_++] = result_val;
+                    break;
+                }
+
+                case 0xA7: { // i32.wrap_i64
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    WasmValue val = stack_[stack_top_ - 1];
+                    if (val.type != WasmType::kI64) return WasmResult::kErrorRuntimeError;
+                    stack_[stack_top_ - 1] = WasmValue{WasmType::kI32, {static_cast<int32_t>(val.value.i64 & 0xFFFFFFFFULL)}};
+                    break;
+                }
+
+                case 0xAC: { // i64.extend_i32_s
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    WasmValue val = stack_[stack_top_ - 1];
+                    if (val.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
+                    stack_[stack_top_ - 1] = WasmValue{WasmType::kI64, {0}};
+                    stack_[stack_top_ - 1].value.i64 = static_cast<int64_t>(val.value.i32);
+                    break;
+                }
+
+                case 0xAD: { // i64.extend_i32_u
+                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    WasmValue val = stack_[stack_top_ - 1];
+                    if (val.type != WasmType::kI32) return WasmResult::kErrorRuntimeError;
+                    stack_[stack_top_ - 1] = WasmValue{WasmType::kI64, {0}};
+                    stack_[stack_top_ - 1].value.i64 = static_cast<uint64_t>(static_cast<uint32_t>(val.value.i32));
                     break;
                 }
 
