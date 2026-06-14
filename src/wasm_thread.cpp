@@ -31,7 +31,12 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
             
             // 重要：ここで WasmEngine がこの新しいコンテキストを参照するようにする
             // 呼び出し元の Execute 内で引数を積むために必要。
-            engine_.SetContext(&threads_[i]);
+            // ただし、現在すでに実行中のスレッドがある場合は、その実行コンテキストを壊さないように、
+            // コンテキストの切り替えを行わない。
+            WasmThreadContext* active_ctx = engine_.GetContext();
+            if (!active_ctx || active_ctx->state != ThreadState::kRunning) {
+                engine_.SetContext(&threads_[i]);
+            }
             
             return threads_[i].id;
         }
