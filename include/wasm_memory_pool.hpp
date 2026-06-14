@@ -12,6 +12,11 @@ namespace embwasm {
 class WasmMemoryPool {
 public:
     WasmMemoryPool() noexcept;
+    ~WasmMemoryPool() noexcept;
+
+    // 明示的な初期化と終了
+    void Init(uint8_t* buffer, std::size_t size) noexcept;
+    void Deinit() noexcept;
 
     // コピー・代入は禁止
     WasmMemoryPool(const WasmMemoryPool&) = delete;
@@ -25,11 +30,12 @@ public:
 
     // メモリ使用状況の確認
     std::size_t GetUsedBytes() const noexcept { return offset_; }
-    std::size_t GetTotalBytes() const noexcept { return kMemoryPoolSize; }
-    std::size_t GetFreeBytes() const noexcept { return kMemoryPoolSize - offset_; }
+    std::size_t GetTotalBytes() const noexcept { return capacity_; }
+    std::size_t GetFreeBytes() const noexcept { return capacity_ - offset_; }
 
 private:
-    static uint8_t buffer_[kMemoryPoolSize];
+    uint8_t* buffer_;
+    std::size_t capacity_;
     std::size_t offset_;
 };
 

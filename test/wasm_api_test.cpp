@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <gtest/gtest.h>
 #include "wasm_api_static.hpp"
 #include "wasm_engine.hpp"
@@ -5,6 +6,10 @@
 namespace embwasm {
 extern int32_t g_last_printed_value;
 extern bool g_print_val_called;
+}
+
+namespace {
+alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
 }
 
 TEST(WasmApiStaticTest, AllFunctions) {
@@ -25,7 +30,9 @@ TEST(WasmApiStaticTest, AllFunctions) {
     embwasm::g_last_printed_value = 0;
     
     embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine;
+    engine.Init(pool);
     embwasm::WasmResult res = embwasm::DispatchHostFunction(
         engine,
         embwasm::kEnvPrintVal,
@@ -35,4 +42,6 @@ TEST(WasmApiStaticTest, AllFunctions) {
     EXPECT_EQ(res, embwasm::WasmResult::kOk);
     EXPECT_TRUE(embwasm::g_print_val_called);
     EXPECT_EQ(embwasm::g_last_printed_value, 99);
+    engine.Deinit();
+    pool.Deinit();
 }

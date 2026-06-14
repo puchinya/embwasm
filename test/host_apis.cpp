@@ -64,4 +64,17 @@ WasmResult DummyHostFunc(
     return WasmResult::kOk;
 }
 
+int g_test_env_init_called = 0;
+int g_test_env_deinit_called = 0;
+
+void TestEnvInit(WasmEngine& engine) noexcept {
+    (void)engine;
+    g_test_env_init_called++;
+}
+
+void TestEnvDeinit(WasmEngine& engine) noexcept {
+    (void)engine;
+    g_test_env_deinit_called++;
+}
+
 } // namespace embwasm

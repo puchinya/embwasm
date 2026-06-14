@@ -12,13 +12,29 @@
 
 namespace embwasm {
 
-// 各種マイコンやCPUのメモリバス幅に適した最大アライメント（std::max_align_tと同等）を保証した
-// 静的な固定長バッファの実体定義。ROM/RAM境界配置などを想定。
-alignas(alignof(std::max_align_t)) uint8_t WasmMemoryPool::buffer_[kMemoryPoolSize];
+WasmMemoryPool::WasmMemoryPool() noexcept : buffer_(nullptr), capacity_(0), offset_(0) {}
 
-WasmMemoryPool::WasmMemoryPool() noexcept : offset_(0) {}
+WasmMemoryPool::~WasmMemoryPool() noexcept {
+    Deinit();
+}
+
+void WasmMemoryPool::Init(uint8_t* buffer, std::size_t size) noexcept {
+    buffer_ = buffer;
+    capacity_ = size;
+    offset_ = 0;
+}
+
+void WasmMemoryPool::Deinit() noexcept {
+    buffer_ = nullptr;
+    capacity_ = 0;
+    offset_ = 0;
+}
 
 void* WasmMemoryPool::Allocate(std::size_t size, std::size_t alignment) noexcept {
+    if (buffer_ == nullptr || capacity_ == 0) {
+        return nullptr;
+    }
+
     // 【排他制御 / 割り込み排他】
     // マルチタスク環境や割り込みハンドラ（ISR）からの同時呼び出しによる競合状態を防ぐため、
     // プロセッサレベルでグローバル割り込みを一時的に禁止（PRIMASK等の制御）し、クリティカルセクションを保護。
@@ -29,7 +45,7 @@ void* WasmMemoryPool::Allocate(std::size_t size, std::size_t alignment) noexcept
     
     // 【ビット演算によるアライメント調整】
     // 要求された alignment（2の冪乗であることを想定）の境界にアドレスを切り上げる。
-    // 例: alignment = 8 の場合、(current_ptr + 7) & ~7 となり、下位3ビットをマスクして8の倍数に丸める。
+    // 例: alignment = 8 の場合, (current_ptr + 7) & ~7 となり、下位3ビットをマスクして8の倍数に丸める。
     // これにより、マイコンにおける未整列メモリアクセス（Unaligned Access Fault）の発生を防ぐ。
     std::size_t aligned_ptr = (current_ptr + alignment - 1) & ~(alignment - 1);
     
@@ -39,7 +55,7 @@ void* WasmMemoryPool::Allocate(std::size_t size, std::size_t alignment) noexcept
     // 【バッファ限界チェック】
     // 割り当て後のサイズがプールサイズの上限を超える場合はOOM（メモリ不足）とし、
     // 直ちに割り込み状態を元に戻した上で nullptr を返却（ヒープ例外は `-fno-exceptions` により使用不可）。
-    if (new_offset > kMemoryPoolSize) {
+    if (new_offset > capacity_) {
         RestoreInterrupts(primask);
         return nullptr;
     }

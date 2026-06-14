@@ -1,9 +1,15 @@
+#include <cstddef>
 #include <gtest/gtest.h>
 #include "wasm_config.hpp"
 #include "wasm_memory_pool.hpp"
 
+namespace {
+alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+}
+
 TEST(WasmMemoryPoolTest, AllFunctions) {
     embwasm::WasmMemoryPool pool;
+    pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
     
     // GetTotalBytes の検証
     EXPECT_EQ(pool.GetTotalBytes(), embwasm::kMemoryPoolSize);
@@ -32,4 +38,5 @@ TEST(WasmMemoryPoolTest, AllFunctions) {
     // OutOfMemory の検証
     void* ptr_overflow = pool.Allocate(embwasm::kMemoryPoolSize + 1);
     EXPECT_EQ(ptr_overflow, nullptr);
+    pool.Deinit();
 }

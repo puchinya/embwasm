@@ -31,6 +31,8 @@ def _parse_wit(wit_path):
     
     # 簡単なパース処理
     current_module = "env" # WITのデフォルトモジュール名としてenvを仮定 (後で調整可能)
+    module_init = None
+    module_deinit = None
     
     with open(wit_path, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -59,6 +61,13 @@ def _parse_wit(wit_path):
             match_mod = re.search(r"@cpp-module:\s*([\w:-]+)", line)
             if match_mod:
                 current_module = match_mod.group(1).replace("-", "_")
+            # @cpp-init と @cpp-deinit の抽出
+            match_init = re.search(r"@cpp-init:\s*([\w::]+)", line)
+            if match_init:
+                module_init = match_init.group(1)
+            match_deinit = re.search(r"@cpp-deinit:\s*([\w::]+)", line)
+            if match_deinit:
+                module_deinit = match_deinit.group(1)
             continue
             
         # import 行を抽出
@@ -96,6 +105,11 @@ def _parse_wit(wit_path):
             # @cpp-module: env のような指定があれば上書き
             pass
 
+    for api in apis_flat:
+        if api['module'] == current_module:
+            api['init'] = module_init
+            api['deinit'] = module_deinit
+
     return wit_imports, headers, apis_flat
 
 
@@ -121,11 +135,15 @@ def _parse_yaml_with_pyyaml(config_path):
     for module_name, module_body in modules.items():
         if not module_body:
             continue
+        module_init = module_body.get('init')
+        module_deinit = module_body.get('deinit')
         for entry in (module_body.get('apis') or []):
             apis_flat.append({
                 'module': str(module_name),
                 'field': entry.get('field', ''),
                 'function': entry.get('function', ''),
+                'init': module_init,
+                'deinit': module_deinit,
             })
 
     return imports, headers, apis_flat
@@ -157,6 +175,8 @@ def _parse_yaml_fallback(config_path):
     section = None
     current_module = None
     module_section = None
+    module_init = None
+    module_deinit = None
     current_api = {}
 
     def _flush_api():
@@ -166,6 +186,8 @@ def _parse_yaml_fallback(config_path):
                 'module': current_module,
                 'field': current_api.get('field', ''),
                 'function': current_api.get('function', ''),
+                'init': module_init,
+                'deinit': module_deinit,
             })
             current_api = {}
 
@@ -220,6 +242,8 @@ def _parse_yaml_fallback(config_path):
                 if indent == 2 and not stripped.startswith('-'):
                     _flush_api()
                     module_section = None
+                    module_init = None
+                    module_deinit = None
                     if ':' in stripped:
                         current_module = stripped.split(':')[0].strip()
                     continue
@@ -229,6 +253,10 @@ def _parse_yaml_fallback(config_path):
                     _flush_api()
                     if stripped.startswith('apis:'):
                         module_section = 'apis'
+                    elif stripped.startswith('init:'):
+                        module_init = stripped.split(':', 1)[1].strip().strip("'").strip('"')
+                    elif stripped.startswith('deinit:'):
+                        module_deinit = stripped.split(':', 1)[1].strip().strip("'").strip('"')
                     else:
                         module_section = None
                     continue
@@ -437,6 +465,29 @@ def main():
             f.write("\n".join(wasm_h_lines) + "\n")
         print(f"Generated WASM client header: {out_wasm_h_path}")
 
+    # Hostモジュールの初期化/終了関数の収集
+    module_inits = {}
+    module_deinits = {}
+    for api in apis:
+        m = api['module']
+        if api.get('init'):
+            module_inits[m] = api['init']
+        if api.get('deinit'):
+            module_deinits[m] = api['deinit']
+
+    # 呼び出し部分の構築
+    init_calls = []
+    for mod in modules:
+        if mod in module_inits:
+            init_calls.append(f"    {module_inits[mod]}(engine);")
+    init_calls_str = "\n".join(init_calls)
+
+    deinit_calls = []
+    for mod in modules:
+        if mod in module_deinits:
+            deinit_calls.append(f"    {module_deinits[mod]}(engine);")
+    deinit_calls_str = "\n".join(deinit_calls)
+
     # HostModuleId 定数の定義を生成
     module_enum_members = []
     for idx, mod in enumerate(modules):
@@ -482,6 +533,9 @@ HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept;
 HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
 
 class WasmEngine;
+
+void InitializeAllHostModules(WasmEngine& engine) noexcept;
+void DeinitializeAllHostModules(WasmEngine& engine) noexcept;
 
 WasmResult DispatchHostFunction(
     WasmEngine& engine,
@@ -574,6 +628,16 @@ WasmResult DispatchHostFunction(
 namespace embwasm {{
 
 extern const std::size_t kHostModuleCount = {len(modules)};
+
+void InitializeAllHostModules(WasmEngine& engine) noexcept {{
+    (void)engine;
+{init_calls_str}
+}}
+
+void DeinitializeAllHostModules(WasmEngine& engine) noexcept {{
+    (void)engine;
+{deinit_calls_str}
+}}
 
 HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept {{
 {module_lookup_cases_str}

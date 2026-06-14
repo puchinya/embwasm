@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <gtest/gtest.h>
 #include "wasm_thread.hpp"
 #include "wasm_engine.hpp"
@@ -8,14 +9,27 @@
 
 namespace embwasm {
 
+namespace {
+alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+}
+
 class WasmThreadTest : public ::testing::Test {
 protected:
     WasmMemoryPool pool;
     WasmEngine engine;
     WasmScheduler scheduler;
 
-    WasmThreadTest() : engine(pool), scheduler(engine) {
+    WasmThreadTest() : engine(), scheduler(engine) {}
+
+    void SetUp() override {
+        pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+        engine.Init(pool);
         scheduler.SetAsInstance();
+    }
+
+    void TearDown() override {
+        engine.Deinit();
+        pool.Deinit();
     }
 };
 

@@ -1,8 +1,13 @@
+#include <cstddef>
 #include <iostream>
 #include "embwasm.hpp"
 #include "main_wasm.hpp"
 #include "wasm_thread.hpp"
 #include "embwasm_hostmodule_thread.hpp"
+
+namespace {
+alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+}
 
 int main() {
 #if EMBWASM_ENABLE_MULTITHREADING
@@ -14,9 +19,11 @@ int main() {
 
     // 1. メモリプールの作成
     embwasm::WasmMemoryPool pool;
+    pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
 
     // 3. WASMエンジンの構築
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmEngine engine;
+    engine.Init(pool);
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
@@ -65,5 +72,7 @@ int main() {
     std::cout << "\nExecution finished successfully." << std::endl;
     std::cout << "Max function nesting depth reached: " << engine.GetMaxCallStackDepth() << std::endl;
     std::cout << "Max VM stack depth reached: " << engine.GetMaxStackDepth() << std::endl;
+    engine.Deinit();
+    pool.Deinit();
     return 0;
 }

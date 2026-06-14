@@ -1,3 +1,4 @@
+#include <cstddef>
 #include <gtest/gtest.h>
 #include <cstring>
 #include <vector>
@@ -7,10 +8,16 @@
 #include "wasm_engine.hpp"
 #include "wasm_api_static.hpp"
 
+namespace {
+alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+}
+
 // モック側で定義されているテスト用のグローバル状態
 namespace embwasm {
 extern int32_t g_last_printed_value;
 extern bool g_print_val_called;
+extern int g_test_env_init_called;
+extern int g_test_env_deinit_called;
 }
 
 // =============================================================================
@@ -18,14 +25,14 @@ extern bool g_print_val_called;
 // =============================================================================
 
 TEST(WasmEngineTest, NormalExecution) {
-    embwasm::WasmMemoryPool pool;
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
     
     embwasm::g_print_val_called = false;
     embwasm::g_last_printed_value = 0;
 
     // 静的登録モデルのため Register 呼び出しは不要
 
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // 正常なWASMバイナリ (10 + 20 = 30 を計算し、print_val を呼び出す)
     constexpr uint8_t kWasmBinary[] = {
@@ -85,8 +92,8 @@ TEST(WasmEngineTest, NormalExecution) {
 }
 
 TEST(WasmEngineTest, UserData) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // 初期値は nullptr であること
     EXPECT_EQ(engine.GetUserData(), nullptr);
@@ -107,8 +114,8 @@ TEST(WasmEngineTest, UserData) {
 }
 
 TEST(WasmEngineTest, ModuleUserData) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // lookup関数の動作確認
     EXPECT_EQ(embwasm::LookupStaticHostModuleId("env"), embwasm::HostModuleId::kEnv);
@@ -129,9 +136,25 @@ TEST(WasmEngineTest, ModuleUserData) {
     EXPECT_EQ(engine.GetModuleUserData(static_cast<embwasm::HostModuleId>(999)), nullptr);
 }
 
+TEST(WasmEngineTest, HostModuleInitDeinit) {
+    embwasm::g_test_env_init_called = 0;
+    embwasm::g_test_env_deinit_called = 0;
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+
+    {
+        embwasm::WasmEngine engine; engine.Init(pool);
+        EXPECT_EQ(embwasm::g_test_env_init_called, 1);
+        EXPECT_EQ(embwasm::g_test_env_deinit_called, 0);
+    }
+
+    EXPECT_EQ(embwasm::g_test_env_init_called, 1);
+    EXPECT_EQ(embwasm::g_test_env_deinit_called, 1);
+    pool.Deinit();
+}
+
 TEST(WasmEngineTest, LoadErrors) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // 1. サイズ不足
     constexpr uint8_t kTooShort[] = { 0x00, 0x61 };
@@ -202,8 +225,8 @@ TEST(WasmEngineTest, LoadErrors) {
 }
 
 TEST(WasmEngineTest, ExecutionErrors) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // テスト用の単純なWASM
     constexpr uint8_t kWasmBinary[] = {
@@ -260,7 +283,7 @@ TEST(WasmEngineTest, ExecutionErrors) {
     EXPECT_EQ(engine.Execute("my_func", nullptr, 0, &result, 1), embwasm::WasmResult::kErrorRuntimeError);
 
     // 3. 関数のローカル変数制限超え (total_locals > 32) -> kErrorOutOfMemory
-    embwasm::WasmEngine engine2(pool);
+    embwasm::WasmEngine engine2; engine2.Init(pool);
     constexpr uint8_t kWasmTooManyLocals[] = {
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
         0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
@@ -276,7 +299,7 @@ TEST(WasmEngineTest, ExecutionErrors) {
     EXPECT_EQ(engine2.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorOutOfMemory);
 
     // 4. 実行スタック (データスタック) のオーバーフロー (kWasmStackSize = 64) -> kErrorStackOverflow
-    embwasm::WasmEngine engine3(pool);
+    embwasm::WasmEngine engine3; engine3.Init(pool);
     uint8_t wasm_overflow[300] = {
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
         0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
@@ -301,7 +324,7 @@ TEST(WasmEngineTest, ExecutionErrors) {
     EXPECT_EQ(engine3.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorStackOverflow);
 
     // 5. 型の不一致によるランタイムエラー -> kErrorRuntimeError
-    embwasm::WasmEngine engine4(pool);
+    embwasm::WasmEngine engine4; engine4.Init(pool);
     constexpr uint8_t kWasmTypeMismatch[] = {
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
         0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
@@ -316,7 +339,7 @@ TEST(WasmEngineTest, ExecutionErrors) {
     EXPECT_EQ(engine4.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorRuntimeError);
 
     // 6. 未対応のオペコードの実行 -> kErrorRuntimeError
-    embwasm::WasmEngine engine5(pool);
+    embwasm::WasmEngine engine5; engine5.Init(pool);
     constexpr uint8_t kWasmUnsupportedOpcode[] = {
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
         0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
@@ -383,8 +406,8 @@ TEST(WasmEngineTest, OpcodeI32ArithmeticBoundary) {
     };
 
     auto run_test = [&](uint8_t op, int32_t a, int32_t b, embwasm::WasmResult expected_res, int32_t expected_val = 0) {
-        embwasm::WasmMemoryPool pool;
-        embwasm::WasmEngine engine(pool);
+        embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+        embwasm::WasmEngine engine; engine.Init(pool);
 
         uint8_t wasm_bin[sizeof(kWasmTemplate)];
         std::memcpy(wasm_bin, kWasmTemplate, sizeof(kWasmTemplate));
@@ -515,8 +538,8 @@ TEST(WasmEngineTest, OpcodeI32ComparisonBoundary) {
     };
 
     auto run_test = [&](uint8_t op, int32_t a, int32_t b, int32_t expected_val) {
-        embwasm::WasmMemoryPool pool;
-        embwasm::WasmEngine engine(pool);
+        embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+        embwasm::WasmEngine engine; engine.Init(pool);
 
         uint8_t wasm_bin[sizeof(kWasmTemplate)];
         std::memcpy(wasm_bin, kWasmTemplate, sizeof(kWasmTemplate));
@@ -613,8 +636,8 @@ TEST(WasmEngineTest, OpcodeI64ArithmeticBoundary) {
     };
 
     auto run_test = [&](uint8_t op, int64_t a, int64_t b, int64_t expected_val) {
-        embwasm::WasmMemoryPool pool;
-        embwasm::WasmEngine engine(pool);
+        embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+        embwasm::WasmEngine engine; engine.Init(pool);
 
         uint8_t wasm_bin[sizeof(kWasmTemplate)];
         std::memcpy(wasm_bin, kWasmTemplate, sizeof(kWasmTemplate));
@@ -701,8 +724,8 @@ TEST(WasmEngineTest, OpcodeUnaryBoundary) {
     };
 
     auto run_test = [&](uint8_t op, int32_t a, int32_t expected_val) {
-        embwasm::WasmMemoryPool pool;
-        embwasm::WasmEngine engine(pool);
+        embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+        embwasm::WasmEngine engine; engine.Init(pool);
 
         uint8_t wasm_bin[sizeof(kWasmTemplate)];
         std::memcpy(wasm_bin, kWasmTemplate, sizeof(kWasmTemplate));
@@ -751,8 +774,8 @@ TEST(WasmEngineTest, OpcodeUnaryBoundary) {
 
 // 制御・変数・特殊命令のテスト
 TEST(WasmEngineTest, VariableAndControlFlow) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // local.tee, drop の挙動テスト用WASM
     // local.get 0, local.tee 0, drop, local.get 0
@@ -810,8 +833,8 @@ TEST(WasmEngineTest, VariableAndControlFlow) {
 }
 
 TEST(WasmEngineTest, NopAndReturn) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // nop, return の挙動テスト用WASM
     // nop, local.get 0, return, i32.const 99
@@ -870,8 +893,8 @@ TEST(WasmEngineTest, NopAndReturn) {
 }
 
 TEST(WasmEngineTest, InternalFunctionCall) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // quadruple(x) = double(double(x))
     // double(x) = x + x
@@ -933,8 +956,8 @@ TEST(WasmEngineTest, InternalFunctionCall) {
 }
 
 TEST(WasmEngineTest, CallStackOverflow) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // infinite_call(x) = infinite_call(x)
     constexpr uint8_t kWasmOverflowBinary[] = {
@@ -996,8 +1019,8 @@ TEST(WasmEngineTest, CallStackOverflow) {
 // =============================================================================
 
 TEST(WasmEngineTest, ControlFlowBlock) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // block { i32.const 1; br 0; i32.const 2; } i32.const 3; i32.add
     // 結果: 1 + 3 = 4
@@ -1055,8 +1078,8 @@ TEST(WasmEngineTest, ControlFlowBlock) {
 }
 
 TEST(WasmEngineTest, ControlFlowLoop) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // (i32) -> i32
     // i32.const 0 (sum)
@@ -1130,8 +1153,8 @@ TEST(WasmEngineTest, ControlFlowLoop) {
 }
 
 TEST(WasmEngineTest, ControlFlowIfElse) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // (i32) -> i32
     // local.get 0
@@ -1196,8 +1219,8 @@ TEST(WasmEngineTest, ControlFlowIfElse) {
 }
 
 TEST(WasmEngineTest, GlobalVariables) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // Global section: mutable i32 (init 100)
     // func1: global.get 0
@@ -1268,8 +1291,8 @@ TEST(WasmEngineTest, GlobalVariables) {
 }
 
 TEST(WasmEngineTest, MemoryLoadStore) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // Memory section (1 page)
     // Data section (init 0x00 with "ABCD" = 0x44434241)
@@ -1346,8 +1369,8 @@ TEST(WasmEngineTest, MemoryLoadStore) {
 }
 
 TEST(WasmEngineTest, FloatingPointOperations) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // (f32, f32) -> f32 (f32.add)
     // (f64, f64) -> f64 (f64.mul)
@@ -1429,8 +1452,8 @@ TEST(WasmEngineTest, FloatingPointOperations) {
 }
 
 TEST(WasmEngineTest, ControlFlowBlockSimple) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // block void; i32.const 42; end
     // [0] magic, [4] version
@@ -1493,8 +1516,8 @@ TEST(WasmEngineTest, ControlFlowBlockSimple) {
 }
 
 TEST(WasmEngineTest, FloatingPointOperationsI64) {
-    embwasm::WasmMemoryPool pool;
-    embwasm::WasmEngine engine(pool);
+    embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine; engine.Init(pool);
 
     // f64.div(10.0, 4.0) = 2.5
     // Global section: mutable f64 (init 0.0)

@@ -39,7 +39,12 @@ struct WasmExportEntry {
 // ベアメタル環境向け極小WASM実行エンジン
 class WasmEngine {
 public:
-    WasmEngine(WasmMemoryPool& pool) noexcept;
+    WasmEngine() noexcept;
+    ~WasmEngine() noexcept;
+
+    // 明示的な初期化と終了
+    void Init(WasmMemoryPool& pool) noexcept;
+    void Deinit() noexcept;
 
     // WASMバイナリ（バイト配列）の読み込みと解析
     WasmResult Load(const uint8_t* binary, std::size_t size) noexcept;
@@ -96,7 +101,7 @@ private:
     // 文字列をメモリプール上にコピーして保持するヘルパー
     const char* CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept;
 
-    WasmMemoryPool& pool_;
+    WasmMemoryPool* pool_;
 
     // 解析された型シグネチャ情報
     WasmTypeSignature signatures_[kMaxWasmTypes];

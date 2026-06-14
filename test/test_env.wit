@@ -1,5 +1,7 @@
 package embwasm:test;
 
+/// @cpp-init: embwasm::TestEnvInit
+/// @cpp-deinit: embwasm::TestEnvDeinit
 /// @cpp-header: "host_apis.hpp"
 world test-env {
     /// @cpp-func: embwasm::DummyHostFunc

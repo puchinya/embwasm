@@ -30,6 +30,12 @@ WasmResult DummyHostFunc(
     WasmValue* results, 
     uint32_t result_count) noexcept;
 
+extern int g_test_env_init_called;
+extern int g_test_env_deinit_called;
+
+void TestEnvInit(WasmEngine& engine) noexcept;
+void TestEnvDeinit(WasmEngine& engine) noexcept;
+
 } // namespace embwasm
 
 #endif // EMBWASM_TEST_HOST_APIS_HPP_

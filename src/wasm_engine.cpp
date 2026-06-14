@@ -184,8 +184,8 @@ static inline int64_t DecodeVarInt64(const uint8_t*& cursor, const uint8_t* limi
 // WasmEngine 実装
 // =============================================================================
 
-WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
-    : pool_(pool), signature_count_(0), function_count_(0), export_count_(0),
+WasmEngine::WasmEngine() noexcept
+    : pool_(nullptr), signature_count_(0), function_count_(0), export_count_(0),
       global_count_(0),
       linear_memory_ptr_(nullptr), linear_memory_size_(0),
       table_ptr_(nullptr), table_size_(0),
@@ -196,14 +196,6 @@ WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
       max_call_stack_depth_(0), max_stack_depth_(0),
       user_data_(nullptr),
       module_user_datas_(nullptr) {
-    if (kHostModuleCount > 0) {
-        module_user_datas_ = static_cast<void**>(pool_.Allocate(kHostModuleCount * sizeof(void*)));
-        if (module_user_datas_) {
-            for (std::size_t i = 0; i < kHostModuleCount; ++i) {
-                module_user_datas_[i] = nullptr;
-            }
-        }
-    }
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
         exports_[i] = {};
@@ -216,7 +208,32 @@ WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
     }
 }
 
+WasmEngine::~WasmEngine() noexcept {
+    Deinit();
+}
+
+void WasmEngine::Init(WasmMemoryPool& pool) noexcept {
+    pool_ = &pool;
+    if (kHostModuleCount > 0 && !module_user_datas_) {
+        module_user_datas_ = static_cast<void**>(pool_->Allocate(kHostModuleCount * sizeof(void*)));
+        if (module_user_datas_) {
+            for (std::size_t i = 0; i < kHostModuleCount; ++i) {
+                module_user_datas_[i] = nullptr;
+            }
+        }
+    }
+    InitializeAllHostModules(*this);
+}
+
+void WasmEngine::Deinit() noexcept {
+    DeinitializeAllHostModules(*this);
+    module_user_datas_ = nullptr;
+    user_data_ = nullptr;
+    pool_ = nullptr;
+}
+
 WasmResult WasmEngine::Load(const uint8_t* binary, std::size_t size) noexcept {
+    if (!pool_) return WasmResult::kErrorOutOfMemory;
     if (size < 8) return WasmResult::kErrorInvalidMagic;
 
     // マジックナンバー "\0asm" の検証
@@ -409,7 +426,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     }
                     
                     table_size_ = min_size;
-                    table_ptr_ = static_cast<uint32_t*>(pool_.Allocate(table_size_ * sizeof(uint32_t)));
+                    table_ptr_ = static_cast<uint32_t*>(pool_->Allocate(table_size_ * sizeof(uint32_t)));
                     if (table_size_ > 0 && !table_ptr_) return WasmResult::kErrorOutOfMemory;
                     
                     for (uint32_t t = 0; t < table_size_; ++t) {
@@ -439,7 +456,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         }
                     }
                     
-                    linear_memory_ptr_ = static_cast<uint8_t*>(pool_.Allocate(size_to_alloc));
+                    linear_memory_ptr_ = static_cast<uint8_t*>(pool_->Allocate(size_to_alloc));
                     if (!linear_memory_ptr_) return WasmResult::kErrorOutOfMemory;
                     linear_memory_size_ = size_to_alloc;
                     // メモリをゼロクリア
@@ -2155,7 +2172,8 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
 const char* WasmEngine::CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept {
     if (len > static_cast<std::size_t>(end - ptr)) return nullptr;
-    char* str = static_cast<char*>(pool_.Allocate(len + 1));
+    if (!pool_) return nullptr;
+    char* str = static_cast<char*>(pool_->Allocate(len + 1));
     if (!str) return nullptr;
     std::memcpy(str, ptr, len);
     str[len] = '\0';

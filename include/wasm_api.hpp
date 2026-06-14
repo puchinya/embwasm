@@ -23,6 +23,9 @@ HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* f
 
 class WasmEngine;
 
+void InitializeAllHostModules(WasmEngine& engine) noexcept;
+void DeinitializeAllHostModules(WasmEngine& engine) noexcept;
+
 // ホストAPIのディスパッチャ（switch文による直接呼び出しを実装し、関数ポインタを排除します）
 WasmResult DispatchHostFunction(
     WasmEngine& engine,
