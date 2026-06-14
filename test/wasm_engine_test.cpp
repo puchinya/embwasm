@@ -403,6 +403,22 @@ TEST(WasmEngineTest, OpcodeI32ArithmeticBoundary) {
     run_test(0x74, 1, 36, embwasm::WasmResult::kOk, 16); // 32以上は & 31 マスクされることの検証 (36 & 31 = 4)
     run_test(0x75, -16, 2, embwasm::WasmResult::kOk, -4); // 符号付き右シフト (符号維持)
     run_test(0x76, -16, 2, embwasm::WasmResult::kOk, 0x3FFFFFFC); // 符号なし右シフト (0埋め)
+
+    // 8. 剰余演算: i32.rem_s (0x6F), i32.rem_u (0x70)
+    run_test(0x6F, 10, 3, embwasm::WasmResult::kOk, 1);
+    run_test(0x6F, -10, 3, embwasm::WasmResult::kOk, -1);
+    run_test(0x6F, 10, -3, embwasm::WasmResult::kOk, 1);
+    run_test(0x6F, 10, 0, embwasm::WasmResult::kErrorRuntimeError); // ゼロ除算保護
+    run_test(0x6F, static_cast<int32_t>(0x80000000), -1, embwasm::WasmResult::kOk, 0); // オーバーフローでもトラップせず0を返すことの検証
+
+    run_test(0x70, 10, 3, embwasm::WasmResult::kOk, 1);
+    run_test(0x70, -10, 4, embwasm::WasmResult::kOk, 2); // 符号なし剰余 (-10 = 0xFFFFFFF6 % 4 = 2)
+    run_test(0x70, 10, 0, embwasm::WasmResult::kErrorRuntimeError);
+
+    // 9. 回転演算: i32.rotl (0x77), i32.rotr (0x78)
+    run_test(0x77, 0x80000001, 1, embwasm::WasmResult::kOk, 3);
+    run_test(0x77, 0x80000001, 33, embwasm::WasmResult::kOk, 3);
+    run_test(0x78, 0x80000001, 1, embwasm::WasmResult::kOk, 0xC0000000);
 }
 
 // i32 比較演算子の境界値テスト
@@ -673,6 +689,18 @@ TEST(WasmEngineTest, OpcodeUnaryBoundary) {
     run_test(0x67, 0, 32);
     run_test(0x67, 0x80000000, 0);
     run_test(0x67, 0x0000FFFF, 16);
+
+    // 0x68: i32.ctz
+    run_test(0x68, 0, 32);
+    run_test(0x68, 1, 0);
+    run_test(0x68, 0x80000000, 31);
+    run_test(0x68, 0x0000FF00, 8);
+
+    // 0x69: i32.popcnt
+    run_test(0x69, 0, 0);
+    run_test(0x69, 1, 1);
+    run_test(0x69, 0x80000001, 2);
+    run_test(0x69, 0xFFFFFFFF, 32);
 }
 
 // 制御・変数・特殊命令のテスト

@@ -101,6 +101,10 @@ private:
     uint8_t* linear_memory_ptr_;
     std::size_t linear_memory_size_;
 
+    // 間接関数テーブル (Table section / Element section)
+    uint32_t* table_ptr_;
+    std::size_t table_size_;
+
     // 現在の実行コンテキスト
     WasmThreadContext* ctx_;
 
