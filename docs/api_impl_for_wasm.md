@@ -31,16 +31,15 @@ WasmResult HostFunction(
 
 ```cpp
 #include "wasm_types.h"
-#include <iostream> // 組み込み環境では代替のログ出力
 
-namespace {
+namespace embwasm {
 
 // センサー値を読み込むホストAPI
 // WASMシグネチャ: (import "env" "get_sensor_value" (func (result i32)))
-embwasm::WasmResult GetSensorValue(
-    const embwasm::WasmValue* args, 
+WasmResult GetSensorValue(
+    const WasmValue* args, 
     uint32_t arg_count, 
-    embwasm::WasmValue* results, 
+    WasmValue* results, 
     uint32_t result_count, 
     void* user_data) noexcept 
 {
@@ -49,25 +48,25 @@ embwasm::WasmResult GetSensorValue(
     (void)user_data;
 
     if (result_count < 1) {
-        return embwasm::WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorRuntimeError;
     }
 
     // 擬似的なセンサー値の読み出し
     int32_t dummy_sensor_val = 42;
 
     // 戻り値を設定
-    results[0].type = embwasm::WasmType::kI32;
+    results[0].type = WasmType::kI32;
     results[0].value.i32 = dummy_sensor_val;
 
-    return embwasm::WasmResult::kOk;
+    return WasmResult::kOk;
 }
 
 // LEDに出力するホストAPI
 // WASMシグネチャ: (import "env" "write_led_value" (func (param i32)))
-embwasm::WasmResult WriteLedValue(
-    const embwasm::WasmValue* args, 
+WasmResult WriteLedValue(
+    const WasmValue* args, 
     uint32_t arg_count, 
-    embwasm::WasmValue* results, 
+    WasmValue* results, 
     uint32_t result_count, 
     void* user_data) noexcept 
 {
@@ -75,36 +74,50 @@ embwasm::WasmResult WriteLedValue(
     (void)result_count;
     (void)user_data;
 
-    if (arg_count < 1 || args[0].type != embwasm::WasmType::kI32) {
-        return embwasm::WasmResult::kErrorRuntimeError;
+    if (arg_count < 1 || args[0].type != WasmType::kI32) {
+        return WasmResult::kErrorRuntimeError;
     }
 
     int32_t led_state = args[0].value.i32;
     
     // ベアメタル環境ではここでハードウェアレジスタを操作
     // (例: GPIO_WriteBit(LED_PORT, LED_PIN, led_state);)
-    std::cout << "[HOST API] LED State changed to: " << led_state << std::endl;
+    // std::cout << "[HOST API] LED State changed to: " << led_state << std::endl;
 
-    return embwasm::WasmResult::kOk;
+    return WasmResult::kOk;
 }
 
-} // namespace
+} // namespace embwasm
 ```
 
-### 手順 2: レジストリへの登録
-定義したホストAPIを `WasmApiRegistry` に登録して、WASMエンジンから見つけられるようにします。
+### 手順 2: YAML設定ファイルへの記述
 
-```cpp
-#include "wasm_api.h"
+定義したホストAPIをエンジンに認識させるため、`module_config.yaml` にマッピング情報を記述します。
 
-void RegisterApis(embwasm::WasmApiRegistry& registry) {
-    // モジュール名 "env", フィールド名 "get_sensor_value" として登録
-    registry.Register("env", "get_sensor_value", GetSensorValue);
+```yaml
+# module_config.yaml
+headers:
+  - "sensor_apis.h"  # 手順1で定義した関数の宣言を含むヘッダー
 
-    // モジュール名 "env", フィールド名 "write_led_value" として登録
-    registry.Register("env", "write_led_value", WriteLedValue);
-}
+modules:
+  env:
+    apis:
+      - field: get_sensor_value
+        function: embwasm::GetSensorValue
+
+      - field: write_led_value
+        function: embwasm::WriteLedValue
 ```
+
+### 手順 3: コード生成の実行
+
+`tools/codegen/gen_api.py` を実行して、静的なルックアップテーブルとディスパッチャを自動生成します。
+
+```bash
+python3 tools/codegen/gen_api.py module_config.yaml
+```
+
+これにより、ビルド時に $O(\log N)$ の二分探索でホスト関数が解決されるようになります。詳細は [docs/tool_usage.md](tool_usage.md) を参照してください。
 
 ---
 
@@ -137,15 +150,10 @@ WASM（WebAssembly Text Format）側で上記で定義した API をインポー
 
 ---
 
-## 4. メモリ管理と設定値の変更
+## 4. 設定値の変更
 
-### 専用メモリプールの役割
-ホストAPIがパースされる際、モジュール名や関数名などの文字列を安全に保持するため、`WasmMemoryPool` を利用してメモリが確保されます。
-メモリが不足すると API の登録に失敗し、`WasmResult::kErrorOutOfMemory` を返します。
-
-### メモリプールの変更方法
-メモリ不足が発生した場合は、`include/wasm_config.h` の設定値を書き換えてビルドしてください。
+ホストAPIの数や実行時のスタック制限などは、`include/wasm_config.h` の設定値を書き換えてビルドすることで調整可能です。
 
 * **[include/wasm_config.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.h)**:
-  - `kMemoryPoolSize`: メモリプールの容量（デフォルト: 64KB）。
-  - `kMaxHostApis`: 登録できるホスト関数の上限（デフォルト: 16個）。
+  - `kMaxHostApis`: 登録できるホスト関数の上限。
+  - `kWasmStackSize`: WASM実行スタックの最大深度。
