@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#include <string.h>
 #include "wasm_host_api.h"
 
 // スレッド2の本体
@@ -55,35 +57,3 @@ int main(void) {
     return 0;
 }
 
-// wit-bindgen の cabi_realloc が依存する標準関数用の極小ダミー実装
-void *malloc(size_t size) {
-    (void)size;
-    return NULL;
-}
-void *realloc(void *ptr, size_t size) {
-    (void)ptr; (void)size;
-    return NULL;
-}
-void free(void *ptr) {
-    (void)ptr;
-}
-void abort(void) {
-    while (1) {}
-}
-
-size_t strlen(const char *s) {
-    size_t len = 0;
-    while (s[len]) {
-        len++;
-    }
-    return len;
-}
-
-void *memcpy(void *dest, const void *src, size_t n) {
-    char *d = (char *)dest;
-    const char *s = (const char *)src;
-    for (size_t i = 0; i < n; i++) {
-        d[i] = s[i];
-    }
-    return dest;
-}

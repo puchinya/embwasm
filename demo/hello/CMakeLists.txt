@@ -60,13 +60,15 @@ set(WASM_GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.cpp)
 set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.hpp)
 
 set(WASM_COMMON_INC ${CMAKE_CURRENT_SOURCE_DIR}/../common/wasm/include)
+set(WASM_COMMON_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../common/wasm/stdlib.c)
 
 add_custom_command(
     OUTPUT ${WASM_OUT}
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -Wl,-z,stack-size=1024 -Wl,--stack-first -o ${WASM_OUT} ${WASM_SRC} ${GEN_WASM_C} -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
-    DEPENDS ${WASM_SRC} ${GEN_WASM_H} ${GEN_WASM_C}
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -Wl,-z,stack-size=1024 -Wl,--stack-first -o ${WASM_OUT} ${WASM_SRC} ${WASM_COMMON_SRC} ${GEN_WASM_C} -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
+    DEPENDS ${WASM_SRC} ${WASM_COMMON_SRC} ${GEN_WASM_H} ${GEN_WASM_C}
     COMMENT "Compiling main.c to WASM using ${WASM_CLANG}"
 )
+
 
 # 2. WASM バイナリから .cpp (実データ) と .hpp (extern 宣言のみ) を生成するカスタムコマンド
 set(WASM_TO_CPP_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/wasm_to_cpp.py)

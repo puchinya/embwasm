@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "wasm_host_api.h"
 
 // エクスポートされる関数
@@ -12,11 +13,3 @@ int main(void) {
     return 0;
 }
 
-// wit-bindgen の cabi_realloc が依存する標準関数用の極小ダミー実装
-void *realloc(void *ptr, size_t size) {
-    (void)ptr; (void)size;
-    return NULL;
-}
-void abort(void) {
-    while (1) {}
-}
