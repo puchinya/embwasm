@@ -19,7 +19,7 @@
 - [include/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include): コアライブラリのヘッダーファイル
 - [src/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src): コアライブラリのソースコード
 - [demo/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo): デモアプリケーション（WASMからホストAPIを呼び出すサンプル）
-- [test/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/test): GoogleTest を使用した単体テストコード
+- [test/](test/): 単体テストコードのディレクトリ (コアテストは `test/core/` 配下)
 - [tools/codegen/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/tools/codegen): ホストAPI自動生成用 Python スクリプト (`gen_api.py`)
 - [platform/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/platform): プラットフォーム固有の実装（FreeRTOS, uITRON, 各OS等）
 

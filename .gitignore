@@ -32,3 +32,4 @@ wasm_api_static.hpp
 wasm_api_static.cpp
 wasm_api.h
 .juine/
+.gemini/
