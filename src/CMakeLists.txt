@@ -30,7 +30,7 @@ add_library(embwasm
 
 # インクルードディレクトリの公開 (PUBLIC) 設定
 # これによりリンク元ターゲット（demoやtest）に自動でインクルードパスが伝播します。
-target_include_directories(embwasm PUBLIC 
+target_include_directories(embwasm PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/hostmodule/threads
 )
