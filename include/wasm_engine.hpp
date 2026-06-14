@@ -58,12 +58,9 @@ public:
     std::size_t GetMaxStackDepth() const noexcept { return max_stack_depth_; }
 
 #if EMBWASM_ENABLE_MULTITHREADING
-    // スレッドコンテキストの設定
-    void SetContext(WasmThreadContext* ctx) noexcept { ctx_ = ctx; }
     WasmThreadContext* GetContext() const noexcept { return ctx_; }
 
-    // スケジューラの設定と取得
-    void SetScheduler(class WasmScheduler* scheduler) noexcept { scheduler_ = scheduler; }
+    // スケジューラの取得
     class WasmScheduler* GetScheduler() const noexcept { return scheduler_; }
 #endif
 
@@ -79,6 +76,13 @@ public:
     std::size_t GetLinearMemorySize() const noexcept { return linear_memory_size_; }
 
 private:
+    friend class WasmScheduler;
+
+#if EMBWASM_ENABLE_MULTITHREADING
+    void SetContext(WasmThreadContext* ctx) noexcept { ctx_ = ctx; }
+    void SetScheduler(class WasmScheduler* scheduler) noexcept { scheduler_ = scheduler; }
+#endif
+
     WasmResult ParseSections(const uint8_t* binary, std::size_t size) noexcept;
 
     // 文字列をメモリプール上にコピーして保持するヘルパー
