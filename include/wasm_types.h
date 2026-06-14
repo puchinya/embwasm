@@ -35,6 +35,7 @@ struct WasmValue {
 // WASMエンジン実行結果のステータスコード
 enum class WasmResult : uint8_t {
     kOk,
+    kYield, // 実行を一時中断（スケジューラへ戻る）
     kErrorInvalidMagic,
     kErrorInvalidVersion,
     kErrorUnknownSection,

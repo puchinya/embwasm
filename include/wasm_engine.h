@@ -4,6 +4,7 @@
 #include "wasm_types.h"
 #include "wasm_memory_pool.h"
 #include "wasm_api.h"
+#include "wasm_thread.h"
 
 namespace embwasm {
 
@@ -39,13 +40,24 @@ public:
     // エクスポートされた関数を実行する
     WasmResult Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
+    // 関数名からインデックスを取得
+    int32_t GetExportFunctionIndex(const char* name) const noexcept;
+
     // 統計情報の取得
     std::size_t GetMaxCallStackDepth() const noexcept { return max_call_stack_depth_; }
     std::size_t GetMaxStackDepth() const noexcept { return max_stack_depth_; }
 
+#if EMBWASM_ENABLE_MULTITHREADING
+    // スレッドコンテキストの設定
+    void SetContext(WasmThreadContext* ctx) noexcept { ctx_ = ctx; }
+    WasmThreadContext* GetContext() const noexcept { return ctx_; }
+#endif
+
+public:
+    WasmResult ExecuteInternal(uint32_t func_index) noexcept;
+
 private:
     WasmResult ParseSections(const uint8_t* binary, std::size_t size) noexcept;
-    WasmResult ExecuteInternal(uint32_t func_index) noexcept;
 
     // 文字列をメモリプール上にコピーして保持するヘルパー
     const char* CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept;
@@ -63,20 +75,8 @@ private:
     WasmExportEntry exports_[kMaxWasmFunctions];
     std::size_t export_count_;
 
-    // 実行用仮想マシンスタック
-    WasmValue stack_[kWasmStackSize];
-    std::size_t stack_top_;
-
-    // 実行用仮想マシンのコールスタック
-    struct WasmFrame {
-        const WasmFunction* func;
-        const uint8_t* ip;
-        const uint8_t* limit;
-        WasmValue locals[kMaxLocals];
-        uint32_t total_locals;
-    };
-    WasmFrame call_stack_[kWasmCallStackSize];
-    std::size_t call_stack_top_;
+    // 現在の実行コンテキスト
+    WasmThreadContext* ctx_;
 
     // 統計情報
     std::size_t max_call_stack_depth_;

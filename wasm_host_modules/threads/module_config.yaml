@@ -1,0 +1,18 @@
+# WASM Host Module Configuration for Threads
+headers:
+  - "embwasm_hostmodule_thread.h"
+
+modules:
+  env:
+    apis:
+      - field: thread_spawn
+        function: embwasm::hostmodules::thread::ThreadSpawn
+
+      - field: thread_yield
+        function: embwasm::hostmodules::thread::ThreadYield
+
+      - field: event_wait
+        function: embwasm::hostmodules::thread::EventWait
+
+      - field: event_signal
+        function: embwasm::hostmodules::thread::EventSignal

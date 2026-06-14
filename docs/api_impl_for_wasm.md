@@ -155,5 +155,4 @@ WASM（WebAssembly Text Format）側で上記で定義した API をインポー
 ホストAPIの数や実行時のスタック制限などは、`include/wasm_config.h` の設定値を書き換えてビルドすることで調整可能です。
 
 * **[include/wasm_config.h](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.h)**:
-  - `kMaxHostApis`: 登録できるホスト関数の上限。
   - `kWasmStackSize`: WASM実行スタックの最大深度。

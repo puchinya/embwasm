@@ -1,0 +1,33 @@
+# WASM Host Module Configuration for Demo
+# Maps WASM imports to C++ host functions.
+
+# 静的検索コードにインクルードするヘッダーファイル一覧
+headers:
+  - "host_apis.h"
+  - "embwasm_hostmodule_thread.h"
+
+# モジュール名をキーにした API のマッピング一覧
+# ( module と field の辞書順で自動ソートされます )
+modules:
+  env:
+    apis:
+      - field: print
+        function: embwasm::Print
+
+      - field: print_char
+        function: embwasm::PrintChar
+
+      - field: print_val
+        function: embwasm::PrintVal
+
+      - field: thread_spawn
+        function: embwasm::hostmodules::thread::ThreadSpawn
+
+      - field: thread_yield
+        function: embwasm::hostmodules::thread::ThreadYield
+
+      - field: event_wait
+        function: embwasm::hostmodules::thread::EventWait
+
+      - field: event_signal
+        function: embwasm::hostmodules::thread::EventSignal

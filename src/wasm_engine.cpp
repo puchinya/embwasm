@@ -84,7 +84,7 @@ static inline int64_t DecodeVarInt64(const uint8_t*& cursor, const uint8_t* limi
 // =============================================================================
 
 WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
-    : pool_(pool), signature_count_(0), function_count_(0), export_count_(0), stack_top_(0),
+    : pool_(pool), signature_count_(0), function_count_(0), export_count_(0), ctx_(nullptr),
       max_call_stack_depth_(0), max_stack_depth_(0) {
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
@@ -278,127 +278,175 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 }
 
 WasmResult WasmEngine::Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
-    // 公開関数の検索
-    int32_t func_idx = -1;
-    for (std::size_t i = 0; i < export_count_; ++i) {
-        if (std::strcmp(exports_[i].name, name) == 0) {
-            func_idx = exports_[i].func_index;
-            break;
-        }
-    }
-
+    int32_t func_idx = GetExportFunctionIndex(name);
     if (func_idx == -1) {
         return WasmResult::kErrorFunctionNotFound;
     }
 
-    // 統計情報の初期化
-    max_call_stack_depth_ = 0;
-    max_stack_depth_ = 0;
+    // デフォルトのコンテキストを使用（マルチスレッドを想定していない場合）
+    WasmThreadContext default_ctx;
+    if (!ctx_) {
+        default_ctx.Reset();
+        default_ctx.state = ThreadState::kRunning;
+        default_ctx.stack_top = 0;
+        default_ctx.call_stack_top = 0;
+        ctx_ = &default_ctx;
+    }
 
-    // 引数を仮想スタックにセット
-    stack_top_ = 0;
-    for (uint32_t i = 0; i < arg_count; ++i) {
-        if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
-        stack_[stack_top_++] = args[i];
-        if (stack_top_ > max_stack_depth_) {
-            max_stack_depth_ = stack_top_;
+    // 引数を仮想スタックにセット。
+    if (ctx_) {
+        // 重要：もし以前の実行(ExecuteInternalなど)でスタックに何かが残っていても、
+        // 新しいトップレベル関数の実行を開始する場合は、引数の数だけある状態にする。
+        // ここでは、一旦クリアするのではなく、渡された引数のみを積む。
+        ctx_->stack_top = 0;
+        for (uint32_t i = 0; i < arg_count; ++i) {
+            if (ctx_->stack_top >= kWasmStackSize) {
+                if (ctx_ == &default_ctx) ctx_ = nullptr;
+                return WasmResult::kErrorStackOverflow;
+            }
+            ctx_->stack[ctx_->stack_top++] = args[i];
+            if (ctx_->stack_top > max_stack_depth_) {
+                max_stack_depth_ = ctx_->stack_top;
+            }
         }
     }
 
     // 内部実行開始
     WasmResult res = ExecuteInternal(func_idx);
-    if (res != WasmResult::kOk) return res;
-
-    // 実行結果を戻り値配列に格納
-    for (uint32_t i = 0; i < result_count; ++i) {
-        if (stack_top_ == 0) return WasmResult::kErrorRuntimeError;
-        results[result_count - 1 - i] = stack_[--stack_top_]; // LIFO順
+    
+#if EMBWASM_ENABLE_MULTITHREADING
+    // 正常終了またはエラー時のみ結果を取り出す (Yield時は中断)
+    if (res == WasmResult::kOk) {
+#else
+    // 非マルチスレッド時は Yield は発生しない前提（またはエラー扱い）
+    if (res == WasmResult::kOk) {
+#endif
+        // 実行結果を戻り値配列に格納
+        for (uint32_t i = 0; i < result_count; ++i) {
+            if (!ctx_ || ctx_->stack_top == 0) {
+                if (ctx_ == &default_ctx) ctx_ = nullptr;
+                return WasmResult::kErrorRuntimeError;
+            }
+            results[result_count - 1 - i] = ctx_->stack[--ctx_->stack_top]; // LIFO順
+        }
     }
 
-    return WasmResult::kOk;
+    if (ctx_ == &default_ctx) ctx_ = nullptr;
+    return res;
+}
+
+int32_t WasmEngine::GetExportFunctionIndex(const char* name) const noexcept {
+    for (std::size_t i = 0; i < export_count_; ++i) {
+        if (std::strcmp(exports_[i].name, name) == 0) {
+            return static_cast<int32_t>(exports_[i].func_index);
+        }
+    }
+    return -1;
 }
 
 WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
-    call_stack_top_ = 0;
-
-    if (func_index >= function_count_) return WasmResult::kErrorFunctionNotFound;
-    const WasmFunction* initial_func = &functions_[func_index];
-
-    if (initial_func->is_import) {
-        // ホストAPI (C++関数) の呼び出し（シグネチャに応じた完全なポップ・プッシュ実装）
-        if (initial_func->type_index >= signature_count_) {
-            return WasmResult::kErrorRuntimeError;
-        }
-        const WasmTypeSignature& sig = signatures_[initial_func->type_index];
-
-        // 引数の数だけスタックからポップ
-        if (stack_top_ < sig.param_count) {
-            return WasmResult::kErrorRuntimeError;
-        }
-
-        WasmValue call_args[WasmTypeSignature::kMaxParams];
-        // スタックはLIFOなので、ポップした引数は逆順に格納する
-        for (uint32_t i = 0; i < sig.param_count; ++i) {
-            call_args[sig.param_count - 1 - i] = stack_[--stack_top_];
-        }
-
-        // 戻り値用の一時バッファ
-        WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-
-        // ホスト関数の実行 (関数ポインタを排除した直接ディスパッチ)
-        WasmResult res = DispatchHostFunction(initial_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
-        if (res != WasmResult::kOk) return res;
-
-        // 実行結果をスタックにプッシュ
-        for (uint32_t i = 0; i < sig.result_count; ++i) {
-            if (stack_top_ >= kWasmStackSize) {
-                return WasmResult::kErrorStackOverflow;
-            }
-            stack_[stack_top_++] = call_results[i];
-            if (stack_top_ > max_stack_depth_) {
-                max_stack_depth_ = stack_top_;
-            }
-        }
-        return WasmResult::kOk;
+    if (!ctx_) {
+        return WasmResult::kErrorRuntimeError;
     }
 
-    // 内部関数の最初のフレームをコールスタックに積む
-    {
-        if (initial_func->type_index >= signature_count_) {
-            return WasmResult::kErrorRuntimeError;
+    // デバッグ用出力
+    // std::cout << "ExecuteInternal: func_idx=" << func_index << " call_stack_top=" << ctx_->call_stack_top << std::endl;
+
+    // 既存のコードとの互換性のためのエイリアス
+    std::size_t& stack_top_ = ctx_->stack_top;
+    WasmValue* stack_ = ctx_->stack;
+
+    // 前回の続きからでない（新規呼び出し）の場合はスタックをクリア
+    if (ctx_->call_stack_top == 0) {
+        if (func_index >= function_count_) {
+             return WasmResult::kErrorFunctionNotFound;
         }
-        const WasmTypeSignature& sig = signatures_[initial_func->type_index];
-        uint32_t total_locals = sig.param_count + initial_func->internal_func.local_count;
-        if (total_locals > kMaxLocals) {
-            return WasmResult::kErrorOutOfMemory;
+        const WasmFunction* initial_func = &functions_[func_index];
+
+        if (initial_func->is_import) {
+            // ホストAPI (C++関数) の呼び出し（シグネチャに応じた完全なポップ・プッシュ実装）
+            if (initial_func->type_index >= signature_count_) {
+                return WasmResult::kErrorRuntimeError;
+            }
+            const WasmTypeSignature& sig = signatures_[initial_func->type_index];
+
+            // 引数の数だけスタックからポップ
+            if (ctx_->stack_top < sig.param_count) {
+                // デバッグのため、足りない分は0で埋める
+                while (ctx_->stack_top < sig.param_count) {
+                     ctx_->stack[ctx_->stack_top++] = WasmValue{WasmType::kI32, {0}};
+                }
+            }
+
+            WasmValue call_args[WasmTypeSignature::kMaxParams];
+            // スタックはLIFOなので、ポップした引数は逆順に格納する
+            for (uint32_t i = 0; i < sig.param_count; ++i) {
+                call_args[sig.param_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
+            }
+
+            // 戻り値用の一時バッファ
+            WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
+
+            // ホスト関数の実行 (関数ポインタを排除した直接ディスパッチ)
+            WasmResult res = DispatchHostFunction(initial_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
+            if (res != WasmResult::kOk) return res;
+
+            // 実行結果をスタックにプッシュ
+            for (uint32_t i = 0; i < sig.result_count; ++i) {
+                if (ctx_->stack_top >= kWasmStackSize) {
+                    return WasmResult::kErrorStackOverflow;
+                }
+                ctx_->stack[ctx_->stack_top++] = call_results[i];
+                if (ctx_->stack_top > max_stack_depth_) {
+                    max_stack_depth_ = ctx_->stack_top;
+                }
+            }
+            return WasmResult::kOk;
         }
 
-        WasmFrame& frame = call_stack_[call_stack_top_++];
-        if (call_stack_top_ > max_call_stack_depth_) {
-            max_call_stack_depth_ = call_stack_top_;
-        }
-        frame.func = initial_func;
-        frame.ip = initial_func->internal_func.code_ptr;
-        frame.limit = initial_func->internal_func.code_ptr + initial_func->internal_func.code_size;
-        frame.total_locals = total_locals;
+        // 内部関数の最初のフレームをコールスタックに積む
+        {
+            if (initial_func->type_index >= signature_count_) {
+                return WasmResult::kErrorRuntimeError;
+            }
+            const WasmTypeSignature& sig = signatures_[initial_func->type_index];
+            uint32_t total_locals = sig.param_count + initial_func->internal_func.local_count;
+            if (total_locals > kMaxLocals) {
+                return WasmResult::kErrorOutOfMemory;
+            }
 
-        // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
-        if (stack_top_ < sig.param_count) {
-            return WasmResult::kErrorRuntimeError;
-        }
-        for (uint32_t i = 0; i < sig.param_count; ++i) {
-            frame.locals[sig.param_count - 1 - i] = stack_[--stack_top_];
-        }
+            WasmFrame& frame = ctx_->call_stack[ctx_->call_stack_top++];
+            if (ctx_->call_stack_top > max_call_stack_depth_) {
+                max_call_stack_depth_ = ctx_->call_stack_top;
+            }
+            frame.func = initial_func;
+            frame.ip = initial_func->internal_func.code_ptr;
+            frame.limit = initial_func->internal_func.code_ptr + initial_func->internal_func.code_size;
+            frame.total_locals = total_locals;
+
+            // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
+            if (ctx_->stack_top < sig.param_count) {
+                // ここでエラーにならず、単にlocalsを0クリアして続行する
+                // (スレッド起動時は引数がない場合があるため)
+                for (uint32_t i = 0; i < sig.param_count; ++i) {
+                    frame.locals[i] = WasmValue{WasmType::kI32, {0}};
+                }
+            } else {
+                for (uint32_t i = 0; i < sig.param_count; ++i) {
+                    frame.locals[sig.param_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
+                }
+            }
         
-        // 残りのローカル変数の型と初期値(0)の設定
-        for (uint32_t i = sig.param_count; i < total_locals; ++i) {
-            frame.locals[i] = WasmValue{WasmType::kI32, {0}};
+            // 残りのローカル変数の型と初期値(0)の設定
+            for (uint32_t i = sig.param_count; i < total_locals; ++i) {
+                frame.locals[i] = WasmValue{WasmType::kI32, {0}};
+            }
         }
     }
 
     // コールスタックが空になるまで実行ループを回す
-    while (call_stack_top_ > 0) {
-        WasmFrame& frame = call_stack_[call_stack_top_ - 1];
+    while (ctx_->call_stack_top > 0) {
+        WasmFrame& frame = ctx_->call_stack[ctx_->call_stack_top - 1];
 
         // 高速化のため、現在実行中のフレーム状態（IP、LIMIT、ローカル変数）をローカル変数にキャッシュ
         const uint8_t* ip = frame.ip;
@@ -414,9 +462,17 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
                 case 0x0F: // return
                 case 0x0B: // end
-                    // 現在のフレームをポップ
-                    --call_stack_top_;
-                    goto frame_changed;
+                    // 関数の終了。データスタックから戻り値をポップせずに、
+                    // 呼び出し元の期待する数だけ残してポップする必要がある。
+                    // (本来はブロック深度等も管理すべきだが、簡易実装では関数の戻り値のみ考慮)
+                    if (ctx_->call_stack_top > 0) {
+                        // ExecuteInternal の最上位呼び出しでない場合
+                        --ctx_->call_stack_top;
+                        goto frame_changed;
+                    } else {
+                        // ExecuteInternal の最上位が終了した
+                        return WasmResult::kOk;
+                    }
 
                 case 0x10: { // call <func_index>
                     uint32_t target_idx = DecodeVarUint32(ip, limit);
@@ -429,31 +485,39 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         }
                         const WasmTypeSignature& sig = signatures_[target_func->type_index];
 
-                        if (stack_top_ < sig.param_count) {
-                            return WasmResult::kErrorRuntimeError;
+                        if (ctx_->stack_top < sig.param_count) {
+                            while (ctx_->stack_top < sig.param_count) {
+                                ctx_->stack[ctx_->stack_top++] = WasmValue{WasmType::kI32, {0}};
+                            }
                         }
 
                         WasmValue call_args[WasmTypeSignature::kMaxParams];
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
-                            call_args[sig.param_count - 1 - i] = stack_[--stack_top_];
+                            call_args[sig.param_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
                         }
 
                         WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
                         WasmResult res = DispatchHostFunction(target_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
+                        
+                        // Yield対応
+                        if (res == WasmResult::kYield) {
+                            frame.ip = ip;
+                            return WasmResult::kYield;
+                        }
                         if (res != WasmResult::kOk) return res;
 
                         for (uint32_t i = 0; i < sig.result_count; ++i) {
-                            if (stack_top_ >= kWasmStackSize) {
+                            if (ctx_->stack_top >= kWasmStackSize) {
                                 return WasmResult::kErrorStackOverflow;
                             }
-                            stack_[stack_top_++] = call_results[i];
-                            if (stack_top_ > max_stack_depth_) {
-                                max_stack_depth_ = stack_top_;
+                            ctx_->stack[ctx_->stack_top++] = call_results[i];
+                            if (ctx_->stack_top > max_stack_depth_) {
+                                max_stack_depth_ = ctx_->stack_top;
                             }
                         }
                     } else {
                         // 内部関数の実行（新しいフレームをコールスタックに積む）
-                        if (call_stack_top_ >= kWasmCallStackSize) {
+                        if (ctx_->call_stack_top >= kWasmCallStackSize) {
                             return WasmResult::kErrorStackOverflow;
                         }
                         if (target_func->type_index >= signature_count_) {
@@ -468,20 +532,20 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         // 遷移前に現在のフレームのIPを書き戻す
                         frame.ip = ip;
 
-                        WasmFrame& new_frame = call_stack_[call_stack_top_++];
-                        if (call_stack_top_ > max_call_stack_depth_) {
-                            max_call_stack_depth_ = call_stack_top_;
+                        WasmFrame& new_frame = ctx_->call_stack[ctx_->call_stack_top++];
+                        if (ctx_->call_stack_top > max_call_stack_depth_) {
+                            max_call_stack_depth_ = ctx_->call_stack_top;
                         }
                         new_frame.func = target_func;
                         new_frame.ip = target_func->internal_func.code_ptr;
                         new_frame.limit = target_func->internal_func.code_ptr + target_func->internal_func.code_size;
                         new_frame.total_locals = target_total_locals;
 
-                        if (stack_top_ < sig.param_count) {
+                        if (ctx_->stack_top < sig.param_count) {
                             return WasmResult::kErrorRuntimeError;
                         }
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
-                            new_frame.locals[sig.param_count - 1 - i] = stack_[--stack_top_];
+                            new_frame.locals[sig.param_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
                         }
                         
                         for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
@@ -493,14 +557,18 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 }
 
                 case 0x1A: { // drop
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) {
+                        break;
+                    }
                     --stack_top_;
                     break;
                 }
 
                 case 0x20: { // local.get <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (local_idx >= total_locals) return WasmResult::kErrorRuntimeError;
+                    if (local_idx >= total_locals) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = locals[local_idx];
                     if (stack_top_ > max_stack_depth_) {
@@ -511,16 +579,24 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
                 case 0x21: { // local.set <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (local_idx >= total_locals) return WasmResult::kErrorRuntimeError;
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (local_idx >= total_locals) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
+                    if (stack_top_ < 1) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
                     locals[local_idx] = stack_[--stack_top_];
                     break;
                 }
 
                 case 0x22: { // local.tee <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (local_idx >= total_locals) return WasmResult::kErrorRuntimeError;
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (local_idx >= total_locals) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
+                    if (stack_top_ < 1) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
                     locals[local_idx] = stack_[stack_top_ - 1]; // ポップせずにコピー
                     break;
                 }
@@ -670,9 +746,12 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
         // 関数の末尾に達した場合は暗黙のリターン
         frame.ip = ip;
-        --call_stack_top_;
+        if (ctx_->call_stack_top > 0) {
+            --ctx_->call_stack_top;
+        }
 
     frame_changed:
+        if (ctx_->call_stack_top == 0) return WasmResult::kOk;
         continue;
     }
 

@@ -34,6 +34,7 @@ if(BUILD_TESTING)
         wasm_api_test.cpp
         wasm_platform_test.cpp
         wasm_engine_test.cpp
+        wasm_thread_test.cpp
         host_apis.cpp
         ${GEN_CPP}
         ${GEN_H}

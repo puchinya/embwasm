@@ -1,0 +1,142 @@
+#include "wasm_thread.h"
+#include "wasm_engine.h"
+
+namespace embwasm {
+
+#if EMBWASM_ENABLE_MULTITHREADING
+
+WasmScheduler* WasmScheduler::instance_ = nullptr;
+
+WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept 
+    : engine_(engine), current_thread_index_(0) {
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        threads_[i].Reset();
+        threads_[i].id = static_cast<uint32_t>(i + 1);
+    }
+    for (std::size_t i = 0; i < kMaxEvents; ++i) {
+        events_[i].Reset();
+        events_[i].id = static_cast<uint32_t>(i + 1);
+    }
+}
+
+uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        if (threads_[i].state == ThreadState::kTerminated) {
+            threads_[i].state = ThreadState::kReady;
+            threads_[i].stack_top = 0;
+            threads_[i].call_stack_top = 0;
+            
+            // 最初の呼び出しのために実行準備
+            threads_[i].wait_event_id = func_index;
+            
+            // 重要：ここで WasmEngine がこの新しいコンテキストを参照するようにする
+            // 呼び出し元の Execute 内で引数を積むために必要。
+            engine_.SetContext(&threads_[i]);
+            
+            return threads_[i].id;
+        }
+    }
+    return 0;
+}
+
+uint32_t WasmScheduler::CreateEvent() noexcept {
+    for (std::size_t i = 0; i < kMaxEvents; ++i) {
+        if (events_[i].id != 0 && !events_[i].signaled) {
+            // 未使用（またはリセット済み）のイベントを返す
+            // 簡易実装のため、常に固定数を使い回す
+            return events_[i].id;
+        }
+    }
+    return 0;
+}
+
+void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
+    if (event_id == 0 || event_id > kMaxEvents) return;
+    events_[event_id - 1].signaled = true;
+
+    // このイベントを待っているスレッドをReadyにする
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        if (threads_[i].state == ThreadState::kWaiting && threads_[i].wait_event_id == event_id) {
+            threads_[i].state = ThreadState::kReady;
+        }
+    }
+}
+
+void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
+    if (thread_id == 0 || thread_id > kMaxThreads) return;
+    if (event_id == 0 || event_id > kMaxEvents) return;
+
+    WasmThreadContext& ctx = threads_[thread_id - 1];
+    if (events_[event_id - 1].signaled) {
+        // 既にシグナルされている場合は待たない（消費するかは設計次第だが、ここではリセットする）
+        events_[event_id - 1].signaled = false;
+        ctx.state = ThreadState::kReady;
+    } else {
+        ctx.state = ThreadState::kWaiting;
+        ctx.wait_event_id = event_id;
+    }
+}
+
+WasmResult WasmScheduler::Run() noexcept {
+    while (true) {
+        bool any_active = false;
+        for (std::size_t i = 0; i < kMaxThreads; ++i) {
+            if (threads_[i].state != ThreadState::kTerminated) {
+                any_active = true;
+                break;
+            }
+        }
+        if (!any_active) break;
+
+        WasmResult res = Step();
+        if (res != WasmResult::kOk && res != WasmResult::kYield) return res;
+    }
+    return WasmResult::kOk;
+}
+
+WasmResult WasmScheduler::Step() noexcept {
+    // Round-robin で Ready なスレッドを探す
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
+        if (threads_[idx].state == ThreadState::kReady) {
+            current_thread_index_ = idx;
+            WasmThreadContext& ctx = threads_[idx];
+            
+            engine_.SetContext(&ctx);
+            ctx.state = ThreadState::kRunning;
+            
+            WasmResult res;
+            if (ctx.call_stack_top == 0) {
+                // 初回実行。ExecuteInternal を使う場合、引数はスタックに積まれている必要がある。
+                // 現在の CreateThread 実装では引数をサポートしていないため、
+                // 内部関数の開始として func_index を指定する。
+                res = engine_.ExecuteInternal(ctx.wait_event_id);
+            } else {
+                // 再開（継続実行）
+                res = engine_.ExecuteInternal(0);
+            }
+
+            if (res == WasmResult::kYield) {
+                // 中断。状態はホストAPI側で kWaiting に変えられている可能性がある
+                if (ctx.state == ThreadState::kRunning) {
+                    ctx.state = ThreadState::kReady;
+                }
+            } else if (res == WasmResult::kOk) {
+                ctx.state = ThreadState::kTerminated;
+            } else {
+                // 実行時エラー。
+                ctx.state = ThreadState::kTerminated;
+                current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
+                return res;
+            }
+
+            current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
+            return WasmResult::kOk;
+        }
+    }
+    return WasmResult::kOk; // 実行可能なスレッドなし
+}
+
+#endif // EMBWASM_ENABLE_MULTITHREADING
+
+} // namespace embwasm
