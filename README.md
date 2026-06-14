@@ -13,18 +13,22 @@
   - STL コンテナの使用禁止
 - **高速な静的ホストAPIルックアップ**: 
   WIT (WebAssembly Interface Type) 設定に基づいてビルド中に C++ ホスト関数のルックアップテーブルを自動生成し、二分探索で高速（$O(\log N)$）に解決します。
+- **標準的なホストモジュール**:
+  - **Threads**: 協調型マルチスレッド (Green Threads) サポート。
+  - **Sockets**: WASI 互換のネットワークソケット API サポート。
 - **高い移植性**: GCC / Clang に対応し、Cortex-M シリーズやPC（ARM/ARM64, x86/x86_64）の各種OS（macOS, Linux, Windows）および RTOS（FreeRTOS, uITRON）で動作します。
 
 ## ディレクトリ構成
-- [include/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include): コアライブラリのヘッダーファイル
-- [src/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/src): コアライブラリのソースコード
-- [demo/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/demo): デモアプリケーション（WASMからホストAPIを呼び出すサンプル）
-- [test/](test/): 単体テストコードのディレクトリ (コアテストは `test/core/` 配下)
-- [tools/codegen/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/tools/codegen): ホストAPI自動生成用 Python スクリプト (`gen_api.py`)
-- [platform/](file:///Users/nabeshimamasataka/CLionProjects/embwasm/platform): プラットフォーム固有の実装（FreeRTOS, uITRON, 各OS等）
+- [include/](include/): コアライブラリのヘッダーファイル
+- [src/](src/): コアライブラリのソースコード
+- [wasm_host_modules/](wasm_host_modules/): 標準ホストモジュール（Threads, Sockets 等）の実装
+- [demo/](demo/): デモアプリケーション
+- [test/](test/): 単体テストコード
+- [tools/codegen/](tools/codegen/): ホストAPI自動生成用 Python スクリプト (`gen_api.py`)
+- [platform/](platform/): プラットフォーム固有の実装（FreeRTOS, uITRON, 各OS等）
 
 ## ビルド方法 & クイックスタート
-ビルド手順やデモの実行方法などの詳細については、[docs/getting_started.md](file:///Users/nabeshimamasataka/CLionProjects/embwasm/docs/getting_started.md) を参照してください。
+ビルド手順やデモの実行方法などの詳細については、[docs/getting_started.md](docs/getting_started.md) を参照してください。
 
 簡易手順：
 ```bash
@@ -33,16 +37,18 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 
 # デモの実行
-./build/demo/embwasm_demo
+./build/demo/hello/embwasm_demo_hello
 ```
 
 ## ホストAPIの追加方法 & ツールの使い方
 新しいホストAPIの定義方法、WASMモジュールへの公開手順、および自動コード生成ツール（`gen_api.py`）の使い方などの詳細については、以下のドキュメントを参照してください。
-- **ホストAPI実装ガイド**: [docs/api_impl_for_wasm.md](file:///Users/nabeshimamasataka/CLionProjects/embwasm/docs/api_impl_for_wasm.md)
-- **コード生成ツールの使い方**: [docs/tool_usage.md](file:///Users/nabeshimamasataka/CLionProjects/embwasm/docs/tool_usage.md)
+- **ホストAPI実装ガイド**: [docs/api_impl_for_wasm.md](docs/api_impl_for_wasm.md)
+- **コード生成ツールの使い方**: [docs/tool_usage.md](docs/tool_usage.md)
+- **マルチスレッド機能**: [docs/multithreading.md](docs/multithreading.md)
+- **ネットワークソケット機能**: [docs/sockets.md](docs/sockets.md)
 
 ## コーディング規約
-C++コードの命名規則や言語機能の制限（STL・例外・RTTI禁止など）などの詳細については、[docs/coding_style.md](file:///Users/nabeshimamasataka/CLionProjects/embwasm/docs/coding_style.md) を参照してください。
+C++コードの命名規則や言語機能の制限（STL・例外・RTTI禁止など）などの詳細については、[docs/coding_style.md](docs/coding_style.md) を参照してください。
 
 ## ライセンス
 Copyright (c) 2026 embwasm Project. All rights reserved.

@@ -10,12 +10,12 @@
 
 ```cpp
 WasmResult HostFunction(
+    WasmEngine& engine,         // エンジンインスタンス
     const WasmValue* args,      // WASM側から渡された引数の配列
     uint32_t arg_count,         // 引数の個数
     WasmValue* results,         // WASM側へ返却する戻り値の配列
-    uint32_t result_count,      // 戻り値の個数
-    void* user_data             // 任意のコンテキストポインタ（オプション）
-);
+    uint32_t result_count       // 戻り値の個数
+) noexcept;
 ```
 
 ### 例外処理とエラーハンドリング
@@ -30,22 +30,23 @@ WasmResult HostFunction(
 例えば、WASMモジュールに対して「センサーから現在値を取得するAPI（`get_sensor_value`）」と「値をLEDに書き込むAPI（`write_led_value`）」を提供したい場合のコード例です。
 
 ```cpp
-#include "wasm_types.hpppp"
+#include "wasm_types.hpp"
+#include "wasm_engine.hpp"
 
 namespace embwasm {
 
 // センサー値を読み込むホストAPI
 // WASMシグネチャ: (import "env" "get_sensor_value" (func (result i32)))
 WasmResult GetSensorValue(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
+    (void)engine;
     (void)args;      // 引数なし
     (void)arg_count;
-    (void)user_data;
 
     if (result_count < 1) {
         return WasmResult::kErrorRuntimeError;
@@ -64,15 +65,15 @@ WasmResult GetSensorValue(
 // LEDに出力するホストAPI
 // WASMシグネチャ: (import "env" "write_led_value" (func (param i32)))
 WasmResult WriteLedValue(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
+    (void)engine;
     (void)results;      // 戻り値なし
     (void)result_count;
-    (void)user_data;
 
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
@@ -82,7 +83,6 @@ WasmResult WriteLedValue(
     
     // ベアメタル環境ではここでハードウェアレジスタを操作
     // (例: GPIO_WriteBit(LED_PORT, LED_PIN, led_state);)
-    // std::cout << "[HOST API] LED State changed to: " << led_state << std::endl;
 
     return WasmResult::kOk;
 }
@@ -112,7 +112,7 @@ world sensor-api {
 `tools/codegen/gen_api.py` を実行して、静的なルックアップテーブルとディスパッチャを自動生成します。
 
 ```bash
-python3 tools/codegen/gen_api.py sensor.wit
+python3 tools/codegen/gen_api.py sensor.wit src/wasm_api_static.cpp include/wasm_api_static.hpp
 ```
 
 これにより、ビルド時に $O(\log N)$ の二分探索でホスト関数が解決されるようになります。詳細は [docs/tool_usage.md](tool_usage.md) を参照してください。
@@ -152,5 +152,5 @@ WASM（WebAssembly Text Format）側で上記で定義した API をインポー
 
 ホストAPIの数や実行時のスタック制限などは、`include/wasm_config.hpp` の設定値を書き換えてビルドすることで調整可能です。
 
-* **[include/wasm_config.hpp](file:///Users/nabeshimamasataka/CLionProjects/embwasm/include/wasm_config.hpp)**:
+* **[include/wasm_config.hpp](include/wasm_config.hpp)**:
   - `kWasmStackSize`: WASM実行スタックの最大深度。

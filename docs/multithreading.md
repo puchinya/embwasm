@@ -70,7 +70,9 @@ void main(void) {
 
 ```cpp
 embwasm::WasmMemoryPool pool;
-embwasm::WasmEngine engine(pool);
+embwasm::WasmEngine engine;
+engine.Init(pool);
+
 engine.Load(wasm_binary, was_size);
 
 // スケジューラの初期化
