@@ -1,0 +1,11 @@
+package embwasm:stdio;
+
+/// @cpp-module: stdio
+/// @cpp-header: "embwasm_hostmodule_stdio.hpp"
+world stdio {
+    /// @cpp-func: embwasm::hostmodules::stdio::Printf
+    import printf: func(fmt: string, args: list<s32>);
+
+    /// @cpp-func: embwasm::hostmodules::stdio::Puts
+    import puts: func(s: string) -> s32;
+}

@@ -4,12 +4,11 @@
 // エクスポートされる関数
 __attribute__((export_name("main")))
 int main(void) {
-    wasm_host_api_print_char('H');
-    wasm_host_api_print_char('e');
-    wasm_host_api_print_char('l');
-    wasm_host_api_print_char('l');
-    wasm_host_api_print_char('o');
-    wasm_host_api_print_char('\n');
+    wasm_host_api_string_t s;
+    s.ptr = (uint8_t*)"Hello";
+    s.len = 5;
+    wasm_host_api_puts(&s);
     return 0;
 }
+
 

@@ -6,11 +6,16 @@
 __attribute__((export_name("thread2")))
 void thread2(void) {
     for (int i = 0; i < 3; ++i) {
-        wasm_host_api_print_char('T');
-        wasm_host_api_print_char('2');
-        wasm_host_api_print_char(':');
-        wasm_host_api_print_val(i);
-        wasm_host_api_print_char('\n');
+        wasm_host_api_string_t fmt;
+        fmt.ptr = (uint8_t*)"T2:%d\n";
+        fmt.len = 6;
+
+        int32_t arg_data[1] = { i };
+        wasm_host_api_list_s32_t args;
+        args.ptr = arg_data;
+        args.len = 1;
+
+        wasm_host_api_printf(&fmt, &args);
         wasm_host_api_thread_yield();
     }
     // イベント1をシグナルして終了
@@ -20,11 +25,10 @@ void thread2(void) {
 // エクスポートされるメイン関数
 __attribute__((export_name("main")))
 int main(void) {
-    wasm_host_api_print_char('M');
-    wasm_host_api_print_char('a');
-    wasm_host_api_print_char('i');
-    wasm_host_api_print_char('n');
-    wasm_host_api_print_char('\n');
+    wasm_host_api_string_t msg;
+    msg.ptr = (uint8_t*)"Main";
+    msg.len = 4;
+    wasm_host_api_puts(&msg);
 
     // スレッド2を起動 (名前で指定)
     wasm_host_api_string_t thread_name;
@@ -33,27 +37,29 @@ int main(void) {
     wasm_host_api_thread_spawn(&thread_name);
 
     for (int i = 0; i < 3; ++i) {
-        wasm_host_api_print_char('M');
-        wasm_host_api_print_char('1');
-        wasm_host_api_print_char(':');
-        wasm_host_api_print_val(i);
-        wasm_host_api_print_char('\n');
+        wasm_host_api_string_t fmt;
+        fmt.ptr = (uint8_t*)"M1:%d\n";
+        fmt.len = 6;
+
+        int32_t arg_data[1] = { i };
+        wasm_host_api_list_s32_t args;
+        args.ptr = arg_data;
+        args.len = 1;
+
+        wasm_host_api_printf(&fmt, &args);
         wasm_host_api_thread_yield();
     }
 
     // スレッド2の終了を待つ
-    wasm_host_api_print_char('W');
-    wasm_host_api_print_char('a');
-    wasm_host_api_print_char('i');
-    wasm_host_api_print_char('t');
-    wasm_host_api_print_char('\n');
+    msg.ptr = (uint8_t*)"Wait";
+    msg.len = 4;
+    wasm_host_api_puts(&msg);
     wasm_host_api_event_wait(1);
 
-    wasm_host_api_print_char('D');
-    wasm_host_api_print_char('o');
-    wasm_host_api_print_char('n');
-    wasm_host_api_print_char('e');
-    wasm_host_api_print_char('\n');
+    msg.ptr = (uint8_t*)"Done";
+    msg.len = 4;
+    wasm_host_api_puts(&msg);
     return 0;
 }
+
 

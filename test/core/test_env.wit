@@ -1,5 +1,6 @@
 package embwasm:test;
 
+/// @wit-import: "../../wasm_host_modules/stdio/stdio.wit"
 /// @cpp-init: embwasm::TestEnvInit
 /// @cpp-deinit: embwasm::TestEnvDeinit
 /// @cpp-header: "host_apis.hpp"

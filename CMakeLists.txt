@@ -20,13 +20,17 @@ option(USE_UITRON "Use uITRON platform implementation" OFF)
 # コアライブラリ (src) とは完全に独立したサブディレクトリとして管理する。
 # src/CMakeLists.txt はソケットを一切知らない。
 add_subdirectory(wasm_host_modules/sockets)
+add_subdirectory(wasm_host_modules/stdio)
 
 add_subdirectory(src)
 
-# embwasm_sockets が有効な場合、コアライブラリにリンクする。
-# ルートで行うことで src/CMakeLists.txt をソケット完全非依存に保つ。
+# embwasm_sockets や embwasm_stdio が有効な場合、コアライブラリにリンクする。
+# ルートで行うことで src/CMakeLists.txt をモジュール完全非依存に保つ。
 if(TARGET embwasm_sockets)
     target_link_libraries(embwasm PUBLIC embwasm_sockets)
+endif()
+if(TARGET embwasm_stdio)
+    target_link_libraries(embwasm PUBLIC embwasm_stdio)
 endif()
 
 add_subdirectory(demo)

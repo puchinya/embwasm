@@ -45,3 +45,95 @@ TEST(WasmApiStaticTest, AllFunctions) {
     engine.Deinit();
     pool.Deinit();
 }
+
+namespace {
+// 確実にLoadできてメモリセクションを持つダミーWASMバイナリ
+constexpr uint8_t kWasmMemBinaryForStdio[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x08, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60,
+    0x00, 0x00, 0x03, 0x03, 0x02, 0x00, 0x01, 0x05,
+    0x03, 0x01, 0x00, 0x02, 0x06, 0x08, 0x01, 0x7f,
+    0x01, 0x41, 0x90, 0x88, 0x04, 0x0b, 0x07, 0x19,
+    0x03, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79,
+    0x02, 0x00, 0x04, 0x6c, 0x6f, 0x61, 0x64, 0x00,
+    0x00, 0x05, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x00,
+    0x01, 0x0a, 0x1f, 0x02, 0x0b, 0x00, 0x41, 0x00,
+    0x28, 0x02, 0x80, 0x88, 0x80, 0x80, 0x00, 0x0b,
+    0x11, 0x00, 0x41, 0x00, 0x41, 0xf8, 0xac, 0xd1,
+    0x91, 0x01, 0x36, 0x02, 0x84, 0x88, 0x80, 0x80,
+    0x00, 0x0b, 0x0b, 0x0f, 0x01, 0x00, 0x41, 0x80,
+    0x08, 0x0b, 0x08, 0x41, 0x42, 0x43, 0x44, 0x00,
+    0x00, 0x00, 0x00, 0x00
+};
+}
+
+TEST(WasmApiStaticTest, StdioPrintfAndPuts) {
+    embwasm::WasmMemoryPool pool;
+    pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
+    embwasm::WasmEngine engine;
+    engine.Init(pool);
+
+    // WASMロードして線形メモリを有効化
+    ASSERT_EQ(engine.Load(kWasmMemBinaryForStdio, sizeof(kWasmMemBinaryForStdio)), embwasm::WasmResult::kOk);
+
+    uint8_t* mem = engine.GetLinearMemory();
+    ASSERT_NE(mem, nullptr);
+
+    // 1. Puts テスト
+    const char* test_str = "Hello from Puts!";
+    uint32_t str_len = static_cast<uint32_t>(std::strlen(test_str));
+    uint32_t str_addr = 100;
+    std::memcpy(mem + str_addr, test_str, str_len);
+
+    embwasm::WasmValue puts_args[2] = {
+        {embwasm::WasmType::kI32, {static_cast<int32_t>(str_addr)}},
+        {embwasm::WasmType::kI32, {static_cast<int32_t>(str_len)}}
+    };
+    embwasm::WasmValue puts_results[1] = {};
+
+    embwasm::WasmResult res_puts = embwasm::DispatchHostFunction(
+        engine,
+        embwasm::kStdioPuts,
+        puts_args, 2,
+        puts_results, 1
+    );
+    EXPECT_EQ(res_puts, embwasm::WasmResult::kOk);
+    EXPECT_EQ(puts_results[0].type, embwasm::WasmType::kI32);
+    EXPECT_GT(puts_results[0].value.i32, 0);
+
+    // 2. Printf テスト
+    // 書式: "Val: %03d, Str: %-5s, Hex: 0x%X"
+    const char* fmt_str = "Val: %03d, Str: %-5s, Hex: 0x%X";
+    uint32_t fmt_len = static_cast<uint32_t>(std::strlen(fmt_str));
+    uint32_t fmt_addr = 200;
+    std::memcpy(mem + fmt_addr, fmt_str, fmt_len);
+
+    const char* arg_str = "Wasm";
+    uint32_t arg_str_len = static_cast<uint32_t>(std::strlen(arg_str));
+    uint32_t arg_str_addr = 300;
+    std::memcpy(mem + arg_str_addr, arg_str, arg_str_len + 1); // null-terminate
+
+    // 引数リスト [ 42, arg_str_addr, 255 ]
+    int32_t printf_list_args[] = { 42, static_cast<int32_t>(arg_str_addr), 255 };
+    uint32_t list_addr = 400;
+    std::memcpy(mem + list_addr, printf_list_args, sizeof(printf_list_args));
+
+    embwasm::WasmValue printf_args[4] = {
+        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_addr)}},
+        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_len)}},
+        {embwasm::WasmType::kI32, {static_cast<int32_t>(list_addr)}},
+        {embwasm::WasmType::kI32, {static_cast<int32_t>(3)}} // 要素数 3
+    };
+
+    embwasm::WasmResult res_printf = embwasm::DispatchHostFunction(
+        engine,
+        embwasm::kStdioPrintf,
+        printf_args, 4,
+        nullptr, 0
+    );
+    EXPECT_EQ(res_printf, embwasm::WasmResult::kOk);
+
+    engine.Deinit();
+    pool.Deinit();
+}
+

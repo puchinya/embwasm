@@ -2,13 +2,7 @@ package embwasm:demo;
 
 /// @cpp-header: "../hello/host_apis.hpp"
 /// @wit-import: "../../wasm_host_modules/threads/threads.wit"
+/// @wit-import: "../../wasm_host_modules/stdio/stdio.wit"
 world host-api {
-    /// @cpp-func: embwasm::Print
-    import print: func(val: s32);
-
-    /// @cpp-func: embwasm::PrintChar
-    import print-char: func(character: s32);
-
-    /// @cpp-func: embwasm::PrintVal
-    import print-val: func(val: s32);
 }
+
