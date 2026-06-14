@@ -1,0 +1,4 @@
+package embwasm:test-io;
+/// @wit-import: "../../../../wasm_host_modules/wasi/io/io.wit"
+world test-io {
+}
