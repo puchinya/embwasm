@@ -17,7 +17,7 @@ struct WasmFunction {
     bool is_import;
     uint32_t type_index;
     union {
-        HostFunction host_func;
+        HostFunctionId host_func_id;
         InternalFunc internal_func;
     };
 };

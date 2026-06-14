@@ -179,9 +179,9 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     }
                     uint32_t type_idx = DecodeVarUint32(ptr, section_end);
 
-                    // ホストAPIを自動生成された静的テーブルから二分探索で検索
-                    HostFunction host_func = LookupStaticHostFunction(mod_name, field_name);
-                    if (!host_func) {
+                    // ホストAPIを自動生成された静的テーブルから検索
+                    HostFunctionId host_func_id = LookupStaticHostFunctionId(mod_name, field_name);
+                    if (host_func_id == HostFunctionId::kInvalid) {
                         return WasmResult::kErrorFunctionNotFound;
                     }
 
@@ -191,7 +191,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     functions_[function_count_].is_import = true;
                     functions_[function_count_].type_index = type_idx;
-                    functions_[function_count_].host_func = host_func;
+                    functions_[function_count_].host_func_id = host_func_id;
                     function_count_++;
                     code_index_offset++;
                 }
@@ -345,8 +345,8 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
         // 戻り値用の一時バッファ
         WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
 
-        // ホスト関数の実行
-        WasmResult res = initial_func->host_func(call_args, sig.param_count, call_results, sig.result_count, nullptr);
+        // ホスト関数の実行 (関数ポインタを排除した直接ディスパッチ)
+        WasmResult res = DispatchHostFunction(initial_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
         if (res != WasmResult::kOk) return res;
 
         // 実行結果をスタックにプッシュ
@@ -439,7 +439,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         }
 
                         WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-                        WasmResult res = target_func->host_func(call_args, sig.param_count, call_results, sig.result_count, nullptr);
+                        WasmResult res = DispatchHostFunction(target_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
                         if (res != WasmResult::kOk) return res;
 
                         for (uint32_t i = 0; i < sig.result_count; ++i) {

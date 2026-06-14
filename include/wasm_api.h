@@ -5,9 +5,23 @@
 
 namespace embwasm {
 
-// 静的に登録されたホストAPIを二分探索で高速検索します。
-// O(log N) の計算量で検索が完了します。
-HostFunction LookupStaticHostFunction(const char* module_name, const char* field_name) noexcept;
+// ホスト関数のIDを表す型。
+// 各アプリケーション固有の関数IDは constexpr 定数としてキャストして定義します。
+enum class HostFunctionId : uint32_t {
+    kInvalid = 0xFFFFFFFF
+};
+
+// 静的に登録されたホストAPIのIDを検索します。
+HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
+
+// ホストAPIのディスパッチャ（switch文による直接呼び出しを実装し、関数ポインタを排除します）
+WasmResult DispatchHostFunction(
+    HostFunctionId id,
+    const WasmValue* args,
+    uint32_t arg_count,
+    WasmValue* results,
+    uint32_t result_count,
+    void* user_data) noexcept;
 
 } // namespace embwasm
 
