@@ -1,6 +1,6 @@
 #include <iostream>
 #include "embwasm.h"
-#include "hello_wasm.h"
+#include "main_wasm.h"
 
 int main() {
     std::cout << "=== Embedded WASM Engine Demo ===" << std::endl;
@@ -14,7 +14,7 @@ int main() {
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
-    embwasm::WasmResult load_res = engine.Load(kHelloWasmBinary, kHelloWasmBinarySize);
+    embwasm::WasmResult load_res = engine.Load(kMainWasmBinary, kMainWasmBinarySize);
     if (load_res != embwasm::WasmResult::kOk) {
         std::cerr << "Failed to load WASM binary. Error code: " << static_cast<int>(load_res) << std::endl;
         return 1;
@@ -23,10 +23,10 @@ int main() {
     std::cout << "Memory Used: " << pool.GetUsedBytes() << " / " << pool.GetTotalBytes() << " bytes" << std::endl;
 
     // 6. エクスポートされた関数の実行
-    std::cout << "\nExecuting Exported Function 'hello'..." << std::endl;
+    std::cout << "\nExecuting Exported Function 'main'..." << std::endl;
     
     // 文字出力関数によりコンソールへ "Hello\n" と出力されます
-    embwasm::WasmResult exec_res = engine.Execute("hello", nullptr, 0, nullptr, 0);
+    embwasm::WasmResult exec_res = engine.Execute("main", nullptr, 0, nullptr, 0);
     if (exec_res != embwasm::WasmResult::kOk) {
         std::cerr << "Failed to execute. Error code: " << static_cast<int>(exec_res) << std::endl;
         return 1;

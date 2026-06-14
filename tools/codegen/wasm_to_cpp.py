@@ -17,19 +17,21 @@ def main():
 
     # Generate Header file
     header_name = os.path.basename(header_path)
+    var_prefix = os.path.splitext(os.path.basename(wasm_path))[0].capitalize()
+    
     with open(header_path, 'w') as f:
         f.write('// Auto-generated header\n')
         f.write('#pragma once\n')
         f.write('#include <cstdint>\n')
         f.write('#include <cstddef>\n\n')
-        f.write('extern const uint8_t kHelloWasmBinary[];\n')
-        f.write('extern const std::size_t kHelloWasmBinarySize;\n')
+        f.write(f'extern const uint8_t k{var_prefix}WasmBinary[];\n')
+        f.write(f'extern const std::size_t k{var_prefix}WasmBinarySize;\n')
 
     # Generate CPP file
     with open(cpp_path, 'w') as f:
         f.write('// Auto-generated data file\n')
         f.write(f'#include "{header_name}"\n\n')
-        f.write('const uint8_t kHelloWasmBinary[] = {\n    ')
+        f.write(f'const uint8_t k{var_prefix}WasmBinary[] = {{\n    ')
         # Format bytes as hex numbers, wrapped nicely
         hex_bytes = [f"0x{b:02x}" for b in data]
         # Chunk into lines of 16 bytes for readability
@@ -39,7 +41,7 @@ def main():
             if i + 16 < len(hex_bytes):
                 f.write(',\n    ')
         f.write('\n};\n\n')
-        f.write(f'const std::size_t kHelloWasmBinarySize = {len(data)};\n')
+        f.write(f'const std::size_t k{var_prefix}WasmBinarySize = {len(data)};\n')
 
 if __name__ == '__main__':
     main()

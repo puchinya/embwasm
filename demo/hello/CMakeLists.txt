@@ -42,16 +42,16 @@ else()
     set(WASM_LD_FLAGS "")
 endif()
 
-set(WASM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/wasm/hello.c)
-set(WASM_OUT ${CMAKE_CURRENT_BINARY_DIR}/hello.wasm)
-set(WASM_GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/hello_wasm.cpp)
-set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/hello_wasm.h)
+set(WASM_SRC ${CMAKE_CURRENT_SOURCE_DIR}/wasm/main.c)
+set(WASM_OUT ${CMAKE_CURRENT_BINARY_DIR}/main.wasm)
+set(WASM_GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.cpp)
+set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.h)
 
 add_custom_command(
     OUTPUT ${WASM_OUT}
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=hello -o ${WASM_OUT} ${WASM_SRC}
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -o ${WASM_OUT} ${WASM_SRC}
     DEPENDS ${WASM_SRC}
-    COMMENT "Compiling hello.c to WASM using ${WASM_CLANG}"
+    COMMENT "Compiling main.c to WASM using ${WASM_CLANG}"
 )
 
 # 2. WASM バイナリから .cpp (実データ) と .h (extern 宣言のみ) を生成するカスタムコマンド
@@ -60,18 +60,18 @@ add_custom_command(
     OUTPUT ${WASM_GEN_CPP} ${WASM_GEN_H}
     COMMAND python3 ${WASM_TO_CPP_SCRIPT} ${WASM_OUT} ${WASM_GEN_CPP} ${WASM_GEN_H}
     DEPENDS ${WASM_OUT} ${WASM_TO_CPP_SCRIPT}
-    COMMENT "Generating C++ source and header from hello.wasm"
+    COMMENT "Generating C++ source and header from main.wasm"
 )
 
-add_executable(embwasm_demo main.cpp host_apis.cpp ${GEN_CPP} ${GEN_H} ${WASM_GEN_CPP} ${WASM_GEN_H})
+add_executable(embwasm_demo_hello main.cpp host_apis.cpp ${GEN_CPP} ${GEN_H} ${WASM_GEN_CPP} ${WASM_GEN_H})
 
 # ライブラリへのリンクおよびインクルードパスの設定
-target_link_libraries(embwasm_demo PRIVATE embwasm)
-target_include_directories(embwasm_demo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+target_link_libraries(embwasm_demo_hello PRIVATE embwasm)
+target_include_directories(embwasm_demo_hello PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 # 警告レベルを高く設定し、警告をエラーとして処理
 if(MSVC)
-    target_compile_options(embwasm_demo PRIVATE /W4 /WX)
+    target_compile_options(embwasm_demo_hello PRIVATE /W4 /WX)
 else()
-    target_compile_options(embwasm_demo PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(embwasm_demo_hello PRIVATE -Wall -Wextra -Wpedantic -Werror)
 endif()
