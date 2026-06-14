@@ -619,6 +619,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         case 0x6C: res = a.value.i32 * b.value.i32; break;
                         case 0x6D: 
                             if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
+                            if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) return WasmResult::kErrorRuntimeError;
                             res = a.value.i32 / b.value.i32; 
                             break;
                         case 0x6E: 

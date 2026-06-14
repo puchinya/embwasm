@@ -63,6 +63,61 @@ TEST(WasmEngineTest, LoadErrors) {
     // 3. バージョンエラー
     constexpr uint8_t kBadVersion[] = { 0x00, 0x61, 0x73, 0x6d, 0x02, 0x00, 0x00, 0x00 };
     EXPECT_EQ(engine.Load(kBadVersion, sizeof(kBadVersion)), embwasm::WasmResult::kErrorInvalidVersion);
+
+    // 4. 不明なセクション形式 (form != 0x60) -> kErrorUnknownSection
+    constexpr uint8_t kWasmBadForm[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01,
+          0x61, // 0x60 であるべきところを 0x61
+          0x00, 0x00
+    };
+    EXPECT_EQ(engine.Load(kWasmBadForm, sizeof(kWasmBadForm)), embwasm::WasmResult::kErrorUnknownSection);
+
+    // 5. 不明なインポート種類 (kind != 0x00) -> kErrorUnknownSection
+    constexpr uint8_t kWasmBadImportKind[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x02, 0x0d, 0x01,
+          0x03, 'e', 'n', 'v',
+          0x05, 'd', 'u', 'm', 'm', 'y',
+          0x01, // 0x00 であるべきところを 0x01
+          0x00
+    };
+    EXPECT_EQ(engine.Load(kWasmBadImportKind, sizeof(kWasmBadImportKind)), embwasm::WasmResult::kErrorUnknownSection);
+
+    // 6. ホスト関数が見つからない -> kErrorFunctionNotFound
+    constexpr uint8_t kWasmImportNotFound[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x02, 0x11, 0x01,
+          0x03, 'e', 'n', 'v',
+          0x09, 'n', 'o', 't', '_', 'f', 'o', 'u', 'n', 'd',
+          0x00, // kind: Function
+          0x00  // type index
+    };
+    EXPECT_EQ(engine.Load(kWasmImportNotFound, sizeof(kWasmImportNotFound)), embwasm::WasmResult::kErrorFunctionNotFound);
+
+    // 7. 型の引数制限超え (param_count > 8) -> kErrorOutOfMemory
+    constexpr uint8_t kWasmTooManyParams[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x0d, 0x01,
+          0x60,
+          0x09, // 9個 (kMaxParams は 8)
+          0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f,
+          0x00
+    };
+    EXPECT_EQ(engine.Load(kWasmTooManyParams, sizeof(kWasmTooManyParams)), embwasm::WasmResult::kErrorOutOfMemory);
+
+    // 8. 型の戻り値制限超え (result_count > 4) -> kErrorOutOfMemory
+    constexpr uint8_t kWasmTooManyResults[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x09, 0x01,
+          0x60,
+          0x00,
+          0x05, // 5個 (kMaxResults は 4)
+          0x7f, 0x7f, 0x7f, 0x7f, 0x7f
+    };
+    EXPECT_EQ(engine.Load(kWasmTooManyResults, sizeof(kWasmTooManyResults)), embwasm::WasmResult::kErrorOutOfMemory);
 }
 
 TEST(WasmEngineTest, ExecutionErrors) {
@@ -86,6 +141,76 @@ TEST(WasmEngineTest, ExecutionErrors) {
     // 2. 実行時スタック不足エラー検証
     embwasm::WasmValue result;
     EXPECT_EQ(engine.Execute("my_func", nullptr, 0, &result, 1), embwasm::WasmResult::kErrorRuntimeError);
+
+    // 3. 関数のローカル変数制限超え (total_locals > 32) -> kErrorOutOfMemory
+    embwasm::WasmEngine engine2(pool);
+    constexpr uint8_t kWasmTooManyLocals[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x08, 0x01, 0x04, 't', 'e', 's', 't', 0x00, 0x00,
+        0x0a, 0x06, 0x01, 0x04, 
+          0x01, // 1 block
+          0x21, // 33 locals (kMaxLocals is 32)
+          0x7f, // type: i32
+          0x0b  // end
+    };
+    ASSERT_EQ(engine2.Load(kWasmTooManyLocals, sizeof(kWasmTooManyLocals)), embwasm::WasmResult::kOk);
+    EXPECT_EQ(engine2.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorOutOfMemory);
+
+    // 4. 実行スタック (データスタック) のオーバーフロー (kWasmStackSize = 64) -> kErrorStackOverflow
+    embwasm::WasmEngine engine3(pool);
+    uint8_t wasm_overflow[300] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x08, 0x01, 0x04, 't', 'e', 's', 't', 0x00, 0x00,
+    };
+    wasm_overflow[28] = 0x0a;
+    wasm_overflow[29] = 0x86;
+    wasm_overflow[30] = 0x01;
+    wasm_overflow[31] = 0x01;
+    wasm_overflow[32] = 0x84;
+    wasm_overflow[33] = 0x01;
+    wasm_overflow[34] = 0x00;
+    for (int i = 0; i < 65; ++i) {
+        wasm_overflow[35 + i * 2] = 0x41;
+        wasm_overflow[35 + i * 2 + 1] = 0x00;
+    }
+    wasm_overflow[35 + 65 * 2] = 0x0b;
+    std::size_t wasm_overflow_size = 35 + 65 * 2 + 1;
+
+    ASSERT_EQ(engine3.Load(wasm_overflow, wasm_overflow_size), embwasm::WasmResult::kOk);
+    EXPECT_EQ(engine3.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorStackOverflow);
+
+    // 5. 型の不一致によるランタイムエラー -> kErrorRuntimeError
+    embwasm::WasmEngine engine4(pool);
+    constexpr uint8_t kWasmTypeMismatch[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x08, 0x01, 0x04, 't', 'e', 's', 't', 0x00, 0x00,
+        0x0a, 0x07, 0x01, 0x05, 0x00,
+          0x42, 0x00, // i64.const 0
+          0x45,       // i32.eqz (i32を期待してエラー)
+          0x0b
+    };
+    ASSERT_EQ(engine4.Load(kWasmTypeMismatch, sizeof(kWasmTypeMismatch)), embwasm::WasmResult::kOk);
+    EXPECT_EQ(engine4.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorRuntimeError);
+
+    // 6. 未対応のオペコードの実行 -> kErrorRuntimeError
+    embwasm::WasmEngine engine5(pool);
+    constexpr uint8_t kWasmUnsupportedOpcode[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x04, 0x01, 0x60, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x00,
+        0x07, 0x08, 0x01, 0x04, 't', 'e', 's', 't', 0x00, 0x00,
+        0x0a, 0x05, 0x01, 0x03, 0x00,
+          0x01, // 未サポートのオペコード
+          0x0b
+    };
+    ASSERT_EQ(engine5.Load(kWasmUnsupportedOpcode, sizeof(kWasmUnsupportedOpcode)), embwasm::WasmResult::kOk);
+    EXPECT_EQ(engine5.Execute("test", nullptr, 0, nullptr, 0), embwasm::WasmResult::kErrorRuntimeError);
 }
 
 // =============================================================================
@@ -142,6 +267,7 @@ TEST(WasmEngineTest, OpcodeI32ArithmeticBoundary) {
     run_test(0x6D, 10, 2, embwasm::WasmResult::kOk, 5);
     run_test(0x6D, -10, 3, embwasm::WasmResult::kOk, -3);
     run_test(0x6D, 10, 0, embwasm::WasmResult::kErrorRuntimeError); // ゼロ除算保護の検証
+    run_test(0x6D, static_cast<int32_t>(0x80000000), -1, embwasm::WasmResult::kErrorRuntimeError); // 符号付き除算オーバーフロー保護の検証
 
     // 5. i32.div_u (0x6E)
     run_test(0x6E, 10, 2, embwasm::WasmResult::kOk, 5);
