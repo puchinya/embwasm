@@ -18,3 +18,4 @@ apis:
   - module: env
     field: dummy
     function: embwasm::DummyHostFunc
+
