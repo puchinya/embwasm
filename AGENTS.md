@@ -44,7 +44,9 @@ embwasm/
 │
 ├── src/                  # コアライブラリの実装
 │   ├── wasm_engine.cpp   # WASMバイナリのパース・実行エンジン本体（最重要ファイル）
-│   └── wasm_memory_pool.cpp # 静的メモリプールの実装
+│   ├── wasm_memory_pool.cpp # 静的メモリプールの実装
+│   └── hostmodule/       # ホストAPIモジュールの実装
+│       └── threads/      # スレッド関連ホストAPI
 │
 ├── demo/                 # 動作確認用デモアプリケーション
 │   └── hello/            # WASMからホストAPIを呼び出すサンプル

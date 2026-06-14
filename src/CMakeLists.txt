@@ -20,7 +20,7 @@ add_library(embwasm
     wasm_memory_pool.cpp
     wasm_engine.cpp
     wasm_thread.cpp
-    ../wasm_host_modules/threads/embwasm_hostmodule_thread.cpp
+    hostmodule/threads/embwasm_hostmodule_thread.cpp
     ${PLATFORM_SRC}
 )
 
@@ -32,7 +32,7 @@ add_library(embwasm
 # これによりリンク元ターゲット（demoやtest）に自動でインクルードパスが伝播します。
 target_include_directories(embwasm PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../wasm_host_modules/threads
+    ${CMAKE_CURRENT_SOURCE_DIR}/hostmodule/threads
 )
 
 # 警告レベルを高く設定し、警告をエラーとして処理
