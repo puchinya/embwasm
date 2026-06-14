@@ -13,6 +13,9 @@ namespace embwasm {
 // この値を変更することで、WASMエンジンが使用するメモリプールのサイズを変更できます。
 constexpr std::size_t kMemoryPoolSize = 65536; // 64 KB
 
+// 線形メモリの最大サイズ (WASMページ 1ページ = 64KB だが、組み込み向けに制限する)
+constexpr std::size_t kMaxLinearMemorySize = 2048; // 2 KB
+
 // サポートする最大WASM関数定義数
 constexpr std::size_t kMaxWasmFunctions = 64;
 

@@ -370,6 +370,7 @@ def main():
             if wit_type == "i64": return "long long"
             if wit_type == "f32": return "float"
             if wit_type == "f64": return "double"
+            if wit_type == "string": return "const char*"
             return "void"
 
         for api in apis:

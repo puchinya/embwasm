@@ -2,7 +2,7 @@
 
 // エクスポートされる関数
 __attribute__((export_name("main")))
-void main(void) {
+int main(void) {
     print_char('H');
     print_char('e');
     print_char('l');

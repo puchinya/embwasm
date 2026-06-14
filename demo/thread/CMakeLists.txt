@@ -50,7 +50,7 @@ set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.hpp)
 
 add_custom_command(
     OUTPUT ${WASM_OUT}
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -Wl,--export=thread2 -o ${WASM_OUT} ${WASM_SRC}
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib ${WASM_LD_FLAGS} -Wl,--no-entry -Wl,--export=main -Wl,--export=thread2 -Wl,-z,stack-size=1024 -Wl,--initial-memory=65536 -o ${WASM_OUT} ${WASM_SRC}
     DEPENDS ${WASM_SRC} ${GEN_WASM_H}
     COMMENT "Compiling main.c to WASM using ${WASM_CLANG}"
 )

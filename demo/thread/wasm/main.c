@@ -17,17 +17,15 @@ void thread2(void) {
 
 // エクスポートされるメイン関数
 __attribute__((export_name("main")))
-void main(void) {
+int main(void) {
     print_char('M');
     print_char('a');
     print_char('i');
     print_char('n');
     print_char('\n');
 
-    // スレッド2を起動 (thread2のインデックス 6 を指定)
-    // 注: ビルド環境によってインデックスが変わる可能性があるため、
-    // 本来はシンボル名で解決するか、動的に取得する必要があります。
-    thread_spawn(6);
+    // スレッド2を起動 (名前で指定)
+    thread_spawn("thread2");
 
     for (int i = 0; i < 3; ++i) {
         print_char('M');

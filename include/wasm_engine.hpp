@@ -59,6 +59,14 @@ public:
 public:
     WasmResult ExecuteInternal(uint32_t func_index) noexcept;
 
+    // 公開関数を外部から解決可能にする
+    const WasmExportEntry* GetExports() const noexcept { return exports_; }
+    std::size_t GetExportCount() const noexcept { return export_count_; }
+
+    // 線形メモリへのアクセス
+    uint8_t* GetLinearMemory() const noexcept { return linear_memory_ptr_; }
+    std::size_t GetLinearMemorySize() const noexcept { return linear_memory_size_; }
+
 private:
     WasmResult ParseSections(const uint8_t* binary, std::size_t size) noexcept;
 
@@ -77,6 +85,10 @@ private:
 
     WasmExportEntry exports_[kMaxWasmFunctions];
     std::size_t export_count_;
+
+    // 線形メモリ（Memory section / Data section）
+    uint8_t* linear_memory_ptr_;
+    std::size_t linear_memory_size_;
 
     // 現在の実行コンテキスト
     WasmThreadContext* ctx_;

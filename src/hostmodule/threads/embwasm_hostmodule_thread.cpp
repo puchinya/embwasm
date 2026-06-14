@@ -29,11 +29,34 @@ WasmResult ThreadSpawn(
     // スケジューラからエンジンを取得してインデックスを解決
     WasmEngine& engine = scheduler->GetEngine();
     
-    // エクスポートインデックスから内部関数インデックスを解決
-    int32_t resolved_idx = engine.GetFunctionIndexByExportIndex(val);
+    int32_t resolved_idx = -1;
+
+    // 引数が文字列（ポインタ）として渡された場合を想定して解決を試みる
+    uint8_t* mem = engine.GetLinearMemory();
+    if (mem && val < engine.GetLinearMemorySize()) {
+        const char* func_name = reinterpret_cast<const char*>(&mem[val]);
+        
+        // 文字列の終端を確認し、妥当な長さであることをチェック
+        bool valid_string = false;
+        for (uint32_t i = 0; val + i < engine.GetLinearMemorySize(); ++i) {
+            if (mem[val + i] == '\0') {
+                if (i > 0) valid_string = true;
+                break;
+            }
+            // WASMの関数名として妥当でない文字が含まれている場合はスキップ
+            if (mem[val + i] < 32 || mem[val + i] > 126) break;
+        }
+
+        if (valid_string) {
+            resolved_idx = engine.GetExportFunctionIndex(func_name);
+        }
+    }
+
+    // もし名前で見つからない場合は、エクスポートインデックスまたは直接の関数インデックスとして扱う（後方互換性）
+    if (resolved_idx < 0) {
+        resolved_idx = engine.GetFunctionIndexByExportIndex(val);
+    }
     
-    // もしエクスポートインデックスとして見つからない場合は、
-    // 直接の関数インデックスとして扱えるか試みる（後方互換性のため）
     uint32_t func_idx = (resolved_idx >= 0) ? static_cast<uint32_t>(resolved_idx) : val;
 
     uint32_t thread_id = scheduler->CreateThread(func_idx);

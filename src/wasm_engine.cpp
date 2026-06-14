@@ -84,7 +84,8 @@ static inline int64_t DecodeVarInt64(const uint8_t*& cursor, const uint8_t* limi
 // =============================================================================
 
 WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
-    : pool_(pool), signature_count_(0), function_count_(0), export_count_(0), ctx_(nullptr),
+    : pool_(pool), signature_count_(0), function_count_(0), export_count_(0),
+      linear_memory_ptr_(nullptr), linear_memory_size_(0), ctx_(nullptr),
       max_call_stack_depth_(0), max_stack_depth_(0) {
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
@@ -233,6 +234,53 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         exports_[export_count_] = {name, idx};
                         export_count_++;
                     }
+                }
+                break;
+            }
+
+            case 5: { // Memory Section
+                uint32_t mem_count = DecodeVarUint32(ptr, section_end);
+                for (uint32_t i = 0; i < mem_count; ++i) {
+                    uint8_t flags = *ptr++;
+                    uint32_t initial_pages = DecodeVarUint32(ptr, section_end);
+                    if (flags & 0x01) {
+                        /* uint32_t maximum_pages = */ DecodeVarUint32(ptr, section_end);
+                    }
+                    
+                    // 1ページ = 64KB。ベアメタルでは制限値を上限として確保する。
+                    std::size_t size_to_alloc = initial_pages * 65536;
+                    if (size_to_alloc > kMaxLinearMemorySize) {
+                        size_to_alloc = kMaxLinearMemorySize;
+                    }
+                    
+                    linear_memory_ptr_ = static_cast<uint8_t*>(pool_.Allocate(size_to_alloc));
+                    if (!linear_memory_ptr_) return WasmResult::kErrorOutOfMemory;
+                    linear_memory_size_ = size_to_alloc;
+                    // メモリをゼロクリア
+                    std::memset(linear_memory_ptr_, 0, linear_memory_size_);
+                }
+                break;
+            }
+
+            case 11: { // Data Section
+                uint32_t data_count = DecodeVarUint32(ptr, section_end);
+                for (uint32_t i = 0; i < data_count; ++i) {
+                    uint32_t mem_idx = DecodeVarUint32(ptr, section_end);
+                    (void)mem_idx;
+                    
+                    // Offset expression (e.g., i32.const offset)
+                    uint8_t opcode = *ptr++;
+                    uint32_t offset = 0;
+                    if (opcode == 0x41) { // i32.const
+                        offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
+                    }
+                    if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
+                    
+                    uint32_t data_size = DecodeVarUint32(ptr, section_end);
+                    if (linear_memory_ptr_ && offset + data_size <= linear_memory_size_) {
+                        std::memcpy(linear_memory_ptr_ + offset, ptr, data_size);
+                    }
+                    ptr += data_size;
                 }
                 break;
             }

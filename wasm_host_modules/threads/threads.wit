@@ -3,7 +3,7 @@ package embwasm:threads;
 /// @cpp-header: "embwasm_hostmodule_thread.hpp"
 world threads {
     /// @cpp-func: embwasm::hostmodules::thread::ThreadSpawn
-    import thread-spawn: func(func-idx: i32) -> i32;
+    import thread-spawn: func(name: string) -> i32;
 
     /// @cpp-func: embwasm::hostmodules::thread::ThreadYield
     import thread-yield: func();
