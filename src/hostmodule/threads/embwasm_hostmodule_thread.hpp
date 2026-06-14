@@ -6,20 +6,22 @@
 #include "wasm_config.hpp"
 
 namespace embwasm {
+class WasmEngine;
+
 namespace hostmodules {
 namespace thread {
 
 #if EMBWASM_ENABLE_MULTITHREADING
-WasmResult ThreadSpawn(const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count, void* user_data) noexcept;
-WasmResult ThreadYield(const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count, void* user_data) noexcept;
-WasmResult EventWait(const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count, void* user_data) noexcept;
-WasmResult EventSignal(const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count, void* user_data) noexcept;
+WasmResult ThreadSpawn(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+WasmResult ThreadYield(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+WasmResult EventWait(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+WasmResult EventSignal(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 #else
 // マルチスレッド無効時はエラーを返すダミー実装をインラインまたは実装ファイルで提供する
-inline WasmResult ThreadSpawn(const WasmValue*, uint32_t, WasmValue*, uint32_t, void*) noexcept { return WasmResult::kErrorRuntimeError; }
-inline WasmResult ThreadYield(const WasmValue*, uint32_t, WasmValue*, uint32_t, void*) noexcept { return WasmResult::kErrorRuntimeError; }
-inline WasmResult EventWait(const WasmValue*, uint32_t, WasmValue*, uint32_t, void*) noexcept { return WasmResult::kErrorRuntimeError; }
-inline WasmResult EventSignal(const WasmValue*, uint32_t, WasmValue*, uint32_t, void*) noexcept { return WasmResult::kErrorRuntimeError; }
+inline WasmResult ThreadSpawn(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorRuntimeError; }
+inline WasmResult ThreadYield(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorRuntimeError; }
+inline WasmResult EventWait(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorRuntimeError; }
+inline WasmResult EventSignal(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorRuntimeError; }
 #endif
 
 } // namespace thread

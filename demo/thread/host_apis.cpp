@@ -5,13 +5,13 @@ namespace embwasm {
 
 // ホストAPI：WASM内から数値を表示するための関数
 WasmResult PrintVal(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)results; (void)result_count; (void)user_data;
+    (void)engine; (void)results; (void)result_count;
 
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
@@ -24,13 +24,13 @@ WasmResult PrintVal(
 
 // ホストAPI：WASM内から文字コードを出力するための関数（putcharに相当）
 WasmResult PrintChar(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)results; (void)result_count; (void)user_data;
+    (void)engine; (void)results; (void)result_count;
 
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
@@ -43,13 +43,13 @@ WasmResult PrintChar(
 
 // ホストAPI：WASM内から数値を表示するための関数（デモ用 print）
 WasmResult Print(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)results; (void)result_count; (void)user_data;
+    (void)engine; (void)results; (void)result_count;
 
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;

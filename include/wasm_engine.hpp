@@ -61,6 +61,10 @@ public:
     // スレッドコンテキストの設定
     void SetContext(WasmThreadContext* ctx) noexcept { ctx_ = ctx; }
     WasmThreadContext* GetContext() const noexcept { return ctx_; }
+
+    // スケジューラの設定と取得
+    void SetScheduler(class WasmScheduler* scheduler) noexcept { scheduler_ = scheduler; }
+    class WasmScheduler* GetScheduler() const noexcept { return scheduler_; }
 #endif
 
 public:
@@ -107,6 +111,10 @@ private:
 
     // 現在の実行コンテキスト
     WasmThreadContext* ctx_;
+
+#if EMBWASM_ENABLE_MULTITHREADING
+    WasmScheduler* scheduler_;
+#endif
 
     // 統計情報
     std::size_t max_call_stack_depth_;

@@ -10,15 +10,15 @@ char g_last_printed_char = 0;
 bool g_print_char_called = false;
 
 WasmResult PrintVal(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
+    (void)engine;
     (void)results;
     (void)result_count;
-    (void)user_data;
 
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
@@ -30,15 +30,15 @@ WasmResult PrintVal(
 }
 
 WasmResult PrintChar(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
+    (void)engine;
     (void)results;
     (void)result_count;
-    (void)user_data;
 
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
@@ -50,17 +50,17 @@ WasmResult PrintChar(
 }
 
 WasmResult DummyHostFunc(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
+    (void)engine;
     (void)args;
     (void)arg_count;
     (void)results;
     (void)result_count;
-    (void)user_data;
     return WasmResult::kOk;
 }
 

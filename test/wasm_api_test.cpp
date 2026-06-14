@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "wasm_api_static.hpp"
+#include "wasm_engine.hpp"
 
 namespace embwasm {
 extern int32_t g_last_printed_value;
@@ -23,11 +24,13 @@ TEST(WasmApiStaticTest, AllFunctions) {
     embwasm::g_print_val_called = false;
     embwasm::g_last_printed_value = 0;
     
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
     embwasm::WasmResult res = embwasm::DispatchHostFunction(
+        engine,
         embwasm::kEnvPrintVal,
         args, 1,
-        nullptr, 0,
-        nullptr
+        nullptr, 0
     );
     EXPECT_EQ(res, embwasm::WasmResult::kOk);
     EXPECT_TRUE(embwasm::g_print_val_called);

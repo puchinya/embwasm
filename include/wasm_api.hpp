@@ -14,14 +14,16 @@ enum class HostFunctionId : uint32_t {
 // 静的に登録されたホストAPIのIDを検索します。
 HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
 
+class WasmEngine;
+
 // ホストAPIのディスパッチャ（switch文による直接呼び出しを実装し、関数ポインタを排除します）
 WasmResult DispatchHostFunction(
+    WasmEngine& engine,
     HostFunctionId id,
     const WasmValue* args,
     uint32_t arg_count,
     WasmValue* results,
-    uint32_t result_count,
-    void* user_data) noexcept;
+    uint32_t result_count) noexcept;
 
 } // namespace embwasm
 

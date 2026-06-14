@@ -190,6 +190,9 @@ WasmEngine::WasmEngine(WasmMemoryPool& pool) noexcept
       linear_memory_ptr_(nullptr), linear_memory_size_(0),
       table_ptr_(nullptr), table_size_(0),
       ctx_(nullptr),
+#if EMBWASM_ENABLE_MULTITHREADING
+      scheduler_(nullptr),
+#endif
       max_call_stack_depth_(0), max_stack_depth_(0) {
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
@@ -650,7 +653,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
             WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
 
             // ホスト関数の実行 (関数ポインタを排除した直接ディスパッチ)
-            WasmResult res = DispatchHostFunction(initial_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
+            WasmResult res = DispatchHostFunction(*this, initial_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count);
             if (res != WasmResult::kOk) return res;
 
             // 実行結果をスタックにプッシュ
@@ -1002,7 +1005,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         }
 
                         WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-                        WasmResult res = DispatchHostFunction(target_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
+                        WasmResult res = DispatchHostFunction(*this, target_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count);
                         
                         // Yield対応
                         if (res == WasmResult::kYield) {
@@ -1089,7 +1092,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                             call_args[sig.param_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
                         }
                         WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-                        WasmResult res = DispatchHostFunction(target_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count, nullptr);
+                        WasmResult res = DispatchHostFunction(*this, target_func->host_func_id, call_args, sig.param_count, call_results, sig.result_count);
                         if (res == WasmResult::kYield) {
                             frame.ip = ip;
                             return WasmResult::kYield;

@@ -9,6 +9,7 @@ WasmScheduler* WasmScheduler::instance_ = nullptr;
 
 WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept 
     : engine_(engine), current_thread_index_(0) {
+    engine_.SetScheduler(this);
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         threads_[i].Reset();
         threads_[i].id = static_cast<uint32_t>(i + 1);

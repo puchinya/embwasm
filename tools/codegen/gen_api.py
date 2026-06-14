@@ -450,13 +450,15 @@ namespace embwasm {{
 
 HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
 
+class WasmEngine;
+
 WasmResult DispatchHostFunction(
+    WasmEngine& engine,
     HostFunctionId id,
     const WasmValue* args,
     uint32_t arg_count,
     WasmValue* results,
-    uint32_t result_count,
-    void* user_data) noexcept;
+    uint32_t result_count) noexcept;
 
 }} // namespace embwasm
 
@@ -480,7 +482,7 @@ WasmResult DispatchHostFunction(
         const_name = enum_member.split("=")[0].replace("constexpr HostFunctionId", "").strip()
         dispatch_cases.append(
             f"        case {const_name}:\n"
-            f"            return {api['function']}(args, arg_count, results, result_count, user_data);"
+            f"            return {api['function']}(engine, args, arg_count, results, result_count);"
         )
     dispatch_cases_str = "\n".join(dispatch_cases)
 
@@ -547,12 +549,12 @@ HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* f
 }}
 
 WasmResult DispatchHostFunction(
+    WasmEngine& engine,
     HostFunctionId id,
     const WasmValue* args,
     uint32_t arg_count,
     WasmValue* results,
-    uint32_t result_count,
-    void* user_data) noexcept
+    uint32_t result_count) noexcept
 {{
     switch (id) {{
 {dispatch_cases_str}

@@ -11,24 +11,21 @@ namespace thread {
 // ホストAPI: スレッドの新規作成
 // (import "env" "thread_spawn" (func (param i32) (result i32)))
 WasmResult ThreadSpawn(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)user_data;
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
     }
 
     uint32_t val = static_cast<uint32_t>(args[0].value.i32);
-    WasmScheduler* scheduler = WasmScheduler::GetInstance();
+    WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorRuntimeError;
 
     // スケジューラからエンジンを取得してインデックスを解決
-    WasmEngine& engine = scheduler->GetEngine();
-    
     int32_t resolved_idx = -1;
 
     // 引数が文字列（ポインタ）として渡された場合を想定して解決を試みる
@@ -73,32 +70,32 @@ WasmResult ThreadSpawn(
 // ホストAPI: 実行権の譲渡
 // (import "env" "thread_yield" (func))
 WasmResult ThreadYield(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)args; (void)arg_count; (void)results; (void)result_count; (void)user_data;
+    (void)engine; (void)args; (void)arg_count; (void)results; (void)result_count;
     return WasmResult::kYield;
 }
 
 // ホストAPI: イベント待ち
 // (import "env" "event_wait" (func (param i32)))
 WasmResult EventWait(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)results; (void)result_count; (void)user_data;
+    (void)results; (void)result_count;
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
     }
 
     uint32_t event_id = static_cast<uint32_t>(args[0].value.i32);
-    WasmScheduler* scheduler = WasmScheduler::GetInstance();
+    WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorRuntimeError;
 
     WasmThreadContext* current = scheduler->GetCurrentThread();
@@ -112,19 +109,19 @@ WasmResult EventWait(
 // ホストAPI: イベント通知
 // (import "env" "event_signal" (func (param i32)))
 WasmResult EventSignal(
+    WasmEngine& engine,
     const WasmValue* args, 
     uint32_t arg_count, 
     WasmValue* results, 
-    uint32_t result_count, 
-    void* user_data) noexcept 
+    uint32_t result_count) noexcept 
 {
-    (void)results; (void)result_count; (void)user_data;
+    (void)results; (void)result_count;
     if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
     }
 
     uint32_t event_id = static_cast<uint32_t>(args[0].value.i32);
-    WasmScheduler* scheduler = WasmScheduler::GetInstance();
+    WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorRuntimeError;
 
     scheduler->SignalEvent(event_id);
