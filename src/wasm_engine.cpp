@@ -569,21 +569,68 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     
                     if (op == 0x01) { // block
                         // 対応する end を探す (ネストを考慮)
+                        // 各オペコードの引数バイトを正しくスキップしながら探索する
                         const uint8_t* search_ptr = ip;
                         int nest_level = 0;
                         while (search_ptr < limit) {
                             uint8_t s_op = *search_ptr++;
-                            if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) nest_level++;
-                            else if (s_op == 0x0B) {
+                            if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) {
+                                // block / loop / if: ブロック型バイト1バイトをスキップ
+                                if (search_ptr < limit) search_ptr++;
+                                nest_level++;
+                            } else if (s_op == 0x05) {
+                                // else: 引数なし
+                            } else if (s_op == 0x0B) {
                                 if (nest_level == 0) {
-                                    label.pc = search_ptr - 1; // end の位置
+                                    // label.pc は end の次（end 後）を指す。
+                                    // br でこのラベルにジャンプした場合、end を再実行しない。
+                                    label.pc = search_ptr;
                                     break;
                                 }
                                 nest_level--;
+                            } else if (s_op == 0x0C || s_op == 0x0D) {
+                                // br / br_if: LEB128 label_idx をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x10) {
+                                // call: LEB128 func_idx をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x20 || s_op == 0x21 || s_op == 0x22) {
+                                // local.get / local.set / local.tee: LEB128 local_idx をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x23 || s_op == 0x24) {
+                                // global.get / global.set: LEB128 global_idx をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x28 || s_op == 0x36) {
+                                // i32.load / i32.store: align + offset の2つの LEB128 をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x41) {
+                                // i32.const: LEB128 value をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x42) {
+                                // i64.const: LEB128 value をスキップ
+                                while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (s_op == 0x43) {
+                                // f32.const: 4 バイト固定
+                                search_ptr += 4;
+                            } else if (s_op == 0x44) {
+                                // f64.const: 8 バイト固定
+                                search_ptr += 8;
                             }
+                            // その他の命令（引数なし）はバイトを消費しないのでそのまま
                         }
                     } else { // loop
-                        label.pc = ip - 1; // loop 命令自体の位置に戻る
+                        // loop の場合、br 0 でループ先頭（ループ本体の先頭）に戻る。
+                        // ip はすでに block_type の次（ループ本体の先頭）を指している。
+                        label.pc = ip;
                     }
                     break;
                 }
@@ -600,26 +647,55 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     label.stack_top = stack_top_;
 
                     // 対応する else または end を探す
+                    // 各オペコードの引数バイトを正しくスキップしながら探索する
                     const uint8_t* search_ptr = ip;
                     const uint8_t* else_ptr = nullptr;
                     int nest_level = 0;
                     while (search_ptr < limit) {
                         uint8_t s_op = *search_ptr++;
-                        if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) nest_level++;
-                        else if (s_op == 0x05) { // else
-                            if (nest_level == 0) else_ptr = search_ptr; 
-                        }
-                        else if (s_op == 0x0B) {
+                        if (s_op == 0x01 || s_op == 0x02 || s_op == 0x04) {
+                            if (search_ptr < limit) search_ptr++;
+                            nest_level++;
+                        } else if (s_op == 0x05) { // else
+                            if (nest_level == 0) else_ptr = search_ptr;
+                        } else if (s_op == 0x0B) {
                             if (nest_level == 0) {
-                                label.pc = search_ptr - 1; // end
+                                label.pc = search_ptr; // end の次を指す
                                 break;
                             }
                             nest_level--;
+                        } else if (s_op == 0x0C || s_op == 0x0D) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x10) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x20 || s_op == 0x21 || s_op == 0x22) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x23 || s_op == 0x24) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x28 || s_op == 0x36) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x41) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x42) {
+                            while (search_ptr < limit && (*search_ptr & 0x80)) search_ptr++;
+                            if (search_ptr < limit) search_ptr++;
+                        } else if (s_op == 0x43) {
+                            search_ptr += 4;
+                        } else if (s_op == 0x44) {
+                            search_ptr += 8;
                         }
                     }
 
                     if (cond == 0) {
-                        // 条件不成立: else があればそこへ、なければ end へ
+                        // 条件不成立: else があればそこへ、なければ end の次（label.pc）へ
                         ip = else_ptr ? else_ptr : label.pc;
                     }
                     break;
@@ -643,9 +719,11 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
                     if (jump) {
                         if (label_idx >= frame.label_stack_top) return WasmResult::kErrorRuntimeError;
-                        WasmLabel& label = frame.labels[frame.label_stack_top - 1 - label_idx];
-                        ip = label.pc;
-                        // stack_top_ = label.stack_top; // 本来は戻り値を考慮して調整が必要
+                        WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - label_idx];
+                        // label.pc は:
+                        //   block/if の場合: end の次のバイト（end 後）を指す
+                        //   loop の場合: ループ本体の先頭を指す
+                        ip = target_label.pc;
                         frame.label_stack_top -= (label_idx + 1);
                         goto frame_changed; // ip を更新したのでループを抜ける
                     }
@@ -655,11 +733,11 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 case 0x0F: // return
                 case 0x0B: // end
                     if (op == 0x0B && frame.label_stack_top > 0) {
-                        // ブロックの終了
+                        // ブロック（block/loop/if）の正常終了
                         frame.label_stack_top--;
                         break;
                     }
-                    // 関数の終了
+                    // 関数の終了 (end で label_stack_top == 0、または return)
                     if (ctx_->call_stack_top > 0) {
                         // ExecuteInternal の最上位呼び出しでない場合
                         --ctx_->call_stack_top;
