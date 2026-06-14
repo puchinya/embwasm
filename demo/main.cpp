@@ -9,11 +9,8 @@ int main() {
     // 1. メモリプールの作成
     embwasm::WasmMemoryPool pool;
 
-    // 2. ホストAPIレジストリの作成 (静的登録に移行したため Register 呼び出しは不要)
-    embwasm::WasmApiRegistry registry;
-
     // 3. WASMエンジンの構築
-    embwasm::WasmEngine engine(pool, registry);
+    embwasm::WasmEngine engine(pool);
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
@@ -36,5 +33,7 @@ int main() {
     }
 
     std::cout << "Execution finished successfully." << std::endl;
+    std::cout << "Max function nesting depth reached: " << engine.GetMaxCallStackDepth() << std::endl;
+    std::cout << "Max VM stack depth reached: " << engine.GetMaxStackDepth() << std::endl;
     return 0;
 }

@@ -25,6 +25,9 @@ constexpr std::size_t kMaxWasmTypes = 16;
 // WASM実行スタックの最大深度
 constexpr std::size_t kWasmStackSize = 64;
 
+// WASM関数呼び出しの最大深度（コールスタックサイズ）
+constexpr std::size_t kWasmCallStackSize = 16;
+
 // 1つの関数で利用可能な最大ローカル変数（引数＋ローカル変数）の数
 constexpr std::size_t kMaxLocals = 32;
 

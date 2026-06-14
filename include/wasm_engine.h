@@ -31,13 +31,17 @@ struct WasmExportEntry {
 // ベアメタル環境向け極小WASM実行エンジン
 class WasmEngine {
 public:
-    WasmEngine(WasmMemoryPool& pool, const WasmApiRegistry& registry) noexcept;
+    WasmEngine(WasmMemoryPool& pool) noexcept;
 
     // WASMバイナリ（バイト配列）の読み込みと解析
     WasmResult Load(const uint8_t* binary, std::size_t size) noexcept;
 
     // エクスポートされた関数を実行する
     WasmResult Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+
+    // 統計情報の取得
+    std::size_t GetMaxCallStackDepth() const noexcept { return max_call_stack_depth_; }
+    std::size_t GetMaxStackDepth() const noexcept { return max_stack_depth_; }
 
 private:
     WasmResult ParseSections(const uint8_t* binary, std::size_t size) noexcept;
@@ -47,7 +51,6 @@ private:
     const char* CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept;
 
     WasmMemoryPool& pool_;
-    const WasmApiRegistry& registry_;
 
     // 解析された型シグネチャ情報
     WasmTypeSignature signatures_[kMaxWasmTypes];
@@ -63,6 +66,21 @@ private:
     // 実行用仮想マシンスタック
     WasmValue stack_[kWasmStackSize];
     std::size_t stack_top_;
+
+    // 実行用仮想マシンのコールスタック
+    struct WasmFrame {
+        const WasmFunction* func;
+        const uint8_t* ip;
+        const uint8_t* limit;
+        WasmValue locals[kMaxLocals];
+        uint32_t total_locals;
+    };
+    WasmFrame call_stack_[kWasmCallStackSize];
+    std::size_t call_stack_top_;
+
+    // 統計情報
+    std::size_t max_call_stack_depth_;
+    std::size_t max_stack_depth_;
 };
 
 } // namespace embwasm

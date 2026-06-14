@@ -16,14 +16,13 @@ extern bool g_print_val_called;
 
 TEST(WasmEngineTest, NormalExecution) {
     embwasm::WasmMemoryPool pool;
-    embwasm::WasmApiRegistry registry;
     
     embwasm::g_print_val_called = false;
     embwasm::g_last_printed_value = 0;
 
     // 静的登録モデルのため Register 呼び出しは不要
 
-    embwasm::WasmEngine engine(pool, registry);
+    embwasm::WasmEngine engine(pool);
 
     // 正常なWASMバイナリ (10 + 20 = 30 を計算し、print_val を呼び出す)
     constexpr uint8_t kWasmBinary[] = {
@@ -51,8 +50,7 @@ TEST(WasmEngineTest, NormalExecution) {
 
 TEST(WasmEngineTest, LoadErrors) {
     embwasm::WasmMemoryPool pool;
-    embwasm::WasmApiRegistry registry;
-    embwasm::WasmEngine engine(pool, registry);
+    embwasm::WasmEngine engine(pool);
 
     // 1. サイズ不足
     constexpr uint8_t kTooShort[] = { 0x00, 0x61 };
@@ -69,8 +67,7 @@ TEST(WasmEngineTest, LoadErrors) {
 
 TEST(WasmEngineTest, ExecutionErrors) {
     embwasm::WasmMemoryPool pool;
-    embwasm::WasmApiRegistry registry;
-    embwasm::WasmEngine engine(pool, registry);
+    embwasm::WasmEngine engine(pool);
 
     // テスト用の単純なWASM
     constexpr uint8_t kWasmBinary[] = {
@@ -110,8 +107,7 @@ TEST(WasmEngineTest, OpcodeI32ArithmeticBoundary) {
 
     auto run_test = [&](uint8_t op, int32_t a, int32_t b, embwasm::WasmResult expected_res, int32_t expected_val = 0) {
         embwasm::WasmMemoryPool pool;
-        embwasm::WasmApiRegistry registry;
-        embwasm::WasmEngine engine(pool, registry);
+        embwasm::WasmEngine engine(pool);
 
         wasm_bin[45] = op;
         ASSERT_EQ(engine.Load(wasm_bin, sizeof(wasm_bin)), embwasm::WasmResult::kOk);
@@ -178,8 +174,7 @@ TEST(WasmEngineTest, OpcodeI32ComparisonBoundary) {
 
     auto run_test = [&](uint8_t op, int32_t a, int32_t b, int32_t expected_val) {
         embwasm::WasmMemoryPool pool;
-        embwasm::WasmApiRegistry registry;
-        embwasm::WasmEngine engine(pool, registry);
+        embwasm::WasmEngine engine(pool);
 
         wasm_bin[45] = op;
         ASSERT_EQ(engine.Load(wasm_bin, sizeof(wasm_bin)), embwasm::WasmResult::kOk);
@@ -229,8 +224,7 @@ TEST(WasmEngineTest, OpcodeI64ArithmeticBoundary) {
 
     auto run_test = [&](uint8_t op, int64_t a, int64_t b, int64_t expected_val) {
         embwasm::WasmMemoryPool pool;
-        embwasm::WasmApiRegistry registry;
-        embwasm::WasmEngine engine(pool, registry);
+        embwasm::WasmEngine engine(pool);
 
         wasm_bin[45] = op;
         ASSERT_EQ(engine.Load(wasm_bin, sizeof(wasm_bin)), embwasm::WasmResult::kOk);
@@ -270,8 +264,7 @@ TEST(WasmEngineTest, OpcodeUnaryBoundary) {
 
     auto run_test = [&](uint8_t op, int32_t a, int32_t expected_val) {
         embwasm::WasmMemoryPool pool;
-        embwasm::WasmApiRegistry registry;
-        embwasm::WasmEngine engine(pool, registry);
+        embwasm::WasmEngine engine(pool);
 
         wasm_bin[42] = op;
         ASSERT_EQ(engine.Load(wasm_bin, sizeof(wasm_bin)), embwasm::WasmResult::kOk);
@@ -297,8 +290,7 @@ TEST(WasmEngineTest, OpcodeUnaryBoundary) {
 // 制御・変数・特殊命令のテスト
 TEST(WasmEngineTest, VariableAndControlFlow) {
     embwasm::WasmMemoryPool pool;
-    embwasm::WasmApiRegistry registry;
-    embwasm::WasmEngine engine(pool, registry);
+    embwasm::WasmEngine engine(pool);
 
     // local.tee, drop の挙動テスト用WASM
     // local.get 0, local.tee 0, drop, local.get 0
@@ -319,8 +311,7 @@ TEST(WasmEngineTest, VariableAndControlFlow) {
 
 TEST(WasmEngineTest, NopAndReturn) {
     embwasm::WasmMemoryPool pool;
-    embwasm::WasmApiRegistry registry;
-    embwasm::WasmEngine engine(pool, registry);
+    embwasm::WasmEngine engine(pool);
 
     // nop, return の挙動テスト用WASM
     // nop, local.get 0, return, i32.const 99
@@ -338,4 +329,48 @@ TEST(WasmEngineTest, NopAndReturn) {
     ASSERT_EQ(engine.Execute("test_calc", args, 1, &result, 1), embwasm::WasmResult::kOk);
     // return があるため、i32.const 99 は実行されず 77 が返るべき
     EXPECT_EQ(result.value.i32, 77);
+}
+
+TEST(WasmEngineTest, InternalFunctionCall) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // quadruple(x) = double(double(x))
+    // double(x) = x + x
+    constexpr uint8_t kWasmCallBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f, // (i32) -> i32
+        0x03, 0x03, 0x02, 0x00, 0x00,                   // 2 funcs of type index 0
+        0x07, 0x0d, 0x01, 0x09, 'q', 'u', 'a', 'd', 'r', 'u', 'p', 'l', 'e', 0x00, 0x01, // export "quadruple" at index 1 (size: 0x0d)
+        0x0a, 0x12, 0x02,                               // Code section (size: 0x12)
+          0x07, 0x00, 0x20, 0x00, 0x20, 0x00, 0x6a, 0x0b, // body 0 ($double): size 0x07, local decls 0, local.get 0, local.get 0, i32.add, end
+          0x08, 0x00, 0x20, 0x00, 0x10, 0x00, 0x10, 0x00, 0x0b  // body 1 ($quadruple): size 0x08, local decls 0, local.get 0, call 0, call 0, end
+    };
+
+    ASSERT_EQ(engine.Load(kWasmCallBinary, sizeof(kWasmCallBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue args[1] = {{embwasm::WasmType::kI32, {5}}};
+    embwasm::WasmValue result;
+    ASSERT_EQ(engine.Execute("quadruple", args, 1, &result, 1), embwasm::WasmResult::kOk);
+    // quadruple(5) -> double(5) = 10 -> double(10) = 20
+    EXPECT_EQ(result.value.i32, 20);
+}
+
+TEST(WasmEngineTest, CallStackOverflow) {
+    embwasm::WasmMemoryPool pool;
+    embwasm::WasmEngine engine(pool);
+
+    // infinite_call(x) = infinite_call(x)
+    constexpr uint8_t kWasmOverflowBinary[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f, // (i32) -> i32
+        0x03, 0x02, 0x01, 0x00,                         // 1 func of type index 0
+        0x07, 0x11, 0x01, 0x0d, 'i', 'n', 'f', 'i', 'n', 'i', 't', 'e', '_', 'c', 'a', 'l', 'l', 0x00, 0x00, // export "infinite_call" (size: 0x11)
+        0x0a, 0x08, 0x01, 0x06, 0x00, 0x20, 0x00, 0x10, 0x00, 0x0b // body: size 0x06, local.get 0, call 0, end
+    };
+
+    ASSERT_EQ(engine.Load(kWasmOverflowBinary, sizeof(kWasmOverflowBinary)), embwasm::WasmResult::kOk);
+    embwasm::WasmValue args[1] = {{embwasm::WasmType::kI32, {1}}};
+    embwasm::WasmValue result;
+    // C++の再帰呼び出しを排除しているため、プロセスがクラッシュせずに安全にkErrorStackOverflowを返す
+    EXPECT_EQ(engine.Execute("infinite_call", args, 1, &result, 1), embwasm::WasmResult::kErrorStackOverflow);
 }
