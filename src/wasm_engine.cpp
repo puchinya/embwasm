@@ -259,6 +259,14 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     } else if (opcode == 0x42) { // i64.const
                         val = {WasmType::kI64, {0}};
                         val.value.i64 = DecodeVarInt64(ptr, section_end);
+                    } else if (opcode == 0x43) { // f32.const
+                        val = {WasmType::kF32, {0}};
+                        std::memcpy(&val.value.f32, ptr, 4);
+                        ptr += 4;
+                    } else if (opcode == 0x44) { // f64.const
+                        val = {WasmType::kF64, {0}};
+                        std::memcpy(&val.value.f64, ptr, 8);
+                        ptr += 8;
                     }
                     if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
                     
