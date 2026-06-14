@@ -18,21 +18,31 @@ WasmResult ThreadSpawn(
     void* user_data) noexcept 
 {
     (void)user_data;
-    if (arg_count < 1 || args[0].type != WasmType::kI32 || result_count < 1) {
+    if (arg_count < 1 || args[0].type != WasmType::kI32) {
         return WasmResult::kErrorRuntimeError;
     }
 
-    uint32_t func_idx = static_cast<uint32_t>(args[0].value.i32);
+    uint32_t val = static_cast<uint32_t>(args[0].value.i32);
     WasmScheduler* scheduler = WasmScheduler::GetInstance();
     if (!scheduler) return WasmResult::kErrorRuntimeError;
 
-    // TODO: ここで func_idx はエクスポートインデックスから関数インデックスへの変換が必要。
-    // 今回のデモではWASM側で thread_spawn(1) と指定されている（thread2のインデックス）。
-    // 実運用ではシンボル解決が必要だが、簡易実装のためそのまま渡す。
+    // スケジューラからエンジンを取得してインデックスを解決
+    WasmEngine& engine = scheduler->GetEngine();
+    
+    // エクスポートインデックスから内部関数インデックスを解決
+    int32_t resolved_idx = engine.GetFunctionIndexByExportIndex(val);
+    
+    // もしエクスポートインデックスとして見つからない場合は、
+    // 直接の関数インデックスとして扱えるか試みる（後方互換性のため）
+    uint32_t func_idx = (resolved_idx >= 0) ? static_cast<uint32_t>(resolved_idx) : val;
+
     uint32_t thread_id = scheduler->CreateThread(func_idx);
     
-    results[0].type = WasmType::kI32;
-    results[0].value.i32 = static_cast<int32_t>(thread_id);
+    // WASM側のシグネチャに合わせて戻り値をセット（呼び出し側が値を期待している場合）
+    if (result_count > 0) {
+        results[0].type = WasmType::kI32;
+        results[0].value.i32 = static_cast<int32_t>(thread_id);
+    }
 
     return WasmResult::kOk;
 }

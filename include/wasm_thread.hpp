@@ -78,6 +78,8 @@ public:
     WasmResult Run() noexcept;
     WasmResult Step() noexcept;
 
+    WasmEngine& GetEngine() noexcept { return engine_; }
+
     // ホストAPIから呼び出すための静的アクセサ（簡易実装のためグローバルまたはシングルトン）
     static WasmScheduler* GetInstance() noexcept { return instance_; }
     void SetAsInstance() noexcept { instance_ = this; }

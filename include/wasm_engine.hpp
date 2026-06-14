@@ -43,6 +43,9 @@ public:
     // 関数名からインデックスを取得
     int32_t GetExportFunctionIndex(const char* name) const noexcept;
 
+    // エクスポートインデックスから内部関数インデックスを取得
+    int32_t GetFunctionIndexByExportIndex(uint32_t export_idx) const noexcept;
+
     // 統計情報の取得
     std::size_t GetMaxCallStackDepth() const noexcept { return max_call_stack_depth_; }
     std::size_t GetMaxStackDepth() const noexcept { return max_stack_depth_; }

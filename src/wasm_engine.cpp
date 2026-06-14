@@ -344,6 +344,16 @@ int32_t WasmEngine::GetExportFunctionIndex(const char* name) const noexcept {
     return -1;
 }
 
+int32_t WasmEngine::GetFunctionIndexByExportIndex(uint32_t export_idx) const noexcept {
+    if (export_idx < export_count_) {
+        return static_cast<int32_t>(exports_[export_idx].func_index);
+    }
+    // もし引数が直接関数インデックスを指している場合（デモの実装など）を考慮し、
+    // 範囲内であればそのまま返すフォールバックを持たせることも検討できるが、
+    // ここでは厳密にエクスポートテーブルを参照する。
+    return -1;
+}
+
 WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
     if (!ctx_) {
         return WasmResult::kErrorRuntimeError;
