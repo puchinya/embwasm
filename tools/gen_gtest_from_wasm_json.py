@@ -1,0 +1,290 @@
+import json
+import os
+import sys
+import re
+
+def sanitize_cpp_identifier(name):
+    """C++の識別子（クラス名や関数名）として安全な文字列に変換する"""
+    if not name:
+        return "_empty_"
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    sanitized = re.sub(r'_+', '_', sanitized)
+    if not sanitized or sanitized == "_":
+        return "_empty_id_"
+    if sanitized[0].isdigit():
+        sanitized = '_' + sanitized
+    return sanitized
+
+def python_type_to_cpp(wasm_type, value):
+    """Wasmの型と値をC++の型・値表現に変換する"""
+    if value is None or str(value).lower() == "null":
+        return "nullptr"
+
+    val_str = str(value).strip()
+
+    if "inf" in val_str.lower():
+        is_negative = val_str.startswith("-")
+        if wasm_type == "f32":
+            return "0xff800000" if is_negative else "0x7f800000"
+        else:
+            return "0xfff0000000000000" if is_negative else "0x7ff0000000000000"
+
+    if "nan" in val_str.lower():
+        if wasm_type == "f32":
+            return "0x7fc00000"
+        else:
+            return "0x7ff8000000000000"
+
+    if wasm_type == "i32":
+        return f"int32_t({val_str}LL)"
+    elif wasm_type == "i64":
+        if val_str.startswith("-"):
+            return f"int64_t(0x10000000000000000ULL - {val_str[1:]}ULL)" if val_str != "-9223372036854775808" else "int64_t(0x8000000000000000ULL)"
+        return f"int64_t({val_str}ULL)"
+    elif wasm_type == "f32":
+        if "." not in val_str and "e" not in val_str.lower():
+            return f"uint32_t({val_str}ULL)"
+        return f"{val_str}f"
+    elif wasm_type == "f64":
+        if "." not in val_str and "e" not in val_str.lower():
+            return f"uint64_t({val_str}ULL)"
+        return f"{val_str}"
+
+    return val_str
+
+def escape_wasm_string_literal(name):
+    """Wasmの関数名をC++のRaw文字列リテラルとして安全に出力する"""
+    return f'R"WASMDELIM({name})WASMDELIM"'
+
+def file_to_c_array(file_path):
+    if not os.path.exists(file_path):
+        return "0x00", 0
+    with open(file_path, 'rb') as f:
+        binary_data = f.read()
+    size = len(binary_data)
+    hex_bytes = [f"0x{b:02x}" for b in binary_data]
+    lines = []
+    for i in range(0, len(hex_bytes), 12):
+        lines.append("        " + ", ".join(hex_bytes[i:i+12]))
+    return "{\n" + ",\n".join(lines) + "\n    }", size
+
+def generate_interpreter_template():
+    """WasmInterpreter.hppの型安全版雛形コードを生成"""
+    return """#pragma once
+#include <cstdint>
+#include <cstddef>
+
+struct MyInternalValue {
+    int64_t raw_bits; 
+    uint8_t type_tag; 
+};
+
+using WasmValue = MyInternalValue;
+
+class WasmInterpreter {
+public:
+    WasmInterpreter() {}
+    ~WasmInterpreter() {}
+    
+    bool loadModule(const uint8_t* bytes, size_t size) {
+        (void)bytes; (void)size;
+        return true; 
+    }
+
+    WasmValue create_i32(int32_t val) { (void)val; return WasmValue{}; }
+    WasmValue create_i64(int64_t val) { (void)val; return WasmValue{}; }
+    WasmValue create_f32(float val)   { (void)val; return WasmValue{}; }
+    WasmValue create_f64(double val)  { (void)val; return WasmValue{}; }
+    
+    WasmValue create_f32_bits(uint32_t bits) { (void)bits; return WasmValue{}; }
+    WasmValue create_f64_bits(uint64_t bits) { (void)bits; return WasmValue{}; }
+    
+    WasmValue create_f32_nan(uint32_t bit_pattern) { (void)bit_pattern; return WasmValue{}; }
+    WasmValue create_f64_nan(uint64_t bit_pattern) { (void)bit_pattern; return WasmValue{}; }
+
+    // ★修正: uintptr_t から void* に変更し、nullptr を直接受け取れるように変更
+    WasmValue create_externref(const void* val) { (void)val; return WasmValue{}; }
+    WasmValue create_funcref(const void* val)   { (void)val; return WasmValue{}; }
+
+    WasmValue invoke(const char* func_name, const WasmValue* args, size_t args_count) {
+        (void)func_name; (void)args; (void)args_count;
+        return WasmValue{}; 
+    }
+
+    int32_t  to_i32(WasmValue val) { (void)val; return 0; }
+    int64_t  to_i64(WasmValue val) { (void)val; return 0; }
+    float    to_f32(WasmValue val) { (void)val; return 0.0f; }
+    double   to_f64(WasmValue val) { (void)val; return 0.0; }
+    bool     is_nan(WasmValue val) { (void)val; return false; }
+    
+    uint32_t to_f32_bits(WasmValue val) { (void)val; return 0; }
+    uint64_t to_f64_bits(WasmValue val) { (void)val; return 0; }
+    
+    void* to_externref(WasmValue val) { (void)val; return nullptr; }
+    void* to_funcref(WasmValue val)   { (void)val; return nullptr; }
+};
+"""
+
+def process_combined_assets(input_dir, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+
+    hpp_path = os.path.join(output_dir, "WasmInterpreter.hpp")
+    with open(hpp_path, 'w') as f:
+        f.write(generate_interpreter_template())
+    print(f"生成: {hpp_path}")
+
+    data_lines = [
+        "// 自動生成されたWebAssemblyテスト用バイナリデータヘッダー",
+        "#pragma once",
+        "#include <cstdint>",
+        "#include <cstddef>",
+        ""
+    ]
+
+    test_lines = [
+        "// 自動生成されたWebAssembly公式仕様テストコード",
+        "#include <gtest/gtest.h>",
+        "#include <cstdint>",
+        "#include <cstddef>",
+        '#include "WasmInterpreter.hpp"',
+        '#include "wasm_embedded_data.h"',
+        ""
+    ]
+
+    global_wasm_idx = 0
+    json_count = 0
+
+    for root, dirs, files in os.walk(input_dir):
+        for file in sorted(files):
+            if file.endswith('.json'):
+                json_path = os.path.join(root, file)
+                print(f"解析中: {json_path}")
+
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+
+                json_dir = os.path.dirname(json_path)
+                base_name = os.path.splitext(os.path.basename(json_path))[0]
+
+                safe_base_name = sanitize_cpp_identifier(base_name)
+                suite_name = f"WasmCoreTest_{safe_base_name}"
+
+                test_lines.append(f'// =========================================================================')
+                test_lines.append(f'// Test Suite for {base_name}.json')
+                test_lines.append(f'// =========================================================================')
+                test_lines.append(f'class {suite_name} : public ::testing::Test {{')
+                test_lines.append('protected:')
+                test_lines.append('    WasmInterpreter interpreter;')
+                test_lines.append('};')
+                test_lines.append('')
+
+                local_wasm_map = {}
+
+                for cmd in data.get("commands", []):
+                    line_num = cmd.get("line", 0)
+                    cmd_type = cmd.get("type")
+
+                    if cmd_type == "module":
+                        wasm_filename = cmd.get("filename")
+                        if wasm_filename and wasm_filename not in local_wasm_map:
+                            wasm_full_path = os.path.join(json_dir, wasm_filename)
+                            array_str, array_size = file_to_c_array(wasm_full_path)
+
+                            var_name = f"wasm_data_{global_wasm_idx}"
+                            size_name = f"wasm_size_{global_wasm_idx}"
+                            local_wasm_map[wasm_filename] = (var_name, size_name)
+                            global_wasm_idx += 1
+
+                            data_lines.append(f'// From {base_name}.json Line {line_num} ({wasm_filename})')
+                            data_lines.append(f'static const uint8_t {var_name}[] = {array_str};')
+                            data_lines.append(f'static const size_t {size_name} = {array_size};')
+                            data_lines.append('')
+
+                    elif cmd_type == "assert_return":
+                        action = cmd.get("action", {})
+                        if action.get("type") == "invoke":
+                            if not local_wasm_map:
+                                continue
+                            var_name, size_name = list(local_wasm_map.values())[-1]
+
+                            func_name = action.get("field")
+                            args = action.get("args", [])
+                            expected = cmd.get("expected", []).copy()
+
+                            safe_func_name = sanitize_cpp_identifier(func_name)
+                            test_name = f"Line_{line_num}_{safe_func_name}"
+
+                            test_lines.append(f'TEST_F({suite_name}, {test_name}) {{')
+                            test_lines.append(f'    ASSERT_TRUE(interpreter.loadModule({var_name}, {size_name}));')
+
+                            if args:
+                                arg_vals = []
+                                for a in args:
+                                    t = a['type']
+                                    val = python_type_to_cpp(t, a['value'])
+
+                                    if "nan" in str(a['value']).lower() or "inf" in str(a['value']).lower():
+                                        factory_method = f"create_{t}_bits"
+                                    elif (t == "f32" or t == "f64") and "uint" in val:
+                                        factory_method = f"create_{t}_bits"
+                                    elif t in ["externref", "funcref"] and val != "nullptr":
+                                        # nullptr以外（整数値など）が参照型に渡る場合はポインタに再解釈するコードを吐く
+                                        factory_method = f"create_{t}"
+                                        val = f"reinterpret_cast<const void*>({val}ULL)"
+                                    else:
+                                        factory_method = f"create_{t}"
+
+                                    arg_vals.append(f'interpreter.{factory_method}({val})')
+
+                                vals_str = ", ".join(arg_vals)
+                                test_lines.append(f'    WasmValue args[] = {{ {vals_str} }};')
+                                args_param, args_count_param = "args", str(len(args))
+                            else:
+                                args_param, args_count_param = "nullptr", "0"
+
+                            escaped_func_name = escape_wasm_string_literal(func_name)
+                            invoke_call = f'interpreter.invoke({escaped_func_name}, {args_param}, {args_count_param})'
+
+                            if expected:
+                                exp = expected[0]
+                                exp_type = exp['type']
+                                exp_val = python_type_to_cpp(exp_type, exp['value'])
+
+                                test_lines.append(f'    WasmValue result = {invoke_call};')
+                                if "f32" in exp_type or "f64" in exp_type:
+                                    if "nan" in str(exp['value']).lower():
+                                        test_lines.append(f'    EXPECT_TRUE(interpreter.is_nan(result));')
+                                    elif "uint" in exp_val or "inf" in str(exp['value']).lower():
+                                        test_lines.append(f'    EXPECT_EQ({exp_val}, interpreter.to_{exp_type}_bits(result));')
+                                    else:
+                                        test_lines.append(f'    EXPECT_NEAR({exp_val}, interpreter.to_{exp_type}(result), 1e-5);')
+                                elif exp_type in ["externref", "funcref"] and exp_val != "nullptr":
+                                    test_lines.append(f'    EXPECT_EQ(reinterpret_cast<void*>({exp_val}ULL), interpreter.to_{exp_type}(result));')
+                                else:
+                                    test_lines.append(f'    EXPECT_EQ({exp_val}, interpreter.to_{exp_type}(result));')
+                            else:
+                                test_lines.append(f'    WasmValue result = {invoke_call};')
+                                test_lines.append(f'    (void)result;')
+
+                            test_lines.append('}')
+                            test_lines.append('')
+
+                json_count += 1
+
+    data_path = os.path.join(output_dir, "wasm_embedded_data.h")
+    with open(data_path, 'w') as f:
+        f.write("\n".join(data_lines))
+    print(f"生成: {data_path}")
+
+    cpp_path = os.path.join(output_dir, "all_spec_tests.cpp")
+    with open(cpp_path, 'w') as f:
+        f.write("\n".join(test_lines))
+    print(f"生成: {cpp_path}")
+
+    print(f"\n[成功] nullptrの型ミスマッチを完全攻略したコードを生成しました。")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("使い方: python script.py <入力jsonディレクトリ> <アセット出力先ディレクトリ>")
+        sys.exit(1)
+    process_combined_assets(sys.argv[1], sys.argv[2])
