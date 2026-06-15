@@ -12,8 +12,6 @@ struct MyInternalValue {
 };
 
 // テストコード側が使うエイリアス。値型として扱えるように実体をバッファにする
-#include <vector>
-#include <memory>
 
 using WasmValue = embwasm::WasmValue;
 
@@ -30,31 +28,39 @@ private:
         }
     };
 
-    std::vector<std::unique_ptr<ModuleInstance>> modules_;
+    static constexpr size_t kMaxModules = 512;
+    ModuleInstance* modules_[kMaxModules] = {};
+    size_t module_count_ = 0;
     ModuleInstance* active_module_ = nullptr;
 
 public:
     WasmInterpreter() {
         // デフォルトのモジュールを1つ用意しておく
-        auto inst = std::unique_ptr<ModuleInstance>(new ModuleInstance());
-        active_module_ = inst.get();
-        modules_.push_back(std::move(inst));
+        ModuleInstance* inst = new ModuleInstance();
+        active_module_ = inst;
+        modules_[module_count_++] = inst;
     }
-    ~WasmInterpreter() {}
+    ~WasmInterpreter() {
+        for (size_t i = 0; i < module_count_; ++i) {
+            delete modules_[i];
+        }
+    }
 
     // Wasmバイナリ（バイト列）をロード
     bool loadModule(const uint8_t* bytes, size_t size) {
         if (bytes == nullptr || size < 8) return false;
+        if (module_count_ >= kMaxModules) return false;
 
-        auto inst = std::unique_ptr<ModuleInstance>(new ModuleInstance());
+        ModuleInstance* inst = new ModuleInstance();
         embwasm::WasmResult load_res = inst->engine.Load(bytes, size);
         if (load_res != embwasm::WasmResult::kOk) {
             std::printf("loadModule failed with error code: %d\n", static_cast<int>(load_res));
+            delete inst;
             return false;
         }
 
-        modules_.push_back(std::move(inst));
-        active_module_ = modules_.back().get();
+        modules_[module_count_++] = inst;
+        active_module_ = inst;
         return true;
     }
 
@@ -129,9 +135,9 @@ public:
             target_inst = active_module_;
         } else {
             // 後ろから順に検索
-            for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
-                if ((*it)->engine.GetExportFunctionIndex(func_name, name_len) != -1) {
-                    target_inst = it->get();
+            for (size_t i = module_count_; i > 0; --i) {
+                if (modules_[i - 1]->engine.GetExportFunctionIndex(func_name, name_len) != -1) {
+                    target_inst = modules_[i - 1];
                     break;
                 }
             }
