@@ -514,7 +514,8 @@ WasmResult DispatchHostFunction(
     # 探索ロジックの生成（二分探索＋ハイフン/アンダースコア同一視フォールバック）
     lookup_logic = """\
     // 1. 完全一致で探索を試みる（高速パス）
-    if (std::strcmp(module_name, "$root") == 0) {
+    // WebAssembly 1.0の慣習である "env" も "$root" と同等に扱います。
+    if (std::strcmp(module_name, "$root") == 0 || std::strcmp(module_name, "env") == 0) {
         for (std::size_t i = 0; i < kStaticApiTableSize; ++i) {
             if (std::strcmp(field_name, kStaticApiTable[i].field_name) == 0) {
                 return kStaticApiTable[i].id;
@@ -544,7 +545,7 @@ WasmResult DispatchHostFunction(
     }
 
     // 2. フォールバック：ハイフンとアンダースコアを同一視した線形探索（互換性用）
-    bool is_root = (std::strcmp(module_name, "$root") == 0);
+    bool is_root = (std::strcmp(module_name, "$root") == 0 || std::strcmp(module_name, "env") == 0);
     for (std::size_t i = 0; i < kStaticApiTableSize; ++i) {
         if (is_root || std::strcmp(module_name, kStaticApiTable[i].module_name) == 0) {
             const char* s1 = field_name;
