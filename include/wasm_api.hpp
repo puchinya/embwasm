@@ -16,10 +16,10 @@ enum class HostModuleId : uint32_t;
 extern const std::size_t kHostModuleCount;
 
 // 静的に登録されたホストモジュールのIDを検索します。
-HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept;
+HostModuleId LookupStaticHostModuleId(const char* module_name, std::size_t module_len) noexcept;
 
 // 静的に登録されたホストAPIのIDを検索します。
-HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
+HostFunctionId LookupStaticHostFunctionId(const char* module_name, std::size_t module_len, const char* field_name, std::size_t field_len) noexcept;
 
 class WasmEngine;
 

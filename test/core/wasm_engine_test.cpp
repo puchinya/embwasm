@@ -38,8 +38,8 @@ TEST(WasmEngineTest, ModuleUserData) {
     embwasm::WasmMemoryPool pool; pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
     embwasm::WasmEngine engine; engine.Init(pool);
 
-    EXPECT_EQ(embwasm::LookupStaticHostModuleId("env"), embwasm::HostModuleId::kEnv);
-    EXPECT_EQ(static_cast<uint32_t>(embwasm::LookupStaticHostModuleId("invalid_module")), 0xFFFFFFFF);
+    EXPECT_EQ(embwasm::LookupStaticHostModuleId("env", 3), embwasm::HostModuleId::kEnv);
+    EXPECT_EQ(static_cast<uint32_t>(embwasm::LookupStaticHostModuleId("invalid_module", 14)), 0xFFFFFFFF);
 
     EXPECT_EQ(engine.GetModuleUserData(embwasm::HostModuleId::kEnv), nullptr);
 

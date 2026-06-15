@@ -107,9 +107,6 @@ private:
 
     WasmResult ParseSections(const uint8_t* binary, std::size_t size) noexcept;
 
-    // 文字列をメモリプール上にコピーして保持するヘルパー
-    const char* CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept;
-
     // ロード済みモジュールのプール確保メモリを個別解放するヘルパー
     void FreeLoadedModule() noexcept;
 

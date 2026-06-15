@@ -467,9 +467,9 @@ enum class HostModuleId : uint32_t {{
 // 各ホスト関数のID定義
 {enum_members_str}
 
-HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept;
+HostModuleId LookupStaticHostModuleId(const char* module_name, std::size_t module_len) noexcept;
 
-HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept;
+HostFunctionId LookupStaticHostFunctionId(const char* module_name, std::size_t module_len, const char* field_name, std::size_t field_len) noexcept;
 
 class WasmEngine;
 
@@ -515,9 +515,10 @@ WasmResult DispatchHostFunction(
     lookup_logic = """\
     // 1. 完全一致で探索を試みる（高速パス）
     // WebAssembly 1.0の慣習である "env" も "$root" と同等に扱います。
-    if (std::strcmp(module_name, "$root") == 0 || std::strcmp(module_name, "env") == 0) {
+    if ((module_len == 5 && std::memcmp(module_name, "$root", 5) == 0) || (module_len == 3 && std::memcmp(module_name, "env", 3) == 0)) {
         for (std::size_t i = 0; i < kStaticApiTableSize; ++i) {
-            if (std::strcmp(field_name, kStaticApiTable[i].field_name) == 0) {
+            std::size_t entry_field_len = std::strlen(kStaticApiTable[i].field_name);
+            if (field_len == entry_field_len && std::memcmp(field_name, kStaticApiTable[i].field_name, field_len) == 0) {
                 return kStaticApiTable[i].id;
             }
         }
@@ -529,9 +530,26 @@ WasmResult DispatchHostFunction(
             int mid = low + (high - low) / 2;
             const auto& entry = kStaticApiTable[mid];
 
-            int cmp = std::strcmp(module_name, entry.module_name);
+            std::size_t entry_mod_len = std::strlen(entry.module_name);
+            std::size_t min_mod_len = (module_len < entry_mod_len) ? module_len : entry_mod_len;
+            int cmp = std::memcmp(module_name, entry.module_name, min_mod_len);
             if (cmp == 0) {
-                cmp = std::strcmp(field_name, entry.field_name);
+                if (module_len < entry_mod_len) {
+                    cmp = -1;
+                } else if (module_len > entry_mod_len) {
+                    cmp = 1;
+                } else {
+                    std::size_t entry_field_len = std::strlen(entry.field_name);
+                    std::size_t min_field_len = (field_len < entry_field_len) ? field_len : entry_field_len;
+                    cmp = std::memcmp(field_name, entry.field_name, min_field_len);
+                    if (cmp == 0) {
+                        if (field_len < entry_field_len) {
+                            cmp = -1;
+                        } else if (field_len > entry_field_len) {
+                            cmp = 1;
+                        }
+                    }
+                }
             }
 
             if (cmp == 0) {
@@ -545,26 +563,27 @@ WasmResult DispatchHostFunction(
     }
 
     // 2. フォールバック：ハイフンとアンダースコアを同一視した線形探索（互換性用）
-    bool is_root = (std::strcmp(module_name, "$root") == 0 || std::strcmp(module_name, "env") == 0);
+    bool is_root = ((module_len == 5 && std::memcmp(module_name, "$root", 5) == 0) || (module_len == 3 && std::memcmp(module_name, "env", 3) == 0));
     for (std::size_t i = 0; i < kStaticApiTableSize; ++i) {
-        if (is_root || std::strcmp(module_name, kStaticApiTable[i].module_name) == 0) {
-            const char* s1 = field_name;
+        std::size_t entry_mod_len = std::strlen(kStaticApiTable[i].module_name);
+        if (is_root || (module_len == entry_mod_len && std::memcmp(module_name, kStaticApiTable[i].module_name, module_len) == 0)) {
             const char* s2 = kStaticApiTable[i].field_name;
-            bool match = true;
-            while (*s1 && *s2) {
-                char c1 = *s1;
-                char c2 = *s2;
-                if (c1 == '-') c1 = '_';
-                if (c2 == '-') c2 = '_';
-                if (c1 != c2) {
-                    match = false;
-                    break;
+            std::size_t s2_len = std::strlen(s2);
+            if (field_len == s2_len) {
+                bool match = true;
+                for (std::size_t j = 0; j < field_len; ++j) {
+                    char c1 = field_name[j];
+                    char c2 = s2[j];
+                    if (c1 == '-') c1 = '_';
+                    if (c2 == '-') c2 = '_';
+                    if (c1 != c2) {
+                        match = false;
+                        break;
+                    }
                 }
-                s1++;
-                s2++;
-            }
-            if (match && !*s1 && !*s2) {
-                return kStaticApiTable[i].id;
+                if (match) {
+                    return kStaticApiTable[i].id;
+                }
             }
         }
     }
@@ -577,7 +596,7 @@ WasmResult DispatchHostFunction(
         mod_clean = re.sub(r'[^a-zA-Z0-9_]', '_', mod)
         mod_part = "".join(word.capitalize() for word in mod_clean.split("_") if word)
         module_lookup_cases.append(
-            f'    if (std::strcmp(module_name, "{mod}") == 0) return HostModuleId::k{mod_part};'
+            f'    if (module_len == {len(mod)} && std::memcmp(module_name, "{mod}", {len(mod)}) == 0) return HostModuleId::k{mod_part};'
         )
     module_lookup_cases_str = "\n".join(module_lookup_cases)
 
@@ -605,7 +624,7 @@ void DeinitializeAllHostModules(WasmEngine& engine) noexcept {{
 {deinit_calls_str}
 }}
 
-HostModuleId LookupStaticHostModuleId(const char* module_name) noexcept {{
+HostModuleId LookupStaticHostModuleId(const char* module_name, std::size_t module_len) noexcept {{
 {module_lookup_cases_str}
     return static_cast<HostModuleId>(0xFFFFFFFF);
 }}
@@ -622,7 +641,7 @@ static const StaticApiEntry kStaticApiTable[] = {{
 }};
 static constexpr std::size_t kStaticApiTableSize = sizeof(kStaticApiTable) / sizeof(kStaticApiTable[0]);
 
-HostFunctionId LookupStaticHostFunctionId(const char* module_name, const char* field_name) noexcept {{
+HostFunctionId LookupStaticHostFunctionId(const char* module_name, std::size_t module_len, const char* field_name, std::size_t field_len) noexcept {{
 {lookup_logic}
 }}
 

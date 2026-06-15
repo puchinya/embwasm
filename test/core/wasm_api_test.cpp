@@ -14,14 +14,14 @@ alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
 
 TEST(WasmApiStaticTest, AllFunctions) {
     // 1. 静的登録テーブルからの検索検証 (正常系)
-    embwasm::HostFunctionId func = embwasm::LookupStaticHostFunctionId("env", "dummy");
+    embwasm::HostFunctionId func = embwasm::LookupStaticHostFunctionId("env", 3, "dummy", 5);
     EXPECT_EQ(func, embwasm::kEnvDummy);
 
-    embwasm::HostFunctionId func_print = embwasm::LookupStaticHostFunctionId("env", "print_val");
+    embwasm::HostFunctionId func_print = embwasm::LookupStaticHostFunctionId("env", 3, "print_val", 9);
     EXPECT_EQ(func_print, embwasm::kEnvPrintVal);
 
     // 2. 存在しないAPIの検索検証 (異常系)
-    embwasm::HostFunctionId not_found = embwasm::LookupStaticHostFunctionId("env", "non_existent");
+    embwasm::HostFunctionId not_found = embwasm::LookupStaticHostFunctionId("env", 3, "non_existent", 12);
     EXPECT_EQ(not_found, embwasm::HostFunctionId::kInvalid);
 
     // 3. ディスパッチャの直接呼び出し検証

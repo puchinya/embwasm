@@ -12,7 +12,6 @@
 #include "wasm_platform.hpp"
 #include <cstring>
 #include <cmath>
-#include <cstdio>
 
 namespace embwasm {
 
@@ -264,13 +263,6 @@ void WasmEngine::Init(WasmMemoryPool& pool) noexcept {
 void WasmEngine::FreeLoadedModule() noexcept {
     if (!pool_) return;
 
-    // エクスポート名文字列の解放
-    for (std::size_t i = 0; i < export_count_; ++i) {
-        if (exports_[i].name) {
-            pool_->Free(const_cast<char*>(exports_[i].name));
-        }
-    }
-
     // 各内部関数のローカル変数型配列の解放
     for (std::size_t i = 0; i < function_count_; ++i) {
         if (!functions_[i].is_import && functions_[i].internal_func.local_types) {
@@ -402,7 +394,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     uint32_t param_count = DecodeVarUint32(ptr, section_end);
                     if (param_count > WasmTypeSignature::kMaxParams) {
-                        std::printf("OOM at line 393: param_count %u > kMaxParams %u\n", (unsigned int)param_count, (unsigned int)WasmTypeSignature::kMaxParams);
                         return WasmResult::kErrorOutOfMemory;
                     }
 
@@ -416,7 +407,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     uint32_t result_count = DecodeVarUint32(ptr, section_end);
                     if (result_count > WasmTypeSignature::kMaxResults) {
-                        std::printf("OOM at line 406: result_count %u > kMaxResults %u\n", (unsigned int)result_count, (unsigned int)WasmTypeSignature::kMaxResults);
                         return WasmResult::kErrorOutOfMemory;
                     }
                     sig.result_count = result_count;
@@ -427,7 +417,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     }
 
                     if (signature_count_ >= kMaxWasmTypes) {
-                        std::printf("OOM at line 416: signature_count_ %u >= kMaxWasmTypes %u\n", (unsigned int)signature_count_, (unsigned int)kMaxWasmTypes);
                         return WasmResult::kErrorOutOfMemory;
                     }
                     signatures_[signature_count_++] = sig;
@@ -439,19 +428,16 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                 uint32_t import_count = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < import_count; ++i) {
                     uint32_t mod_len = DecodeVarUint32(ptr, section_end);
-                    const char* mod_name = CopyString(ptr, mod_len, section_end);
+                    if (mod_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                    const char* mod_name = reinterpret_cast<const char*>(ptr);
+                    ptr += mod_len;
+
                     uint32_t field_len = DecodeVarUint32(ptr, section_end);
-                    const char* field_name = CopyString(ptr, field_len, section_end);
-                    if (!mod_name || !field_name) {
-                        std::printf("OOM at line 430: mod_name or field_name allocation failed\n");
-                        if (mod_name)   pool_->Free(const_cast<char*>(mod_name));
-                        if (field_name) pool_->Free(const_cast<char*>(field_name));
-                        return WasmResult::kErrorOutOfMemory;
-                    }
+                    if (field_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                    const char* field_name = reinterpret_cast<const char*>(ptr);
+                    ptr += field_len;
 
                     if (ptr >= section_end) {
-                        pool_->Free(const_cast<char*>(mod_name));
-                        pool_->Free(const_cast<char*>(field_name));
                         return WasmResult::kErrorRuntimeError;
                     }
                     uint8_t kind = *ptr++;
@@ -459,12 +445,9 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     if (kind == 0x00) { // Function import
                         uint32_t type_idx = DecodeVarUint32(ptr, section_end);
 
-                        HostFunctionId host_func_id = LookupStaticHostFunctionId(mod_name, field_name);
+                        HostFunctionId host_func_id = LookupStaticHostFunctionId(mod_name, mod_len, field_name, field_len);
 
                         if (function_count_ >= kMaxWasmFunctions) {
-                            std::printf("OOM at line 448: function_count_ %u >= kMaxWasmFunctions %u\n", (unsigned int)function_count_, (unsigned int)kMaxWasmFunctions);
-                            pool_->Free(const_cast<char*>(mod_name));
-                            pool_->Free(const_cast<char*>(field_name));
                             return WasmResult::kErrorOutOfMemory;
                         }
 
@@ -476,7 +459,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                             // モジュール間リンク：既存のエクスポートから探す
                             int32_t found_func_idx = -1;
                             for (std::size_t e = 0; e < export_count_; ++e) {
-                                if (std::strcmp(exports_[e].name, field_name) == 0) {
+                                if (exports_[e].name_len == field_len && std::memcmp(exports_[e].name, field_name, field_len) == 0) {
                                     found_func_idx = static_cast<int32_t>(exports_[e].func_index);
                                     break;
                                 }
@@ -497,8 +480,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         code_index_offset++;
                     } else if (kind == 0x03) { // Global import
                         if (ptr + 2 > section_end) {
-                            pool_->Free(const_cast<char*>(mod_name));
-                            pool_->Free(const_cast<char*>(field_name));
                             return WasmResult::kErrorRuntimeError;
                         }
                         WasmType gtype = static_cast<WasmType>(*ptr++);
@@ -508,15 +489,15 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                             gval.type = gtype;
                             gval.value.i64 = 0;
                             // spectest モジュールの既知グローバル値を設定
-                            bool is_spectest = (std::strcmp(mod_name, "spectest") == 0);
+                            bool is_spectest = (mod_len == 8 && std::memcmp(mod_name, "spectest", 8) == 0);
                             if (is_spectest) {
-                                if (std::strcmp(field_name, "global_i32") == 0) {
+                                if (field_len == 10 && std::memcmp(field_name, "global_i32", 10) == 0) {
                                     gval.value.i32 = 666;
-                                } else if (std::strcmp(field_name, "global_i64") == 0) {
+                                } else if (field_len == 10 && std::memcmp(field_name, "global_i64", 10) == 0) {
                                     gval.value.i64 = 666;
-                                } else if (std::strcmp(field_name, "global_f32") == 0) {
+                                } else if (field_len == 10 && std::memcmp(field_name, "global_f32", 10) == 0) {
                                     gval.value.f32 = 666.0f;
-                                } else if (std::strcmp(field_name, "global_f64") == 0) {
+                                } else if (field_len == 10 && std::memcmp(field_name, "global_f64", 10) == 0) {
                                     gval.value.f64 = 666.6;
                                 }
                             }
@@ -538,9 +519,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     } else {
                         // 未知のインポート種別はスキップ
                     }
-
-                    pool_->Free(const_cast<char*>(mod_name));
-                    pool_->Free(const_cast<char*>(field_name));
                 }
                 break;
             }
@@ -551,7 +529,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     uint32_t type_idx = DecodeVarUint32(ptr, section_end);
 
                     if (function_count_ >= kMaxWasmFunctions) {
-                        std::printf("OOM at line 536: function_count_ %u >= kMaxWasmFunctions %u\n", (unsigned int)function_count_, (unsigned int)kMaxWasmFunctions);
                         return WasmResult::kErrorOutOfMemory;
                     }
                     functions_[function_count_].is_import = false;
@@ -568,18 +545,16 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                 uint32_t num_exports = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_exports; ++i) {
                     uint32_t name_len = DecodeVarUint32(ptr, section_end);
-                    const char* name = CopyString(ptr, name_len, section_end);
-                    if (!name) {
-                        std::printf("OOM at line 554: export name allocation failed\n");
-                        return WasmResult::kErrorOutOfMemory;
-                    }
+                    if (name_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                    const char* name = reinterpret_cast<const char*>(ptr);
+                    ptr += name_len;
 
+                    if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
                     uint8_t kind = *ptr++;
                     uint32_t idx = DecodeVarUint32(ptr, section_end);
 
                     if (kind == 0x00) { // 0x00 = Function export
                         if (export_count_ >= kMaxWasmFunctions) {
-                            std::printf("OOM at line 560: export_count_ %u >= kMaxWasmFunctions %u\n", (unsigned int)export_count_, (unsigned int)kMaxWasmFunctions);
                             return WasmResult::kErrorOutOfMemory;
                         }
                         exports_[export_count_] = {name, name_len, idx};
@@ -593,7 +568,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                 uint32_t num_globals = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_globals; ++i) {
                     if (global_count_ >= kMaxGlobals) {
-                        std::printf("OOM at line 573: global_count_ %u >= kMaxGlobals %u\n", (unsigned int)global_count_, (unsigned int)kMaxGlobals);
                         return WasmResult::kErrorOutOfMemory;
                     }
 
@@ -660,7 +634,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         if (min_size > 0) {
                             uint32_t* t_ptr = static_cast<uint32_t*>(pool_->Allocate(min_size * sizeof(uint32_t)));
                             if (!t_ptr) {
-                                std::printf("OOM at line 636: table_ptr allocation failed\n");
                                 return WasmResult::kErrorOutOfMemory;
                             }
                             for (uint32_t t = 0; t < min_size; ++t) {
@@ -690,13 +663,11 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     uint64_t initial_size = static_cast<uint64_t>(initial_pages) * 65536;
                     if (initial_size > kMaxLinearMemorySize) {
-                        std::printf("OOM at line 657: initial_size %llu > kMaxLinearMemorySize %llu\n", (unsigned long long)initial_size, (unsigned long long)kMaxLinearMemorySize);
                         return WasmResult::kErrorOutOfMemory;
                     }
 
                     linear_memory_ptr_ = static_cast<uint8_t*>(pool_->Allocate(kMaxLinearMemorySize));
                     if (!linear_memory_ptr_) {
-                        std::printf("OOM at line 661: linear_memory_ptr allocation failed\n");
                         return WasmResult::kErrorOutOfMemory;
                     }
 
@@ -855,7 +826,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         WasmType type = static_cast<WasmType>(type_val);
                         for (uint32_t c = 0; c < count; ++c) {
                             if (local_count >= kMaxLocalDecls) {
-                                std::printf("OOM at line 811: local_count %u >= kMaxLocalDecls %u\n", (unsigned int)local_count, (unsigned int)kMaxLocalDecls);
                                 return WasmResult::kErrorOutOfMemory;
                             }
                             temp_types[local_count++] = type;
@@ -871,7 +841,6 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     if (local_count > 0) {
                         local_types = static_cast<WasmType*>(pool_->Allocate(local_count * sizeof(WasmType)));
                         if (!local_types) {
-                            std::printf("OOM at line 826: local_types allocation failed\n");
                             return WasmResult::kErrorOutOfMemory;
                         }
                         std::memcpy(local_types, temp_types, local_count * sizeof(WasmType));
@@ -2870,17 +2839,6 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
     }
 
     return WasmResult::kOk;
-}
-
-const char* WasmEngine::CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept {
-    if (len > static_cast<std::size_t>(end - ptr)) return nullptr;
-    if (!pool_) return nullptr;
-    char* str = static_cast<char*>(pool_->Allocate(len + 1));
-    if (!str) return nullptr;
-    std::memcpy(str, ptr, len);
-    str[len] = '\0';
-    ptr += len;
-    return str;
 }
 
 void* WasmEngine::GetModuleUserData(HostModuleId module_id) const noexcept {

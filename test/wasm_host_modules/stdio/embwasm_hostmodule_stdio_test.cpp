@@ -50,10 +50,10 @@ protected:
 
 // 1. API 解決のテスト
 TEST_F(WasmHostModuleStdioTest, ResolveStaticFunctions) {
-    embwasm::HostFunctionId func_printf = embwasm::LookupStaticHostFunctionId("stdio", "printf");
+    embwasm::HostFunctionId func_printf = embwasm::LookupStaticHostFunctionId("embwasm:stdio/stdio", 19, "printf", 6);
     EXPECT_EQ(func_printf, embwasm::kStdioPrintf);
 
-    embwasm::HostFunctionId func_puts = embwasm::LookupStaticHostFunctionId("stdio", "puts");
+    embwasm::HostFunctionId func_puts = embwasm::LookupStaticHostFunctionId("embwasm:stdio/stdio", 19, "puts", 4);
     EXPECT_EQ(func_puts, embwasm::kStdioPuts);
 }
 

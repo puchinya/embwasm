@@ -19,28 +19,28 @@ constexpr std::size_t kMemoryPoolAlignment = 8;
 constexpr std::size_t kMaxLinearMemorySize = 64 * 1024 * 1024; // 64 MB (スペックテスト対応)
 
 // サポートする最大WASM関数定義数
-constexpr std::size_t kMaxWasmFunctions = 2048;
+constexpr std::size_t kMaxWasmFunctions = 512;
 
 // サポートする最大WASMテーブル数
 constexpr std::size_t kMaxTables = 16;
 
 // サポートする最大WASM型シグネチャ数
-constexpr std::size_t kMaxWasmTypes = 512;
+constexpr std::size_t kMaxWasmTypes = 256;
 
 // WASM実行スタックの最大深度
-constexpr std::size_t kWasmStackSize = 1024;
+constexpr std::size_t kWasmStackSize = 512;
 
 // WASM関数呼び出しの最大深度（コールスタックサイズ）
 constexpr std::size_t kWasmCallStackSize = 256;
 
 // 1つの関数で利用可能な最大ローカル変数（引数＋ローカル変数）の数（実行フレームサイズに影響）
-constexpr std::size_t kMaxLocals = 256;
+constexpr std::size_t kMaxLocals = 128;
 
 // ロード時にパースできる最大ローカル変数宣言数（kMaxLocalsより大きくできる）
 constexpr std::size_t kMaxLocalDecls = 2048;
 
 // 1つの関数内の制御ブロック（block, loop, if）の最大ネスト数
-constexpr std::size_t kMaxLabels = 256;
+constexpr std::size_t kMaxLabels = 48;
 
 // サポートする最大グローバル変数数
 constexpr std::size_t kMaxGlobals = 256;
