@@ -29,17 +29,22 @@ if(BUILD_TESTING)
         COMMENT "Generating static API lookup tables for test from test_env.wit"
     )
 
-    add_executable(wasm_tests
+    set(WASM_TESTS_SRCS
         wasm_memory_pool_test.cpp
         wasm_api_test.cpp
         wasm_platform_test.cpp
         wasm_engine_test.cpp
-        official_test_wasm/all_spec_tests.cpp
         wasm_thread_test.cpp
         host_apis.cpp
         ${GEN_CPP}
         ${GEN_H}
     )
+
+    if(EMBWASM_BUILD_OFFICIAL_SPEC_TESTS)
+        list(APPEND WASM_TESTS_SRCS official_test_wasm/all_spec_tests.cpp)
+    endif()
+
+    add_executable(wasm_tests ${WASM_TESTS_SRCS})
     
     # テスト対象ライブラリとGoogleTestのリンク
     target_link_libraries(wasm_tests

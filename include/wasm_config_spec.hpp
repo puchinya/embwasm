@@ -1,53 +1,49 @@
-#ifndef EMBWASM_WASM_CONFIG_HPP_
-#define EMBWASM_WASM_CONFIG_HPP_
+#ifndef EMBWASM_WASM_CONFIG_SPEC_HPP_
+#define EMBWASM_WASM_CONFIG_SPEC_HPP_
 
 #include <cstddef>
-
-#ifdef EMBWASM_USE_SPEC_CONFIG
-#include "wasm_config_spec.hpp"
-#else
 
 namespace embwasm {
 
 // ==========================================
-// WASM 実行環境の設定ファイル (通常・省メモリ環境用)
+// WASM 実行環境の設定ファイル (公式スペックテスト用)
 // ==========================================
 
 // メモリプールのサイズ（バイト単位）
-constexpr std::size_t kMemoryPoolSize = 512 * 1024; // 512 KB
+constexpr std::size_t kMemoryPoolSize = 128 * 1024 * 1024; // 128 MB (スペックテスト対応)
 
 // メモリプールのアライメント（バイト単位）
 constexpr std::size_t kMemoryPoolAlignment = 8;
 
 // 線形メモリの最大サイズ (WASMページ 1ページ = 64KB)
-constexpr std::size_t kMaxLinearMemorySize = 256 * 1024; // 256 KB
+constexpr std::size_t kMaxLinearMemorySize = 64 * 1024 * 1024; // 64 MB (スペックテスト対応)
 
 // サポートする最大WASM関数定義数
-constexpr std::size_t kMaxWasmFunctions = 32;
+constexpr std::size_t kMaxWasmFunctions = 2048;
 
 // サポートする最大WASMテーブル数
-constexpr std::size_t kMaxTables = 4;
+constexpr std::size_t kMaxTables = 16;
 
 // サポートする最大WASM型シグネチャ数
-constexpr std::size_t kMaxWasmTypes = 16;
+constexpr std::size_t kMaxWasmTypes = 512;
 
 // WASM実行スタックの最大深度
-constexpr std::size_t kWasmStackSize = 64;
+constexpr std::size_t kWasmStackSize = 1024;
 
 // WASM関数呼び出しの最大深度（コールスタックサイズ）
-constexpr std::size_t kWasmCallStackSize = 16;
+constexpr std::size_t kWasmCallStackSize = 256;
 
 // 1つの関数で利用可能な最大ローカル変数（引数＋ローカル変数）の数（実行フレームサイズに影響）
-constexpr std::size_t kMaxLocals = 32;
+constexpr std::size_t kMaxLocals = 256;
 
 // ロード時にパースできる最大ローカル変数宣言数（kMaxLocalsより大きくできる）
-constexpr std::size_t kMaxLocalDecls = 64;
+constexpr std::size_t kMaxLocalDecls = 2048;
 
 // 1つの関数内の制御ブロック（block, loop, if）の最大ネスト数
-constexpr std::size_t kMaxLabels = 32;
+constexpr std::size_t kMaxLabels = 256;
 
 // サポートする最大グローバル変数数
-constexpr std::size_t kMaxGlobals = 16;
+constexpr std::size_t kMaxGlobals = 256;
 
 // マルチスレッド機能の有効化
 #define EMBWASM_ENABLE_MULTITHREADING 1
@@ -64,6 +60,4 @@ constexpr std::size_t kMaxEvents = 8;
 
 } // namespace embwasm
 
-#endif // EMBWASM_USE_SPEC_CONFIG
-
-#endif // EMBWASM_WASM_CONFIG_HPP_
+#endif // EMBWASM_WASM_CONFIG_SPEC_HPP_

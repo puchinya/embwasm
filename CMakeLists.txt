@@ -8,9 +8,14 @@ cmake_policy(SET CMP0079 NEW)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# プラットフォームビルドオプションのみルートで管理
+# プラットフォームビルドオプションおよび公式テストオプションをルートで管理
 option(USE_FREERTOS "Use FreeRTOS platform implementation" OFF)
 option(USE_UITRON "Use uITRON platform implementation" OFF)
+option(EMBWASM_BUILD_OFFICIAL_SPEC_TESTS "Build WebAssembly official spec tests" OFF)
+
+if(EMBWASM_BUILD_OFFICIAL_SPEC_TESTS)
+    add_compile_definitions(EMBWASM_USE_SPEC_CONFIG)
+endif()
 
 # =============================================================================
 # 各モジュール (コアライブラリ、デモ、テスト) の追加
