@@ -8,6 +8,8 @@
 - **ヒープ不使用 (Zero dynamic memory allocation)**: `malloc` や `new` は使用せず、`WasmMemoryPool` を介した静的/スタックメモリのみで動作します。
 - **再帰呼び出しの禁止 (No C++ Recursion)**: ホストのスタックオーバーフローを防ぐため、WASMの関数呼び出しをC++の再帰関数で実装してはなりません。明示的なコールスタック構造（`WasmFrame`）を用いたループ（反復アルゴリズム）で実装します。
 - **関数ポインタの排除 (No Function Pointers)**: 静的解析ツールによる最悪スタック消費量の算出を容易にし、間接呼び出しによる予期せぬスタック消費を避けるため、ホストAPIの呼び出し等はIDと `switch` 文を用いた直接呼び出し（静的ディスパッチ）で行います。
+- **WebAssembly 1.0 (MVP) 準拠**: WASMインタプリタは WebAssembly 1.0 (W3C WebAssembly Core Specification Version 1.0) 仕様に準拠します。ただし、極小フットプリント実現のため、一部の機能やパラメータ上限はビルド設定（`include/wasm_config.hpp`）を介してカスタマイズ可能とします。
+
 
 ## 2. スタック構造とメモリレイアウト
 WASMの実行状態は `WasmThreadContext` 構造体に保持されます。
