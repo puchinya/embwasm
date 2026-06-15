@@ -14,6 +14,7 @@ struct WasmLabel {
     const uint8_t* pc;         // ブロック終了（end）またはループ開始のIP
     std::size_t stack_top;     // 入場時のスタックトップ（br時にここまで戻す）
     uint8_t opcode;            // ブロックの種類（0x01: block, 0x02: loop, 0x04: if）
+    uint32_t arity;            // 保護すべき値の数（brジャンプ時にスタックトップから引き継ぐ値の数）
 };
 
 // WASM関数呼び出しのフレーム情報

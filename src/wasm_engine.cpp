@@ -755,14 +755,29 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
                 case 0x02:   // block
                 case 0x03: { // loop
-                    uint8_t block_type = *ip++; // とりあえず単一戻り値か無しの簡易対応
-                    (void)block_type;
+                    int32_t block_type = DecodeVarInt32(ip, limit);
+                    uint32_t param_count = 0;
+                    uint32_t result_count = 0;
+                    if (block_type >= 0) {
+                        if (static_cast<uint32_t>(block_type) < signature_count_) {
+                            param_count = signatures_[block_type].param_count;
+                            result_count = signatures_[block_type].result_count;
+                        }
+                    } else if (block_type == -1 || block_type == -2 || block_type == -3 || block_type == -4 ||
+                               block_type == 0x7F || block_type == 0x7E || block_type == 0x7D || block_type == 0x7C) {
+                        param_count = 0;
+                        result_count = 1;
+                    } else {
+                        param_count = 0;
+                        result_count = 0;
+                    }
                     
                     if (frame.label_stack_top >= kMaxLabels) return WasmResult::kErrorStackOverflow;
                     
                     WasmLabel& label = frame.labels[frame.label_stack_top++];
                     label.opcode = op;
                     label.stack_top = stack_top_;
+                    label.arity = (op == 0x03) ? param_count : result_count;
                     
                     if (op == 0x02) { // block
                         // 対応する end を探す (ネストを考慮)
@@ -772,7 +787,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         while (search_ptr < limit) {
                             uint8_t s_op = *search_ptr++;
                             if (s_op == 0x02 || s_op == 0x03 || s_op == 0x04) {
-                                if (search_ptr < limit) search_ptr++;
+                                DecodeVarInt32(search_ptr, limit);
                                 nest_level++;
                             } else if (s_op == 0x05) {
                                 // else
@@ -820,16 +835,26 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 }
 
                 case 0x04: { // if
-                    uint8_t block_type = *ip++;
-                    (void)block_type;
+                    int32_t block_type = DecodeVarInt32(ip, limit);
+                    uint32_t result_count = 0;
+                    if (block_type >= 0) {
+                        if (static_cast<uint32_t>(block_type) < signature_count_) {
+                            result_count = signatures_[block_type].result_count;
+                        }
+                    } else if (block_type == -1 || block_type == -2 || block_type == -3 || block_type == -4 ||
+                               block_type == 0x7F || block_type == 0x7E || block_type == 0x7D || block_type == 0x7C) {
+                        result_count = 1;
+                    }
+                    
                     if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
                     int32_t cond = stack_[--stack_top_].value.i32;
-
+ 
                     if (frame.label_stack_top >= kMaxLabels) return WasmResult::kErrorStackOverflow;
                     WasmLabel& label = frame.labels[frame.label_stack_top++];
                     label.opcode = 0x04;
                     label.stack_top = stack_top_;
-
+                    label.arity = result_count;
+ 
                     // 対応する else または end を探す
                     // 各オペコードの引数バイトを正しくスキップしながら探索する
                     const uint8_t* search_ptr = ip;
@@ -838,7 +863,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     while (search_ptr < limit) {
                         uint8_t s_op = *search_ptr++;
                         if (s_op == 0x02 || s_op == 0x03 || s_op == 0x04) {
-                            if (search_ptr < limit) search_ptr++;
+                            DecodeVarInt32(search_ptr, limit);
                             nest_level++;
                         } else if (s_op == 0x05) { // else
                             if (nest_level == 0) else_ptr = search_ptr;
@@ -907,20 +932,37 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - label_idx];
 
                         // データスタックの巻き戻し (Unwind)
-                        // 脱出するブロックが結果を返す場合 (スタックトップが元の位置より高い場合) は結果を保護する
-                        // ただし、loopの場合は結果ではなくループ入力を指すため保護しない
-                        WasmValue ret_val = {};
-                        bool has_result = false;
-                        if (target_label.opcode != 0x03) {
-                            if (stack_top_ > target_label.stack_top) {
-                                ret_val = stack_[stack_top_ - 1];
-                                has_result = true;
+                        // target_label.arity個のパラメータ（結果）を退避し、
+                        // スタックを巻き戻したあとに再びプッシュする
+                        uint32_t arity = target_label.arity;
+                        WasmValue saved_vals[8] = {};
+                        if (arity > 8) arity = 8; // 安全のための上限
+
+                        for (uint32_t i = 0; i < arity; ++i) {
+                            if (stack_top_ > 0) {
+                                saved_vals[arity - 1 - i] = stack_[--stack_top_];
                             }
                         }
 
-                        stack_top_ = target_label.stack_top;
-                        if (has_result) {
-                            stack_[stack_top_++] = ret_val;
+                        if (target_label.opcode == 0x03) { // loop
+                            // loopの場合は、ループ本体に再進入するためのパラメータを入力としてスタックに残す。
+                            // label.stack_top はパラメータがすでにスタックに積まれた時点の高さ。
+                            // パラメータをプッシュする前にスタックを巻き戻す必要がある。
+                            if (target_label.stack_top >= arity) {
+                                stack_top_ = target_label.stack_top - arity;
+                            } else {
+                                stack_top_ = 0;
+                            }
+                        } else { // block / if
+                            // block/ifから脱出する際は、結果値をブロックに入った時点のスタックの上にプッシュする。
+                            stack_top_ = target_label.stack_top;
+                        }
+
+                        // 退避した値を再びプッシュする
+                        for (uint32_t i = 0; i < arity; ++i) {
+                            if (stack_top_ < kWasmStackSize) {
+                                stack_[stack_top_++] = saved_vals[i];
+                            }
                         }
 
                         // label.pc は:
@@ -964,18 +1006,34 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                     if (chosen_label_idx >= frame.label_stack_top) return WasmResult::kErrorRuntimeError;
                     WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - chosen_label_idx];
                     
-                    WasmValue ret_val = {};
-                    bool has_result = false;
-                    if (target_label.opcode != 0x03) {
-                        if (stack_top_ > target_label.stack_top) {
-                            ret_val = stack_[stack_top_ - 1];
-                            has_result = true;
+                    // データスタックの巻き戻し (Unwind)
+                    // target_label.arity個のパラメータ（結果）を退避し、
+                    // スタックを巻き戻したあとに再びプッシュする
+                    uint32_t arity = target_label.arity;
+                    WasmValue saved_vals[8] = {};
+                    if (arity > 8) arity = 8; // 安全のための上限
+
+                    for (uint32_t i = 0; i < arity; ++i) {
+                        if (stack_top_ > 0) {
+                            saved_vals[arity - 1 - i] = stack_[--stack_top_];
                         }
                     }
-                    
-                    stack_top_ = target_label.stack_top;
-                    if (has_result) {
-                        stack_[stack_top_++] = ret_val;
+
+                    if (target_label.opcode == 0x03) { // loop
+                        if (target_label.stack_top >= arity) {
+                            stack_top_ = target_label.stack_top - arity;
+                        } else {
+                            stack_top_ = 0;
+                        }
+                    } else { // block / if
+                        stack_top_ = target_label.stack_top;
+                    }
+
+                    // 退避した値を再びプッシュする
+                    for (uint32_t i = 0; i < arity; ++i) {
+                        if (stack_top_ < kWasmStackSize) {
+                            stack_[stack_top_++] = saved_vals[i];
+                        }
                     }
                     
                     ip = target_label.pc;
