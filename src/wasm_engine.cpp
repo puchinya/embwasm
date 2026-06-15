@@ -12,6 +12,7 @@
 #include "wasm_platform.hpp"
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 
 namespace embwasm {
 
@@ -189,7 +190,7 @@ WasmEngine::WasmEngine() noexcept
       global_count_(0),
       linear_memory_ptr_(nullptr), linear_memory_size_(0),
       max_linear_memory_pages_(0),
-      table_ptr_(nullptr), table_size_(0),
+      table_count_(0),
       ctx_(nullptr),
 #if EMBWASM_ENABLE_MULTITHREADING
       scheduler_(nullptr),
@@ -197,6 +198,10 @@ WasmEngine::WasmEngine() noexcept
       max_call_stack_depth_(0), max_stack_depth_(0),
       user_data_(nullptr),
       module_user_datas_(nullptr) {
+    for (std::size_t i = 0; i < kMaxTables; ++i) {
+        tables_[i] = nullptr;
+        table_sizes_[i] = 0;
+    }
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
         functions_[i] = {};
         exports_[i] = {};
@@ -224,8 +229,11 @@ void WasmEngine::Init(WasmMemoryPool& pool) noexcept {
     linear_memory_ptr_ = nullptr;
     linear_memory_size_ = 0;
     max_linear_memory_pages_ = 0;
-    table_ptr_ = nullptr;
-    table_size_ = 0;
+    table_count_ = 0;
+    for (std::size_t i = 0; i < kMaxTables; ++i) {
+        tables_[i] = nullptr;
+        table_sizes_[i] = 0;
+    }
     start_function_index_ = -1;
     ctx_ = nullptr;
     max_call_stack_depth_ = 0;
@@ -271,10 +279,13 @@ void WasmEngine::FreeLoadedModule() noexcept {
     }
 
     // 間接関数テーブルの解放
-    if (table_ptr_) {
-        pool_->Free(table_ptr_);
-        table_ptr_ = nullptr;
+    for (std::size_t i = 0; i < table_count_; ++i) {
+        if (tables_[i]) {
+            pool_->Free(tables_[i]);
+            tables_[i] = nullptr;
+        }
     }
+    table_count_ = 0;
 
     // 線形メモリの解放
     if (linear_memory_ptr_) {
@@ -319,8 +330,11 @@ WasmResult WasmEngine::Load(const uint8_t* binary, std::size_t size) noexcept {
     linear_memory_ptr_ = nullptr;
     linear_memory_size_ = 0;
     max_linear_memory_pages_ = 0;
-    table_ptr_ = nullptr;
-    table_size_ = 0;
+    table_count_ = 0;
+    for (std::size_t i = 0; i < kMaxTables; ++i) {
+        tables_[i] = nullptr;
+        table_sizes_[i] = 0;
+    }
     start_function_index_ = -1;
 
     for (std::size_t i = 0; i < kMaxWasmFunctions; ++i) {
@@ -388,6 +402,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     uint32_t param_count = DecodeVarUint32(ptr, section_end);
                     if (param_count > WasmTypeSignature::kMaxParams) {
+                        std::printf("OOM at line 393: param_count %u > kMaxParams %u\n", (unsigned int)param_count, (unsigned int)WasmTypeSignature::kMaxParams);
                         return WasmResult::kErrorOutOfMemory;
                     }
 
@@ -401,6 +416,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     uint32_t result_count = DecodeVarUint32(ptr, section_end);
                     if (result_count > WasmTypeSignature::kMaxResults) {
+                        std::printf("OOM at line 406: result_count %u > kMaxResults %u\n", (unsigned int)result_count, (unsigned int)WasmTypeSignature::kMaxResults);
                         return WasmResult::kErrorOutOfMemory;
                     }
                     sig.result_count = result_count;
@@ -411,6 +427,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     }
 
                     if (signature_count_ >= kMaxWasmTypes) {
+                        std::printf("OOM at line 416: signature_count_ %u >= kMaxWasmTypes %u\n", (unsigned int)signature_count_, (unsigned int)kMaxWasmTypes);
                         return WasmResult::kErrorOutOfMemory;
                     }
                     signatures_[signature_count_++] = sig;
@@ -426,6 +443,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     uint32_t field_len = DecodeVarUint32(ptr, section_end);
                     const char* field_name = CopyString(ptr, field_len, section_end);
                     if (!mod_name || !field_name) {
+                        std::printf("OOM at line 430: mod_name or field_name allocation failed\n");
                         if (mod_name)   pool_->Free(const_cast<char*>(mod_name));
                         if (field_name) pool_->Free(const_cast<char*>(field_name));
                         return WasmResult::kErrorOutOfMemory;
@@ -444,6 +462,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         HostFunctionId host_func_id = LookupStaticHostFunctionId(mod_name, field_name);
 
                         if (function_count_ >= kMaxWasmFunctions) {
+                            std::printf("OOM at line 448: function_count_ %u >= kMaxWasmFunctions %u\n", (unsigned int)function_count_, (unsigned int)kMaxWasmFunctions);
                             pool_->Free(const_cast<char*>(mod_name));
                             pool_->Free(const_cast<char*>(field_name));
                             return WasmResult::kErrorOutOfMemory;
@@ -532,6 +551,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     uint32_t type_idx = DecodeVarUint32(ptr, section_end);
 
                     if (function_count_ >= kMaxWasmFunctions) {
+                        std::printf("OOM at line 536: function_count_ %u >= kMaxWasmFunctions %u\n", (unsigned int)function_count_, (unsigned int)kMaxWasmFunctions);
                         return WasmResult::kErrorOutOfMemory;
                     }
                     functions_[function_count_].is_import = false;
@@ -549,16 +569,20 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                 for (uint32_t i = 0; i < num_exports; ++i) {
                     uint32_t name_len = DecodeVarUint32(ptr, section_end);
                     const char* name = CopyString(ptr, name_len, section_end);
-                    if (!name) return WasmResult::kErrorOutOfMemory;
+                    if (!name) {
+                        std::printf("OOM at line 554: export name allocation failed\n");
+                        return WasmResult::kErrorOutOfMemory;
+                    }
 
                     uint8_t kind = *ptr++;
                     uint32_t idx = DecodeVarUint32(ptr, section_end);
 
                     if (kind == 0x00) { // 0x00 = Function export
                         if (export_count_ >= kMaxWasmFunctions) {
+                            std::printf("OOM at line 560: export_count_ %u >= kMaxWasmFunctions %u\n", (unsigned int)export_count_, (unsigned int)kMaxWasmFunctions);
                             return WasmResult::kErrorOutOfMemory;
                         }
-                        exports_[export_count_] = {name, idx};
+                        exports_[export_count_] = {name, name_len, idx};
                         export_count_++;
                     }
                 }
@@ -568,7 +592,10 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
             case 6: { // Global Section
                 uint32_t num_globals = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_globals; ++i) {
-                    if (global_count_ >= kMaxGlobals) return WasmResult::kErrorOutOfMemory;
+                    if (global_count_ >= kMaxGlobals) {
+                        std::printf("OOM at line 573: global_count_ %u >= kMaxGlobals %u\n", (unsigned int)global_count_, (unsigned int)kMaxGlobals);
+                        return WasmResult::kErrorOutOfMemory;
+                    }
 
                     WasmType type = static_cast<WasmType>(*ptr++);
                     bool is_mutable = (*ptr++ != 0);
@@ -628,13 +655,24 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         /* uint32_t max_size = */ DecodeVarUint32(ptr, section_end);
                     }
 
-                    table_size_ = min_size;
-                    if (table_size_ > 0) {
-                        table_ptr_ = static_cast<uint32_t*>(pool_->Allocate(table_size_ * sizeof(uint32_t)));
-                        if (!table_ptr_) return WasmResult::kErrorOutOfMemory;
-                        for (uint32_t t = 0; t < table_size_; ++t) {
-                            table_ptr_[t] = 0xFFFFFFFF;
+                    if (table_count_ < kMaxTables) {
+                        table_sizes_[table_count_] = min_size;
+                        if (min_size > 0) {
+                            uint32_t* t_ptr = static_cast<uint32_t*>(pool_->Allocate(min_size * sizeof(uint32_t)));
+                            if (!t_ptr) {
+                                std::printf("OOM at line 636: table_ptr allocation failed\n");
+                                return WasmResult::kErrorOutOfMemory;
+                            }
+                            for (uint32_t t = 0; t < min_size; ++t) {
+                                t_ptr[t] = 0xFFFFFFFF;
+                            }
+                            tables_[table_count_] = t_ptr;
+                        } else {
+                            tables_[table_count_] = nullptr;
                         }
+                        table_count_++;
+                    } else {
+                        return WasmResult::kErrorOutOfMemory;
                     }
                 }
                 break;
@@ -652,11 +690,15 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
 
                     uint64_t initial_size = static_cast<uint64_t>(initial_pages) * 65536;
                     if (initial_size > kMaxLinearMemorySize) {
+                        std::printf("OOM at line 657: initial_size %llu > kMaxLinearMemorySize %llu\n", (unsigned long long)initial_size, (unsigned long long)kMaxLinearMemorySize);
                         return WasmResult::kErrorOutOfMemory;
                     }
 
                     linear_memory_ptr_ = static_cast<uint8_t*>(pool_->Allocate(kMaxLinearMemorySize));
-                    if (!linear_memory_ptr_) return WasmResult::kErrorOutOfMemory;
+                    if (!linear_memory_ptr_) {
+                        std::printf("OOM at line 661: linear_memory_ptr allocation failed\n");
+                        return WasmResult::kErrorOutOfMemory;
+                    }
 
                     linear_memory_size_ = static_cast<std::size_t>(initial_size);
                     std::memset(linear_memory_ptr_, 0, kMaxLinearMemorySize);
@@ -739,7 +781,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                             (void)kind;
                         }
                     }
-                    (void)table_idx;
+
 
                     uint32_t offset = 0;
                     if (has_offset) {
@@ -757,6 +799,12 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
                     }
 
+                    if (has_offset && (flags & 2) == 2) {
+                        if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                        uint8_t elemkind_or_reftype = *ptr++;
+                        (void)elemkind_or_reftype;
+                    }
+
                     uint32_t num_funcs = DecodeVarUint32(ptr, section_end);
                     if ((flags & 4) == 4) { // elem_exprs の配列
                         for (uint32_t f = 0; f < num_funcs; ++f) {
@@ -771,15 +819,15 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                             }
                             if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
 
-                            if (has_offset && table_ptr_ && offset + f < table_size_) {
-                                table_ptr_[offset + f] = val;
+                            if (has_offset && table_idx < table_count_ && tables_[table_idx] && offset + f < table_sizes_[table_idx]) {
+                                tables_[table_idx][offset + f] = val;
                             }
                         }
                     } else { // 関数インデックスの配列
                         for (uint32_t f = 0; f < num_funcs; ++f) {
                             uint32_t func_idx = DecodeVarUint32(ptr, section_end);
-                            if (has_offset && table_ptr_ && offset + f < table_size_) {
-                                table_ptr_[offset + f] = func_idx;
+                            if (has_offset && table_idx < table_count_ && tables_[table_idx] && offset + f < table_sizes_[table_idx]) {
+                                tables_[table_idx][offset + f] = func_idx;
                             }
                         }
                     }
@@ -807,6 +855,7 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                         WasmType type = static_cast<WasmType>(type_val);
                         for (uint32_t c = 0; c < count; ++c) {
                             if (local_count >= kMaxLocalDecls) {
+                                std::printf("OOM at line 811: local_count %u >= kMaxLocalDecls %u\n", (unsigned int)local_count, (unsigned int)kMaxLocalDecls);
                                 return WasmResult::kErrorOutOfMemory;
                             }
                             temp_types[local_count++] = type;
@@ -821,7 +870,10 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                     WasmType* local_types = nullptr;
                     if (local_count > 0) {
                         local_types = static_cast<WasmType*>(pool_->Allocate(local_count * sizeof(WasmType)));
-                        if (!local_types) return WasmResult::kErrorOutOfMemory;
+                        if (!local_types) {
+                            std::printf("OOM at line 826: local_types allocation failed\n");
+                            return WasmResult::kErrorOutOfMemory;
+                        }
                         std::memcpy(local_types, temp_types, local_count * sizeof(WasmType));
                     }
 
@@ -840,13 +892,14 @@ WasmResult WasmEngine::ParseSections(const uint8_t* binary, std::size_t size) no
                 ptr = section_end;
                 break;
         }
+        ptr = section_end;
     }
 
     return WasmResult::kOk;
 }
 
-WasmResult WasmEngine::Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
-    int32_t func_idx = GetExportFunctionIndex(name);
+WasmResult WasmEngine::Execute(const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
+    int32_t func_idx = GetExportFunctionIndex(name, name_len);
     if (func_idx == -1) {
         return WasmResult::kErrorFunctionNotFound;
     }
@@ -863,9 +916,6 @@ WasmResult WasmEngine::Execute(const char* name, const WasmValue* args, uint32_t
 
     // 引数を仮想スタックにセット。
     if (ctx_) {
-        // 重要：もし以前の実行(ExecuteInternalなど)でスタックに何かが残っていても、
-        // 新しいトップレベル関数の実行を開始する場合は、引数の数だけある状態にする。
-        // ここでは、一旦クリアするのではなく、渡された引数のみを積む。
         ctx_->stack_top = 0;
         for (uint32_t i = 0; i < arg_count; ++i) {
             if (ctx_->stack_top >= kWasmStackSize) {
@@ -897,7 +947,6 @@ WasmResult WasmEngine::Execute(const char* name, const WasmValue* args, uint32_t
         }
 
         // result_count が actual_result_count より多い場合はエラー（バッファ不足）
-        // result_count が少ない場合は余剰結果を捨てる（void呼び出し等）
         if (result_count > actual_result_count) {
             if (ctx_ == &default_ctx) ctx_ = nullptr;
             return WasmResult::kErrorRuntimeError;
@@ -923,13 +972,35 @@ WasmResult WasmEngine::Execute(const char* name, const WasmValue* args, uint32_t
     return res;
 }
 
-int32_t WasmEngine::GetExportFunctionIndex(const char* name) const noexcept {
+WasmResult WasmEngine::Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
+    return Execute(name, std::strlen(name), args, arg_count, results, result_count);
+}
+
+int32_t WasmEngine::GetExportFunctionIndex(const char* name, std::size_t name_len) const noexcept {
     for (std::size_t i = 0; i < export_count_; ++i) {
-        if (std::strcmp(exports_[i].name, name) == 0) {
+        if (exports_[i].name_len == name_len && std::memcmp(exports_[i].name, name, name_len) == 0) {
             return static_cast<int32_t>(exports_[i].func_index);
         }
     }
     return -1;
+}
+
+int32_t WasmEngine::GetExportFunctionIndex(const char* name) const noexcept {
+    return GetExportFunctionIndex(name, std::strlen(name));
+}
+
+uint32_t WasmEngine::GetExportFunctionResultCount(const char* name, std::size_t name_len) const noexcept {
+    int32_t func_idx = GetExportFunctionIndex(name, name_len);
+    if (func_idx == -1) return 0;
+    const WasmFunction& func = functions_[func_idx];
+    if (func.type_index < signature_count_) {
+        return signatures_[func.type_index].result_count;
+    }
+    return 0;
+}
+
+uint32_t WasmEngine::GetExportFunctionResultCount(const char* name) const noexcept {
+    return GetExportFunctionResultCount(name, std::strlen(name));
 }
 
 int32_t WasmEngine::GetFunctionIndexByExportIndex(uint32_t export_idx) const noexcept {
@@ -1161,6 +1232,13 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                                 DecodeVarInt32(search_ptr, limit); // ref.null: heap type
                             } else if (s_op == 0xD2) {
                                 DecodeVarUint32(search_ptr, limit); // ref.func: func idx
+                            } else if (s_op == 0x1C) {
+                                uint32_t type_count = DecodeVarUint32(search_ptr, limit);
+                                if (type_count <= static_cast<std::size_t>(limit - search_ptr)) {
+                                    search_ptr += type_count;
+                                } else {
+                                    search_ptr = limit;
+                                }
                             } else if (s_op == 0xFC) {
                                 DecodeVarUint32(search_ptr, limit); // 0xFC secondary opcode
                             }
@@ -1245,6 +1323,13 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                             DecodeVarInt32(search_ptr, limit);
                         } else if (s_op == 0xD2) {
                             DecodeVarUint32(search_ptr, limit);
+                        } else if (s_op == 0x1C) {
+                            uint32_t type_count = DecodeVarUint32(search_ptr, limit);
+                            if (type_count <= static_cast<std::size_t>(limit - search_ptr)) {
+                                search_ptr += type_count;
+                            } else {
+                                search_ptr = limit;
+                            }
                         } else if (s_op == 0xFC) {
                             DecodeVarUint32(search_ptr, limit);
                         }
@@ -1496,14 +1581,15 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 }
                 case 0x11: { // call_indirect
                     uint32_t type_idx = DecodeVarUint32(ip, limit);
-                    uint8_t reserved = *ip++;
-                    (void)reserved;
+                    uint32_t table_idx = *ip++;
 
                     if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
                     uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
 
-                    if (!table_ptr_ || elem_idx >= table_size_) return WasmResult::kErrorRuntimeError;
-                    uint32_t target_idx = table_ptr_[elem_idx];
+                    if (table_idx >= table_count_ || !tables_[table_idx] || elem_idx >= table_sizes_[table_idx]) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
+                    uint32_t target_idx = tables_[table_idx][elem_idx];
                     if (target_idx == 0xFFFFFFFF || target_idx >= function_count_) return WasmResult::kErrorRuntimeError;
 
                     const WasmFunction* target_func = &functions_[target_idx];
@@ -1610,6 +1696,21 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 }
 
                 case 0x1B: { // select
+                    if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                    int32_t cond = stack_[--stack_top_].value.i32;
+                    WasmValue val2 = stack_[--stack_top_];
+                    WasmValue val1 = stack_[--stack_top_];
+                    stack_[stack_top_++] = (cond != 0) ? val1 : val2;
+                    break;
+                }
+
+                case 0x1C: { // select (t*)
+                    if (ip >= limit) return WasmResult::kErrorRuntimeError;
+                    uint32_t type_count = DecodeVarUint32(ip, limit);
+                    if (type_count > static_cast<std::size_t>(limit - ip)) {
+                        return WasmResult::kErrorRuntimeError;
+                    }
+                    ip += type_count;
                     if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
                     int32_t cond = stack_[--stack_top_].value.i32;
                     WasmValue val2 = stack_[--stack_top_];

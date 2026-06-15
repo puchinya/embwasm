@@ -34,6 +34,7 @@ struct WasmGlobal {
 // WASMエクスポートを表す構造体
 struct WasmExportEntry {
     const char* name;
+    std::size_t name_len;
     uint32_t func_index;
 };
 
@@ -51,10 +52,16 @@ public:
     WasmResult Load(const uint8_t* binary, std::size_t size) noexcept;
 
     // エクスポートされた関数を実行する
+    WasmResult Execute(const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
     WasmResult Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
     // 関数名からインデックスを取得
+    int32_t GetExportFunctionIndex(const char* name, std::size_t name_len) const noexcept;
     int32_t GetExportFunctionIndex(const char* name) const noexcept;
+
+    // エクスポートされた関数の戻り値数を取得
+    uint32_t GetExportFunctionResultCount(const char* name, std::size_t name_len) const noexcept;
+    uint32_t GetExportFunctionResultCount(const char* name) const noexcept;
 
     // エクスポートインデックスから内部関数インデックスを取得
     int32_t GetFunctionIndexByExportIndex(uint32_t export_idx) const noexcept;
@@ -128,8 +135,9 @@ private:
     uint32_t max_linear_memory_pages_; // メモリセクションで指定された最大ページ数(0=制限なし)
 
     // 間接関数テーブル (Table section / Element section)
-    uint32_t* table_ptr_;
-    std::size_t table_size_;
+    uint32_t* tables_[kMaxTables];
+    std::size_t table_sizes_[kMaxTables];
+    std::size_t table_count_;
 
     // 開始関数インデックス（Start section）
     int32_t start_function_index_;

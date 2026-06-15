@@ -53,8 +53,29 @@ def python_type_to_cpp(wasm_type, value):
     return val_str
 
 def escape_wasm_string_literal(name):
-    """Wasmの関数名をC++のRaw文字列リテラルとして安全に出力する"""
-    return f'R"WASMDELIM({name})WASMDELIM"'
+    """Wasmの関数名をC++の通常の文字列リテラルとして安全に出力する"""
+    utf8_bytes = name.encode('utf-8')
+    escaped = []
+    for b in utf8_bytes:
+        if b == ord('\\'):
+            escaped.append('\\\\')
+        elif b == ord('"'):
+            escaped.append('\\"')
+        elif b == 10: # \n
+            escaped.append('\\n')
+        elif b == 13: # \r
+            escaped.append('\\r')
+        elif b == 9: # \t
+            escaped.append('\\t')
+        elif b == 12: # \f
+            escaped.append('\\f')
+        elif b == 11: # \v
+            escaped.append('\\v')
+        elif b < 32 or b >= 127:
+            escaped.append(f'\\{b:03o}')
+        else:
+            escaped.append(chr(b))
+    return '"' + "".join(escaped) + '"'
 
 def file_to_c_array(file_path):
     if not os.path.exists(file_path):

@@ -1,6 +1,8 @@
 #pragma once
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
+#include <string>
 #include "embwasm.hpp"
 
 // インタプリタ内部で使う真のデータ構造（テストコードには見せない）
@@ -10,18 +12,33 @@ struct MyInternalValue {
 };
 
 // テストコード側が使うエイリアス。値型として扱えるように実体をバッファにする
-using WasmValue = embwasm::WasmValue;
+#include <vector>
+#include <memory>
 
-alignas(16) uint8_t g_core_wasm_pool_buf[embwasm::kMemoryPoolSize];
+using WasmValue = embwasm::WasmValue;
 
 class WasmInterpreter {
 private:
-    embwasm::WasmMemoryPool pool_;
-    embwasm::WasmEngine engine_;
+    struct ModuleInstance {
+        alignas(16) uint8_t pool_buf[embwasm::kMemoryPoolSize];
+        embwasm::WasmMemoryPool pool;
+        embwasm::WasmEngine engine;
+
+        ModuleInstance() {
+            pool.Init(pool_buf, sizeof(pool_buf));
+            engine.Init(pool);
+        }
+    };
+
+    std::vector<std::unique_ptr<ModuleInstance>> modules_;
+    ModuleInstance* active_module_ = nullptr;
+
 public:
     WasmInterpreter() {
-        pool_.Init(g_core_wasm_pool_buf, sizeof(g_core_wasm_pool_buf));
-        engine_.Init(pool_);
+        // デフォルトのモジュールを1つ用意しておく
+        auto inst = std::unique_ptr<ModuleInstance>(new ModuleInstance());
+        active_module_ = inst.get();
+        modules_.push_back(std::move(inst));
     }
     ~WasmInterpreter() {}
 
@@ -29,9 +46,16 @@ public:
     bool loadModule(const uint8_t* bytes, size_t size) {
         if (bytes == nullptr || size < 8) return false;
 
-        embwasm::WasmResult load_res = engine_.Load(bytes, size);
+        auto inst = std::unique_ptr<ModuleInstance>(new ModuleInstance());
+        embwasm::WasmResult load_res = inst->engine.Load(bytes, size);
+        if (load_res != embwasm::WasmResult::kOk) {
+            std::printf("loadModule failed with error code: %d\n", static_cast<int>(load_res));
+            return false;
+        }
 
-        return load_res == embwasm::WasmResult::kOk;
+        modules_.push_back(std::move(inst));
+        active_module_ = modules_.back().get();
+        return true;
     }
 
     // 値型を安全に生成する各種ファクトリ
@@ -95,11 +119,49 @@ public:
         return v;
     }
 
-    // 関数実行
-    WasmValue invoke(const char* func_name, const WasmValue* args, size_t args_count) {
+    // 関数実行 (内部用)
+    WasmValue invoke_internal(const char* func_name, size_t name_len, const WasmValue* args, size_t args_count) {
         WasmValue res = {};
-        engine_.Execute(func_name, args, args_count, &res, 1);
+
+        // 最新の（active_module_）から順に、指定された関数を持つモジュールを検索する
+        ModuleInstance* target_inst = nullptr;
+        if (active_module_ && active_module_->engine.GetExportFunctionIndex(func_name, name_len) != -1) {
+            target_inst = active_module_;
+        } else {
+            // 後ろから順に検索
+            for (auto it = modules_.rbegin(); it != modules_.rend(); ++it) {
+                if ((*it)->engine.GetExportFunctionIndex(func_name, name_len) != -1) {
+                    target_inst = it->get();
+                    break;
+                }
+            }
+        }
+
+        if (!target_inst) {
+            // 見つからなければ active_module_ で実行を試みる（エラー出力のため）
+            target_inst = active_module_;
+        }
+
+        if (target_inst) {
+            uint32_t result_count = target_inst->engine.GetExportFunctionResultCount(func_name, name_len);
+            if (result_count > 1) result_count = 1;
+            embwasm::WasmResult run_res = target_inst->engine.Execute(func_name, name_len, args, args_count, &res, result_count);
+            if (run_res != embwasm::WasmResult::kOk) {
+                std::printf("invoke failed with error code: %d\n", static_cast<int>(run_res));
+            }
+        }
         return res;
+    }
+
+    // 文字列リテラル用テンプレート
+    template <size_t N>
+    WasmValue invoke(const char (&func_name)[N], const WasmValue* args, size_t args_count) {
+        return invoke_internal(func_name, N - 1, args, args_count);
+    }
+
+    // 動的文字列/ポインタ用フォールバック
+    WasmValue invoke(const std::string& func_name, const WasmValue* args, size_t args_count) {
+        return invoke_internal(func_name.data(), func_name.size(), args, args_count);
     }
 
     // 値検証用の型取り出し/ステータスチェック
