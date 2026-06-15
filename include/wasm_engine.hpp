@@ -95,6 +95,7 @@ public:
     // 線形メモリへのアクセス
     uint8_t* GetLinearMemory() const noexcept { return linear_memory_ptr_; }
     std::size_t GetLinearMemorySize() const noexcept { return linear_memory_size_; }
+    WasmMemoryPool* GetMemoryPool() const noexcept { return pool_; }
 
 private:
     friend class WasmScheduler;

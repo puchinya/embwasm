@@ -98,12 +98,14 @@ public:
     void SetAsInstance() noexcept { instance_ = this; }
 
     WasmThreadContext* GetCurrentThread() noexcept { 
-        return (current_thread_index_ < kMaxThreads) ? &threads_[current_thread_index_] : nullptr; 
+        return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr; 
     }
 
 private:
+    bool EnsureThreadsAllocated() noexcept;
+
     WasmEngine& engine_;
-    WasmThreadContext threads_[kMaxThreads];
+    WasmThreadContext* threads_;
     WasmEvent events_[kMaxEvents];
     std::size_t current_thread_index_;
     static WasmScheduler* instance_;
