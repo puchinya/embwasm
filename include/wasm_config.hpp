@@ -11,31 +11,38 @@ namespace embwasm {
 
 // メモリプールのサイズ（バイト単位）
 // この値を変更することで、WASMエンジンが使用するメモリプールのサイズを変更できます。
-constexpr std::size_t kMemoryPoolSize = 65536; // 64 KB
+constexpr std::size_t kMemoryPoolSize = 128 * 1024 * 1024; // 128 MB (スペックテスト対応)
 
-// 線形メモリの最大サイズ (WASMページ 1ページ = 64KB だが、組み込み向けに制限する)
-constexpr std::size_t kMaxLinearMemorySize = 2048; // 2 KB
+// メモリプールのアライメント（バイト単位）
+// Allocate() が返すポインタはこの境界に揃えられる。2の冪乗であること。
+constexpr std::size_t kMemoryPoolAlignment = 8;
+
+// 線形メモリの最大サイズ (WASMページ 1ページ = 64KB)
+constexpr std::size_t kMaxLinearMemorySize = 64 * 1024 * 1024; // 64 MB (スペックテスト対応)
 
 // サポートする最大WASM関数定義数
-constexpr std::size_t kMaxWasmFunctions = 64;
+constexpr std::size_t kMaxWasmFunctions = 2048;
 
 // サポートする最大WASM型シグネチャ数
-constexpr std::size_t kMaxWasmTypes = 16;
+constexpr std::size_t kMaxWasmTypes = 512;
 
 // WASM実行スタックの最大深度
-constexpr std::size_t kWasmStackSize = 64;
+constexpr std::size_t kWasmStackSize = 1024;
 
 // WASM関数呼び出しの最大深度（コールスタックサイズ）
-constexpr std::size_t kWasmCallStackSize = 16;
+constexpr std::size_t kWasmCallStackSize = 256;
 
-// 1つの関数で利用可能な最大ローカル変数（引数＋ローカル変数）の数
-constexpr std::size_t kMaxLocals = 32;
+// 1つの関数で利用可能な最大ローカル変数（引数＋ローカル変数）の数（実行フレームサイズに影響）
+constexpr std::size_t kMaxLocals = 256;
+
+// ロード時にパースできる最大ローカル変数宣言数（kMaxLocalsより大きくできる）
+constexpr std::size_t kMaxLocalDecls = 2048;
 
 // 1つの関数内の制御ブロック（block, loop, if）の最大ネスト数
-constexpr std::size_t kMaxLabels = 8;
+constexpr std::size_t kMaxLabels = 256;
 
 // サポートする最大グローバル変数数
-constexpr std::size_t kMaxGlobals = 16;
+constexpr std::size_t kMaxGlobals = 256;
 
 // マルチスレッド機能の有効化
 // true に設定すると、WasmScheduler および関連するホストAPIが有効になります。

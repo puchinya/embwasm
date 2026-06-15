@@ -28,12 +28,12 @@ TEST(WasmMemoryPoolTest, AllFunctions) {
     EXPECT_EQ(pool.GetUsedBytes(), 0U);
     EXPECT_EQ(pool.GetFreeBytes(), embwasm::kMemoryPoolSize);
 
-    // Alignment（メモリ境界）の検証
-    void* ptr2 = pool.Allocate(1, 8);
-    EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr2) % 8, 0U);
+    // Alignment（kMemoryPoolAlignment 境界に揃うことの検証）
+    void* ptr2 = pool.Allocate(1);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr2) % embwasm::kMemoryPoolAlignment, 0U);
 
-    void* ptr3 = pool.Allocate(1, 16);
-    EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr3) % 16, 0U);
+    void* ptr3 = pool.Allocate(1);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr3) % embwasm::kMemoryPoolAlignment, 0U);
 
     // OutOfMemory の検証
     void* ptr_overflow = pool.Allocate(embwasm::kMemoryPoolSize + 1);

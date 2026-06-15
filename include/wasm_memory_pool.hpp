@@ -7,36 +7,40 @@
 
 namespace embwasm {
 
-// ベアメタル環境向けの静的メモリプールクラス
-// 動的メモリ割り当て（ヒープ）を排除し、設定されたサイズのバッファからアロケートします。
+// ベアメタル環境向けフリーリスト方式メモリプール
+// バッファは外部から渡す静的配列を使用し、動的ヒープは一切使用しない。
+// 各アロケーションにはブロックヘッダが付与され、Free() による個別解放と
+// 隣接ブロックの即時合体（コアレッシング）によりフラグメンテーションを抑制する。
 class WasmMemoryPool {
 public:
     WasmMemoryPool() noexcept;
     ~WasmMemoryPool() noexcept;
 
-    // 明示的な初期化と終了
     void Init(uint8_t* buffer, std::size_t size) noexcept;
     void Deinit() noexcept;
 
-    // コピー・代入は禁止
     WasmMemoryPool(const WasmMemoryPool&) = delete;
     WasmMemoryPool& operator=(const WasmMemoryPool&) = delete;
 
-    // アライメントを考慮したメモリ割り当て
-    void* Allocate(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) noexcept;
+    // メモリ割り当て（アライメントは kMemoryPoolAlignment に従う）
+    void* Allocate(std::size_t size) noexcept;
 
-    // プールのリセット（一括解放）
+    // 個別メモリ解放（隣接フリーブロックと自動合体）
+    void Free(void* ptr) noexcept;
+
+    // プールのリセット（全アロケーションを一括解放）
     void Reset() noexcept;
 
     // メモリ使用状況の確認
-    std::size_t GetUsedBytes() const noexcept { return offset_; }
+    std::size_t GetUsedBytes() const noexcept { return used_bytes_; }
     std::size_t GetTotalBytes() const noexcept { return capacity_; }
-    std::size_t GetFreeBytes() const noexcept { return capacity_ - offset_; }
+    std::size_t GetFreeBytes() const noexcept { return capacity_ - used_bytes_; }
 
 private:
-    uint8_t* buffer_;
+    uint8_t*    buffer_;
     std::size_t capacity_;
-    std::size_t offset_;
+    std::size_t used_bytes_;
+    void*       free_list_head_;  // 実際の型は BlockHeader*（wasm_memory_pool.cpp 内部で定義）
 };
 
 } // namespace embwasm

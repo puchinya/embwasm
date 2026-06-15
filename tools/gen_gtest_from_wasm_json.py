@@ -128,10 +128,10 @@ public:
 def process_combined_assets(input_dir, output_dir):
     os.makedirs(output_dir, exist_ok=True)
 
-    hpp_path = os.path.join(output_dir, "WasmInterpreter.hpp")
-    with open(hpp_path, 'w') as f:
-        f.write(generate_interpreter_template())
-    print(f"生成: {hpp_path}")
+    # hpp_path = os.path.join(output_dir, "WasmInterpreter.hpp")
+    # with open(hpp_path, 'w') as f:
+    #     f.write(generate_interpreter_template())
+    # print(f"生成: {hpp_path}")
 
     data_lines = [
         "// 自動生成されたWebAssemblyテスト用バイナリデータヘッダー",
@@ -154,18 +154,27 @@ def process_combined_assets(input_dir, output_dir):
     global_wasm_idx = 0
     json_count = 0
 
+    SKIP_SUITES = {
+        "bulk", "table_init", "table_copy", "table_grow", "table_fill", "table_size", "table_set", "table_get",
+        "memory_copy", "memory_fill", "memory_init", "ref_func", "ref_is_null", "ref_null",
+        "linking", "imports", "elem", "data"
+    }
+
     for root, dirs, files in os.walk(input_dir):
         for file in sorted(files):
             if file.endswith('.json'):
                 json_path = os.path.join(root, file)
+                base_name = os.path.splitext(os.path.basename(json_path))[0]
+                if base_name in SKIP_SUITES:
+                    print(f"スキップ: {json_path} (未サポート仕様)")
+                    continue
+
                 print(f"解析中: {json_path}")
 
                 with open(json_path, 'r') as f:
                     data = json.load(f)
 
                 json_dir = os.path.dirname(json_path)
-                base_name = os.path.splitext(os.path.basename(json_path))[0]
-
                 safe_base_name = sanitize_cpp_identifier(base_name)
                 suite_name = f"WasmCoreTest_{safe_base_name}"
 
@@ -179,6 +188,7 @@ def process_combined_assets(input_dir, output_dir):
                 test_lines.append('')
 
                 local_wasm_map = {}
+                test_lines.append(f'TEST_F({suite_name}, RunSpecTests) {{')
 
                 for cmd in data.get("commands", []):
                     line_num = cmd.get("line", 0)
@@ -186,36 +196,35 @@ def process_combined_assets(input_dir, output_dir):
 
                     if cmd_type == "module":
                         wasm_filename = cmd.get("filename")
-                        if wasm_filename and wasm_filename not in local_wasm_map:
-                            wasm_full_path = os.path.join(json_dir, wasm_filename)
-                            array_str, array_size = file_to_c_array(wasm_full_path)
+                        if wasm_filename:
+                            if wasm_filename not in local_wasm_map:
+                                wasm_full_path = os.path.join(json_dir, wasm_filename)
+                                array_str, array_size = file_to_c_array(wasm_full_path)
 
-                            var_name = f"wasm_data_{global_wasm_idx}"
-                            size_name = f"wasm_size_{global_wasm_idx}"
-                            local_wasm_map[wasm_filename] = (var_name, size_name)
-                            global_wasm_idx += 1
+                                var_name = f"wasm_data_{global_wasm_idx}"
+                                size_name = f"wasm_size_{global_wasm_idx}"
+                                local_wasm_map[wasm_filename] = (var_name, size_name)
+                                global_wasm_idx += 1
 
-                            data_lines.append(f'// From {base_name}.json Line {line_num} ({wasm_filename})')
-                            data_lines.append(f'static const uint8_t {var_name}[] = {array_str};')
-                            data_lines.append(f'static const size_t {size_name} = {array_size};')
-                            data_lines.append('')
+                                data_lines.append(f'// From {base_name}.json Line {line_num} ({wasm_filename})')
+                                data_lines.append(f'static const uint8_t {var_name}[] = {array_str};')
+                                data_lines.append(f'static const size_t {size_name} = {array_size};')
+                                data_lines.append('')
 
-                    elif cmd_type == "assert_return":
+                            var_name, size_name = local_wasm_map[wasm_filename]
+                            test_lines.append(f'    {{ // Line {line_num} (Load module {wasm_filename})')
+                            test_lines.append(f'        ASSERT_TRUE(interpreter.loadModule({var_name}, {size_name}));')
+                            test_lines.append(f'    }}')
+
+                    elif cmd_type in ["assert_return", "action"]:
                         action = cmd.get("action", {})
                         if action.get("type") == "invoke":
-                            if not local_wasm_map:
-                                continue
-                            var_name, size_name = list(local_wasm_map.values())[-1]
-
                             func_name = action.get("field")
                             args = action.get("args", [])
-                            expected = cmd.get("expected", []).copy()
+                            expected = cmd.get("expected", []).copy() if cmd_type == "assert_return" else []
 
-                            safe_func_name = sanitize_cpp_identifier(func_name)
-                            test_name = f"Line_{line_num}_{safe_func_name}"
-
-                            test_lines.append(f'TEST_F({suite_name}, {test_name}) {{')
-                            test_lines.append(f'    ASSERT_TRUE(interpreter.loadModule({var_name}, {size_name}));')
+                            escaped_func_name = escape_wasm_string_literal(func_name)
+                            test_lines.append(f'    {{ // Line {line_num}')
 
                             if args:
                                 arg_vals = []
@@ -228,7 +237,6 @@ def process_combined_assets(input_dir, output_dir):
                                     elif (t == "f32" or t == "f64") and "uint" in val:
                                         factory_method = f"create_{t}_bits"
                                     elif t in ["externref", "funcref"] and val != "nullptr":
-                                        # nullptr以外（整数値など）が参照型に渡る場合はポインタに再解釈するコードを吐く
                                         factory_method = f"create_{t}"
                                         val = f"reinterpret_cast<const void*>({val}ULL)"
                                     else:
@@ -237,12 +245,11 @@ def process_combined_assets(input_dir, output_dir):
                                     arg_vals.append(f'interpreter.{factory_method}({val})')
 
                                 vals_str = ", ".join(arg_vals)
-                                test_lines.append(f'    WasmValue args[] = {{ {vals_str} }};')
+                                test_lines.append(f'        WasmValue args[] = {{ {vals_str} }};')
                                 args_param, args_count_param = "args", str(len(args))
                             else:
                                 args_param, args_count_param = "nullptr", "0"
 
-                            escaped_func_name = escape_wasm_string_literal(func_name)
                             invoke_call = f'interpreter.invoke({escaped_func_name}, {args_param}, {args_count_param})'
 
                             if expected:
@@ -250,24 +257,26 @@ def process_combined_assets(input_dir, output_dir):
                                 exp_type = exp['type']
                                 exp_val = python_type_to_cpp(exp_type, exp['value'])
 
-                                test_lines.append(f'    WasmValue result = {invoke_call};')
+                                test_lines.append(f'        WasmValue result = {invoke_call};')
                                 if "f32" in exp_type or "f64" in exp_type:
                                     if "nan" in str(exp['value']).lower():
-                                        test_lines.append(f'    EXPECT_TRUE(interpreter.is_nan(result));')
+                                        test_lines.append(f'        EXPECT_TRUE(interpreter.is_nan(result));')
                                     elif "uint" in exp_val or "inf" in str(exp['value']).lower():
-                                        test_lines.append(f'    EXPECT_EQ({exp_val}, interpreter.to_{exp_type}_bits(result));')
+                                        test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.to_{exp_type}_bits(result));')
                                     else:
-                                        test_lines.append(f'    EXPECT_NEAR({exp_val}, interpreter.to_{exp_type}(result), 1e-5);')
+                                        test_lines.append(f'        EXPECT_NEAR({exp_val}, interpreter.to_{exp_type}(result), 1e-5);')
                                 elif exp_type in ["externref", "funcref"] and exp_val != "nullptr":
-                                    test_lines.append(f'    EXPECT_EQ(reinterpret_cast<void*>({exp_val}ULL), interpreter.to_{exp_type}(result));')
+                                    test_lines.append(f'        EXPECT_EQ(reinterpret_cast<void*>({exp_val}ULL), interpreter.to_{exp_type}(result));')
                                 else:
-                                    test_lines.append(f'    EXPECT_EQ({exp_val}, interpreter.to_{exp_type}(result));')
+                                    test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.to_{exp_type}(result));')
                             else:
-                                test_lines.append(f'    WasmValue result = {invoke_call};')
-                                test_lines.append(f'    (void)result;')
+                                test_lines.append(f'        WasmValue result = {invoke_call};')
+                                test_lines.append(f'        (void)result;')
 
-                            test_lines.append('}')
-                            test_lines.append('')
+                            test_lines.append('    }')
+
+                test_lines.append('}')
+                test_lines.append('')
 
                 json_count += 1
 

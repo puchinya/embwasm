@@ -82,9 +82,18 @@ public:
         return val;
     }
 
-    // ★修正: 参照型テスト用のファクトリ関数を追加してコンパイルエラーを回避
-    WasmValue create_externref(const void* val) { (void)val; return WasmValue{}; }
-    WasmValue create_funcref(const void* val)   { (void)val; return WasmValue{}; }
+    WasmValue create_externref(const void* val) {
+        WasmValue v = {};
+        v.type = embwasm::WasmType::kExternRef;
+        v.value.i64 = reinterpret_cast<int64_t>(val);
+        return v;
+    }
+    WasmValue create_funcref(const void* val) {
+        WasmValue v = {};
+        v.type = embwasm::WasmType::kFuncRef;
+        v.value.i64 = reinterpret_cast<int64_t>(val);
+        return v;
+    }
 
     // 関数実行
     WasmValue invoke(const char* func_name, const WasmValue* args, size_t args_count) {
@@ -129,7 +138,6 @@ public:
     uint32_t to_f32_bits(WasmValue val) { return val.value.i32; }
     uint64_t to_f64_bits(WasmValue val) { return val.value.i64; }
 
-    // 参照型・最新命令用の取り出しヘルパー（コンパイルエラー回避用）
-    void* to_externref(WasmValue val) { (void)val; return nullptr; }
-    void* to_funcref(WasmValue val)   { (void)val; return nullptr; }
+    void* to_externref(WasmValue val) { return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64)); }
+    void* to_funcref(WasmValue val)   { return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64)); }
 };

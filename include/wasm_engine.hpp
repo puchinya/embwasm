@@ -14,6 +14,7 @@ struct WasmFunction {
         const uint8_t* code_ptr;
         uint32_t code_size;
         uint32_t local_count;
+        const WasmType* local_types;
     };
     bool is_import;
     uint32_t type_index;
@@ -101,6 +102,9 @@ private:
     // 文字列をメモリプール上にコピーして保持するヘルパー
     const char* CopyString(const uint8_t*& ptr, uint32_t len, const uint8_t* end) noexcept;
 
+    // ロード済みモジュールのプール確保メモリを個別解放するヘルパー
+    void FreeLoadedModule() noexcept;
+
     WasmMemoryPool* pool_;
 
     // 解析された型シグネチャ情報
@@ -121,10 +125,14 @@ private:
     // 線形メモリ（Memory section / Data section）
     uint8_t* linear_memory_ptr_;
     std::size_t linear_memory_size_;
+    uint32_t max_linear_memory_pages_; // メモリセクションで指定された最大ページ数(0=制限なし)
 
     // 間接関数テーブル (Table section / Element section)
     uint32_t* table_ptr_;
     std::size_t table_size_;
+
+    // 開始関数インデックス（Start section）
+    int32_t start_function_index_;
 
     // 現在の実行コンテキスト
     WasmThreadContext* ctx_;

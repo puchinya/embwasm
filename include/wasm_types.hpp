@@ -8,11 +8,13 @@ namespace embwasm {
 
 // WASM値の型定義
 enum class WasmType : uint8_t {
-    kI32 = 0x7F,
-    kI64 = 0x7E,
-    kF32 = 0x7D,
-    kF64 = 0x7C,
-    kVoid = 0x40
+    kI32     = 0x7F,
+    kI64     = 0x7E,
+    kF32     = 0x7D,
+    kF64     = 0x7C,
+    kFuncRef = 0x70,
+    kExternRef = 0x6F,
+    kVoid    = 0x40
 };
 
 // WASM値のコンテナ（タグ付き共用体）
@@ -24,8 +26,11 @@ struct WasmValue {
         float f32;
         double f64;
 
-        constexpr ValueUnion() noexcept : i32(0) {}
-        constexpr ValueUnion(int32_t val) noexcept : i32(val) {}
+        // デフォルトコンストラクタ: i64で8バイト全てをゼロ初期化
+        constexpr ValueUnion() noexcept : i64(0) {}
+        // i32コンストラクタ: ゼロ拡張してi64に格納し上位4バイトをゼロ保証
+        constexpr ValueUnion(int32_t val) noexcept
+            : i64(static_cast<int64_t>(static_cast<uint32_t>(val))) {}
         constexpr ValueUnion(int64_t val) noexcept : i64(val) {}
         constexpr ValueUnion(float val) noexcept : f32(val) {}
         constexpr ValueUnion(double val) noexcept : f64(val) {}
@@ -58,8 +63,8 @@ struct HostApiEntry {
 
 // WASM関数シグネチャの定義（ベアメタル上の制限に準拠した上限付き静的配列）
 struct WasmTypeSignature {
-    static constexpr std::size_t kMaxParams = 8;
-    static constexpr std::size_t kMaxResults = 4;
+    static constexpr std::size_t kMaxParams = 128;
+    static constexpr std::size_t kMaxResults = 128;
     
     uint32_t param_count;
     uint32_t result_count;
