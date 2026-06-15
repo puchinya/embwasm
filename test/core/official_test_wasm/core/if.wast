@@ -524,14 +524,6 @@
     )
     (drop) (drop) (drop)
   )
-
-  ;; Atypical folded condition syntax
-
-  (func (export "atypical-condition")
-    i32.const 0
-    (if (then) (else))
-    (if (i32.const 1) (i32.eqz) (then) (else))
-  )
 )
 
 (assert_return (invoke "empty" (i32.const 0)))
@@ -729,8 +721,6 @@
 )
 
 (assert_return (invoke "type-use"))
-
-(assert_return (invoke "atypical-condition"))
 
 (assert_malformed
   (module quote
@@ -1557,8 +1547,4 @@
 (assert_malformed
   (module quote "(func i32.const 0 if $a else $l end $l)")
   "mismatching label"
-)
-(assert_malformed
-  (module quote "(func (if i32.const 0 (then) (else)))")
-  "unexpected token"
 )

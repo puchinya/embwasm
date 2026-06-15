@@ -182,9 +182,9 @@
   (func (export "break-br_table-num") (param i32) (result i32)
     (br_table 0 0 (i32.const 50) (local.get 0)) (i32.const 51)
   )
-  (func (export "break-br_table-num-num") (param i32) (result f32 i64)
-    (br_table 0 0 (f32.const 50) (i64.const 51) (local.get 0))
-    (f32.const 51) (i64.const 52)
+  (func (export "break-br_table-num-num") (param i32) (result i32 i64)
+    (br_table 0 0 (i32.const 50) (i64.const 51) (local.get 0))
+    (i32.const 51) (i64.const 52)
   )
   (func (export "break-br_table-nested-empty") (param i32)
     (block (br_table 0 1 0 (local.get 0)))
@@ -353,16 +353,16 @@
 (assert_return (invoke "break-br_table-num" (i32.const 10)) (i32.const 50))
 (assert_return (invoke "break-br_table-num" (i32.const -100)) (i32.const 50))
 (assert_return (invoke "break-br_table-num-num" (i32.const 0))
-  (f32.const 50) (i64.const 51)
+  (i32.const 50) (i64.const 51)
 )
 (assert_return (invoke "break-br_table-num-num" (i32.const 1))
-  (f32.const 50) (i64.const 51)
+  (i32.const 50) (i64.const 51)
 )
 (assert_return (invoke "break-br_table-num-num" (i32.const 10))
-  (f32.const 50) (i64.const 51)
+  (i32.const 50) (i64.const 51)
 )
 (assert_return (invoke "break-br_table-num-num" (i32.const -100))
-  (f32.const 50) (i64.const 51)
+  (i32.const 50) (i64.const 51)
 )
 (assert_return (invoke "break-br_table-nested-empty" (i32.const 0)))
 (assert_return (invoke "break-br_table-nested-empty" (i32.const 1)))
@@ -627,19 +627,6 @@
   "inline function type"
 )
 
-(assert_invalid
-  (module (func $g (type 4)))
-  "unknown type"
-)
-(assert_invalid
-  (module
-    (func $f (drop (ref.func $g)))
-    (func $g (type 4))
-    (elem declare func $g)
-  )
-  "unknown type"
-)
-
 
 ;; Invalid typing of locals
 
@@ -654,14 +641,6 @@
 (assert_invalid
   (module (func $type-local-num-vs-num (local f64 i64) (f64.neg (local.get 1))))
   "type mismatch"
-)
-
-(assert_invalid
-  (module
-    (type $t (func))
-    (func $type-local-uninitialized (local $x (ref $t)) (drop (local.get $x)))
-  )
-  "uninitialized local"
 )
 
 
@@ -961,28 +940,22 @@
 
 ;; Duplicate name errors
 
-(assert_malformed
-  (module quote "(func $foo)" "(func $foo)")
-  "duplicate func"
-)
-(assert_malformed
-  (module quote "(import \"\" \"\" (func $foo))" "(func $foo)")
-  "duplicate func"
-)
-(assert_malformed
-  (module quote "(import \"\" \"\" (func $foo))" "(import \"\" \"\" (func $foo))")
-  "duplicate func"
-)
+(assert_malformed (module quote
+  "(func $foo)"
+  "(func $foo)")
+  "duplicate func")
+(assert_malformed (module quote
+  "(import \"\" \"\" (func $foo))"
+  "(func $foo)")
+  "duplicate func")
+(assert_malformed (module quote
+  "(import \"\" \"\" (func $foo))"
+  "(import \"\" \"\" (func $foo))")
+  "duplicate func")
 
-(assert_malformed
-  (module quote "(func (param $foo i32) (param $foo i32))")
-  "duplicate local"
-)
-(assert_malformed
-  (module quote "(func (param $foo i32) (local $foo i32))")
-  "duplicate local"
-)
-(assert_malformed
-  (module quote "(func (local $foo i32) (local $foo i32))")
-  "duplicate local"
-)
+(assert_malformed (module quote "(func (param $foo i32) (param $foo i32))")
+  "duplicate local")
+(assert_malformed (module quote "(func (param $foo i32) (local $foo i32))")
+  "duplicate local")
+(assert_malformed (module quote "(func (local $foo i32) (local $foo i32))")
+  "duplicate local")
