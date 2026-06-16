@@ -343,6 +343,9 @@ WasmResult WasmEngine::Load(const uint8_t* binary, std::size_t size) noexcept {
     WasmResult res = ParseSections(binary + 8, size - 8);
     if (res != WasmResult::kOk) return res;
 
+    // 事前検査: 型整合性、ローカル変数数、ラベル深度、スタック消費量
+    res = Validate();
+    if (res != WasmResult::kOk) return res;
 
     // Start 関数の実行
     if (start_function_index_ != -1) {
@@ -364,6 +367,370 @@ WasmResult WasmEngine::Load(const uint8_t* binary, std::size_t size) noexcept {
 
         if (res != WasmResult::kOk) {
             return res;
+        }
+    }
+
+    return WasmResult::kOk;
+}
+
+// =============================================================================
+// 事前検査 (Validate / ValidateFunctionBody)
+// Load() から ParseSections() 完了後に呼ばれる。
+// 検査内容:
+//   1. 全関数の type_index が signature_count_ 内に収まること (型整合性)
+//   2. 各内部関数の total_locals (引数 + ローカル変数) が kMaxLocals 以下であること
+//   3. 各内部関数のバイトコードを線形スキャンし、
+//      最大ラベルネスト深度が kMaxLabels 以下であること
+//      最大スタック深度が kWasmStackSize 以下であること
+//      local.get/set/tee のインデックスが total_locals 内に収まること
+//      global.get/set のインデックスが global_count_ 内に収まること
+//      call/call_indirect の関数・型インデックスが有効範囲内であること
+// 算出した max_label_depth / max_stack_depth は WasmFunction::InternalFunc に格納する。
+// =============================================================================
+
+WasmResult WasmEngine::ValidateFunctionBody(uint32_t func_idx) noexcept {
+    WasmFunction& func = functions_[func_idx];
+    if (func.is_import) return WasmResult::kOk;
+
+    if (func.type_index >= signature_count_) return WasmResult::kErrorValidationFailed;
+    const WasmTypeSignature& sig = signatures_[func.type_index];
+
+    uint32_t total_locals = sig.param_count + func.internal_func.local_count;
+    // total_locals の上限チェックはここでは行わない。
+    // Engine全体で共有 Locals プールをフレームごとに切り出す設計へ移行予定のため。
+
+    const uint8_t* ip    = func.internal_func.code_ptr;
+    const uint8_t* limit = ip + func.internal_func.code_size;
+
+    // ラベルスタック (バリデーション専用)
+    // [0] = 関数全体の暗黙ブロック、[1..] = ネストされたブロック
+    struct ValLabel {
+        int32_t  stack_at_entry; // ブロック進入時のスタック深度
+        uint32_t result_count;   // ブロックが生成する値の数
+    };
+    // kMaxLabels + 1 個確保: 関数ブロック(index 0) + ネスト最大(index 1..kMaxLabels-1)
+    ValLabel val_labels[kMaxLabels + 1];
+    uint32_t label_top      = 1;
+    uint32_t max_label_depth = 1;
+    val_labels[0] = {0, sig.result_count}; // 関数全体の暗黙ブロック
+
+    int32_t stack_depth     = 0;
+    int32_t max_stack_depth = 0;
+
+    while (ip < limit) {
+        if (stack_depth > max_stack_depth) max_stack_depth = stack_depth;
+
+        uint8_t op = *ip++;
+        switch (op) {
+            case 0x00: // unreachable
+            case 0x01: // nop
+                break;
+
+            case 0x02: // block
+            case 0x03: { // loop
+                int32_t block_type = DecodeVarInt32(ip, limit);
+                uint32_t param_count  = 0;
+                uint32_t result_count = 0;
+                if (block_type >= 0) {
+                    uint32_t bt = static_cast<uint32_t>(block_type);
+                    if (bt < signature_count_) {
+                        param_count  = signatures_[bt].param_count;
+                        result_count = signatures_[bt].result_count;
+                    }
+                } else if (block_type >= -17 && block_type <= -1) {
+                    result_count = 1;
+                }
+                if (label_top >= kMaxLabels) return WasmResult::kErrorValidationFailed;
+                int32_t entry = stack_depth - static_cast<int32_t>(param_count);
+                if (entry < 0) entry = 0;
+                val_labels[label_top++] = {entry, result_count};
+                if (label_top > max_label_depth) max_label_depth = label_top;
+                break;
+            }
+
+            case 0x04: { // if
+                int32_t block_type = DecodeVarInt32(ip, limit);
+                uint32_t result_count = 0;
+                if (block_type >= 0) {
+                    uint32_t bt = static_cast<uint32_t>(block_type);
+                    if (bt < signature_count_) {
+                        result_count = signatures_[bt].result_count;
+                    }
+                } else if (block_type >= -17 && block_type <= -1) {
+                    result_count = 1;
+                }
+                if (stack_depth > 0) stack_depth--; // 条件値をポップ
+                if (label_top >= kMaxLabels) return WasmResult::kErrorValidationFailed;
+                val_labels[label_top++] = {stack_depth, result_count};
+                if (label_top > max_label_depth) max_label_depth = label_top;
+                break;
+            }
+
+            case 0x05: // else: then-ブランチ終了 → スタックをif進入時の深度に戻す
+                if (label_top > 0) stack_depth = val_labels[label_top - 1].stack_at_entry;
+                break;
+
+            case 0x0B: { // end
+                if (label_top > 0) {
+                    const ValLabel& lbl = val_labels[--label_top];
+                    stack_depth = lbl.stack_at_entry + static_cast<int32_t>(lbl.result_count);
+                }
+                break;
+            }
+
+            case 0x0C: // br
+                DecodeVarUint32(ip, limit);
+                // 無条件分岐後はポリモーフィック: スタックは保守的にそのまま維持
+                break;
+
+            case 0x0D: // br_if
+                DecodeVarUint32(ip, limit);
+                if (stack_depth > 0) stack_depth--;
+                break;
+
+            case 0x0E: { // br_table
+                uint32_t target_count = DecodeVarUint32(ip, limit);
+                for (uint32_t i = 0; i <= target_count; ++i) DecodeVarUint32(ip, limit);
+                if (stack_depth > 0) stack_depth--;
+                break;
+            }
+
+            case 0x0F: // return: ポリモーフィック
+                break;
+
+            case 0x10: { // call
+                uint32_t fidx = DecodeVarUint32(ip, limit);
+                if (fidx >= function_count_) return WasmResult::kErrorValidationFailed;
+                uint32_t ti = functions_[fidx].type_index;
+                if (ti >= signature_count_) return WasmResult::kErrorValidationFailed;
+                stack_depth -= static_cast<int32_t>(signatures_[ti].param_count);
+                if (stack_depth < 0) stack_depth = 0;
+                stack_depth += static_cast<int32_t>(signatures_[ti].result_count);
+                break;
+            }
+
+            case 0x11: { // call_indirect
+                uint32_t type_idx = DecodeVarUint32(ip, limit);
+                if (ip < limit) ip++; // table_idx (1 byte)
+                if (type_idx >= signature_count_) return WasmResult::kErrorValidationFailed;
+                if (stack_depth > 0) stack_depth--; // 要素インデックスをポップ
+                stack_depth -= static_cast<int32_t>(signatures_[type_idx].param_count);
+                if (stack_depth < 0) stack_depth = 0;
+                stack_depth += static_cast<int32_t>(signatures_[type_idx].result_count);
+                break;
+            }
+
+            case 0x1A: // drop
+                if (stack_depth > 0) stack_depth--;
+                break;
+
+            case 0x1B: // select
+                if (stack_depth >= 2) stack_depth -= 2; else stack_depth = 0;
+                break;
+
+            case 0x1C: { // select t*
+                uint32_t tc = DecodeVarUint32(ip, limit);
+                if (tc <= static_cast<uint32_t>(limit - ip)) ip += tc; else ip = limit;
+                if (stack_depth >= 2) stack_depth -= 2; else stack_depth = 0;
+                break;
+            }
+
+            case 0x20: { // local.get
+                uint32_t lidx = DecodeVarUint32(ip, limit);
+                if (lidx >= total_locals) return WasmResult::kErrorValidationFailed;
+                stack_depth++;
+                break;
+            }
+            case 0x21: { // local.set
+                uint32_t lidx = DecodeVarUint32(ip, limit);
+                if (lidx >= total_locals) return WasmResult::kErrorValidationFailed;
+                if (stack_depth > 0) stack_depth--;
+                break;
+            }
+            case 0x22: { // local.tee
+                uint32_t lidx = DecodeVarUint32(ip, limit);
+                if (lidx >= total_locals) return WasmResult::kErrorValidationFailed;
+                break;
+            }
+            case 0x23: { // global.get
+                uint32_t gidx = DecodeVarUint32(ip, limit);
+                if (gidx >= global_count_) return WasmResult::kErrorValidationFailed;
+                stack_depth++;
+                break;
+            }
+            case 0x24: { // global.set
+                uint32_t gidx = DecodeVarUint32(ip, limit);
+                if (gidx >= global_count_) return WasmResult::kErrorValidationFailed;
+                if (stack_depth > 0) stack_depth--;
+                break;
+            }
+
+            case 0x25: // table.get: pop idx, push ref → net 0
+                DecodeVarUint32(ip, limit);
+                break;
+            case 0x26: // table.set: pop idx + ref → -2
+                DecodeVarUint32(ip, limit);
+                if (stack_depth >= 2) stack_depth -= 2; else stack_depth = 0;
+                break;
+
+            // Memory loads: align + offset immediates, pop addr push value → net 0
+            case 0x28: case 0x29: case 0x2A: case 0x2B:
+            case 0x2C: case 0x2D: case 0x2E: case 0x2F:
+            case 0x30: case 0x31: case 0x32: case 0x33:
+            case 0x34: case 0x35:
+                DecodeVarUint32(ip, limit); // align
+                DecodeVarUint32(ip, limit); // offset
+                break;
+
+            // Memory stores: align + offset immediates, pop addr + value → -2
+            case 0x36: case 0x37: case 0x38: case 0x39:
+            case 0x3A: case 0x3B: case 0x3C: case 0x3D: case 0x3E:
+                DecodeVarUint32(ip, limit);
+                DecodeVarUint32(ip, limit);
+                if (stack_depth >= 2) stack_depth -= 2; else stack_depth = 0;
+                break;
+
+            case 0x3F: // memory.size: push size → +1
+                if (ip < limit) ip++;
+                stack_depth++;
+                break;
+            case 0x40: // memory.grow: pop count, push old_size → net 0
+                if (ip < limit) ip++;
+                break;
+
+            case 0x41: DecodeVarInt32(ip, limit);  stack_depth++; break; // i32.const
+            case 0x42: DecodeVarInt64(ip, limit);  stack_depth++; break; // i64.const
+            case 0x43: // f32.const
+                if (static_cast<uint32_t>(limit - ip) >= 4) ip += 4;
+                stack_depth++;
+                break;
+            case 0x44: // f64.const
+                if (static_cast<uint32_t>(limit - ip) >= 8) ip += 8;
+                stack_depth++;
+                break;
+
+            // 単項演算・型変換: net 0
+            case 0x45: // i32.eqz
+            case 0x50: // i64.eqz
+            case 0x67: case 0x68: case 0x69: // i32 clz/ctz/popcnt
+            case 0x79: case 0x7A: case 0x7B: // i64 clz/ctz/popcnt
+            case 0x8B: case 0x8C: case 0x8D: case 0x8E: case 0x8F: case 0x90: case 0x91: // f32 unary
+            case 0x99: case 0x9A: case 0x9B: case 0x9C: case 0x9D: case 0x9E: case 0x9F: // f64 unary
+            case 0xA7: case 0xA8: case 0xA9: case 0xAA: case 0xAB: // i32.trunc_f*
+            case 0xAC: case 0xAD: // i64.extend_i32_s/u
+            case 0xAE: case 0xAF: case 0xB0: case 0xB1: // i64.trunc_f*
+            case 0xB2: case 0xB3: case 0xB4: case 0xB5: // f32.convert_i*
+            case 0xB6: // f32.demote_f64
+            case 0xB7: case 0xB8: case 0xB9: case 0xBA: // f64.convert_i*
+            case 0xBB: // f64.promote_f32
+            case 0xBC: case 0xBD: case 0xBE: case 0xBF: // reinterpret
+            case 0xC0: case 0xC1: case 0xC2: case 0xC3: case 0xC4: // sign extension
+            case 0xD1: // ref.is_null
+                break;
+
+            // 二項演算・比較: net -1
+            case 0x46: case 0x47: case 0x48: case 0x49: case 0x4A: case 0x4B:
+            case 0x4C: case 0x4D: case 0x4E: case 0x4F: // i32 compare
+            case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: case 0x56:
+            case 0x57: case 0x58: case 0x59: case 0x5A: // i64 compare
+            case 0x5B: case 0x5C: case 0x5D: case 0x5E: case 0x5F: case 0x60: // f32 compare
+            case 0x61: case 0x62: case 0x63: case 0x64: case 0x65: case 0x66: // f64 compare
+            case 0x6A: case 0x6B: case 0x6C: case 0x6D: case 0x6E: case 0x6F:
+            case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75:
+            case 0x76: case 0x77: case 0x78: // i32 binary
+            case 0x7C: case 0x7D: case 0x7E: case 0x7F: case 0x80: case 0x81:
+            case 0x82: case 0x83: case 0x84: case 0x85: case 0x86: case 0x87:
+            case 0x88: case 0x89: case 0x8A: // i64 binary
+            case 0x92: case 0x93: case 0x94: case 0x95: case 0x96: case 0x97: case 0x98: // f32 binary
+            case 0xA0: case 0xA1: case 0xA2: case 0xA3: case 0xA4: case 0xA5: case 0xA6: // f64 binary
+                if (stack_depth > 0) stack_depth--;
+                break;
+
+            case 0xD0: // ref.null
+                DecodeVarInt32(ip, limit); // heap type
+                stack_depth++;
+                break;
+            case 0xD2: // ref.func
+                DecodeVarUint32(ip, limit);
+                stack_depth++;
+                break;
+
+            case 0xFC: { // 拡張命令
+                uint32_t sub_op = DecodeVarUint32(ip, limit);
+                if (sub_op <= 7) {
+                    // 飽和トランケーション (0-7): 単項変換 net 0
+                } else if (sub_op == 8 || sub_op == 12) {
+                    // memory.init / table.init: 2 immediates, net -3
+                    DecodeVarUint32(ip, limit);
+                    DecodeVarUint32(ip, limit);
+                    if (stack_depth >= 3) stack_depth -= 3; else stack_depth = 0;
+                } else if (sub_op == 9 || sub_op == 13) {
+                    // data.drop / elem.drop: 1 immediate, net 0
+                    DecodeVarUint32(ip, limit);
+                } else if (sub_op == 10) {
+                    // memory.copy: 2 immediates (dst_mem, src_mem), net -3
+                    DecodeVarUint32(ip, limit);
+                    DecodeVarUint32(ip, limit);
+                    if (stack_depth >= 3) stack_depth -= 3; else stack_depth = 0;
+                } else if (sub_op == 11) {
+                    // memory.fill: 1 immediate (mem_idx), net -3
+                    DecodeVarUint32(ip, limit);
+                    if (stack_depth >= 3) stack_depth -= 3; else stack_depth = 0;
+                } else if (sub_op == 14) {
+                    // table.copy: 2 immediates, net -3
+                    DecodeVarUint32(ip, limit);
+                    DecodeVarUint32(ip, limit);
+                    if (stack_depth >= 3) stack_depth -= 3; else stack_depth = 0;
+                } else if (sub_op == 15) {
+                    // table.grow: 1 immediate, pop ref + count push old_size → net -1
+                    DecodeVarUint32(ip, limit);
+                    if (stack_depth >= 1) stack_depth -= 1; else stack_depth = 0;
+                } else if (sub_op == 16) {
+                    // table.size: 1 immediate, push size → net +1
+                    DecodeVarUint32(ip, limit);
+                    stack_depth++;
+                } else if (sub_op == 17) {
+                    // table.fill: 1 immediate, net -3
+                    DecodeVarUint32(ip, limit);
+                    if (stack_depth >= 3) stack_depth -= 3; else stack_depth = 0;
+                } else {
+                    return WasmResult::kErrorValidationFailed;
+                }
+                break;
+            }
+
+            default:
+                return WasmResult::kErrorValidationFailed;
+        }
+    }
+
+    if (stack_depth > max_stack_depth) max_stack_depth = stack_depth;
+
+    // 制限超過チェック (スキャン中に既にチェック済みだが念のため)
+    if (max_label_depth > kMaxLabels)   return WasmResult::kErrorValidationFailed;
+    if (max_stack_depth > static_cast<int32_t>(kWasmStackSize))
+                                         return WasmResult::kErrorValidationFailed;
+
+    // 算出値を関数メンバーに記録
+    func.internal_func.max_label_depth = max_label_depth;
+    func.internal_func.max_stack_depth = static_cast<uint32_t>(max_stack_depth < 0 ? 0 : max_stack_depth);
+
+    return WasmResult::kOk;
+}
+
+WasmResult WasmEngine::Validate() noexcept {
+    // 1. 型インデックスの整合性チェック (全関数)
+    for (std::size_t i = 0; i < function_count_; ++i) {
+        if (functions_[i].type_index >= signature_count_) {
+            return WasmResult::kErrorValidationFailed;
+        }
+    }
+
+    // 2. 各内部関数のバイトコード検査
+    for (std::size_t i = 0; i < function_count_; ++i) {
+        if (!functions_[i].is_import) {
+            WasmResult r = ValidateFunctionBody(static_cast<uint32_t>(i));
+            if (r != WasmResult::kOk) return r;
         }
     }
 
@@ -1053,9 +1420,6 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
             }
             const WasmTypeSignature& sig = signatures_[initial_func->type_index];
             uint32_t total_locals = sig.param_count + initial_func->internal_func.local_count;
-            if (total_locals > kMaxLocals) {
-                return WasmResult::kErrorOutOfMemory;
-            }
 
             WasmFrame& frame = ctx_->call_stack[ctx_->call_stack_top++];
             if (ctx_->call_stack_top > max_call_stack_depth_) {
@@ -1065,7 +1429,18 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
             frame.ip = initial_func->internal_func.code_ptr;
             frame.limit = initial_func->internal_func.code_ptr + initial_func->internal_func.code_size;
             frame.total_locals = total_locals;
-            frame.label_stack_top = 0; // ラベルスタックを初期化
+            frame.label_stack_top = 0;
+
+            // ローカル変数プールからスライスを切り出す
+            if (ctx_->locals_pool_top + total_locals > kLocalsPoolSize) {
+                --ctx_->call_stack_top;
+                return WasmResult::kErrorOutOfMemory;
+            }
+            frame.locals = ctx_->locals_pool + ctx_->locals_pool_top;
+            ctx_->locals_pool_top += total_locals;
+            for (uint32_t i = 0; i < total_locals; ++i) {
+                frame.locals[i] = WasmValue{};
+            }
 
             // 関数全体の暗黙の block ラベルを追加
             {
@@ -1079,13 +1454,8 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
 
             // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
             if (ctx_->stack_top < sig.param_count) {
-                // ここでエラーにならず、単にlocalsを0クリアして続行する
-                // (スレッド起動時は引数がない場合があるため)
                 for (uint32_t i = 0; i < sig.param_count; ++i) {
-                    WasmValue val = {};
-                    val.type = sig.params[i];
-                    val.value.i64 = 0;
-                    frame.locals[i] = val;
+                    frame.locals[i].type = sig.params[i];
                 }
             } else {
                 for (uint32_t i = 0; i < sig.param_count; ++i) {
@@ -1093,13 +1463,11 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                 }
             }
 
-            // 残りのローカル変数の型と初期値(0)の設定
-            for (uint32_t i = sig.param_count; i < total_locals; ++i) {
-                WasmType ltype = initial_func->internal_func.local_types[i - sig.param_count];
-                WasmValue val = {};
-                val.type = ltype;
-                val.value.i64 = 0;
-                frame.locals[i] = val;
+            // 残りのローカル変数の型を設定 (値はゼロ初期化済み)
+            if (initial_func->internal_func.local_types) {
+                for (uint32_t i = sig.param_count; i < total_locals; ++i) {
+                    frame.locals[i].type = initial_func->internal_func.local_types[i - sig.param_count];
+                }
             }
         }
     }
@@ -1436,12 +1804,11 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         break;
                     }
                     // 関数の終了 (end で label_stack_top == 0、または return)
+                    ctx_->locals_pool_top -= frame.total_locals;
                     if (ctx_->call_stack_top > 0) {
-                        // ExecuteInternal の最上位呼び出しでない場合
                         --ctx_->call_stack_top;
                         goto frame_changed;
                     } else {
-                        // ExecuteInternal の最上位が終了した
                         return WasmResult::kOk;
                     }
 
@@ -1503,9 +1870,6 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         }
                         const WasmTypeSignature& sig = signatures_[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->internal_func.local_count;
-                        if (target_total_locals > kMaxLocals) {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
 
                         // 遷移前に現在のフレームのIPを書き戻す
                         frame.ip = ip;
@@ -1519,6 +1883,17 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         new_frame.limit = target_func->internal_func.code_ptr + target_func->internal_func.code_size;
                         new_frame.total_locals = target_total_locals;
                         new_frame.label_stack_top = 0;
+
+                        // ローカル変数プールからスライスを切り出す
+                        if (ctx_->locals_pool_top + target_total_locals > kLocalsPoolSize) {
+                            --ctx_->call_stack_top;
+                            return WasmResult::kErrorOutOfMemory;
+                        }
+                        new_frame.locals = ctx_->locals_pool + ctx_->locals_pool_top;
+                        ctx_->locals_pool_top += target_total_locals;
+                        for (uint32_t i = 0; i < target_total_locals; ++i) {
+                            new_frame.locals[i] = WasmValue{};
+                        }
 
                         if (ctx_->stack_top < sig.param_count) {
                             return WasmResult::kErrorRuntimeError;
@@ -1537,12 +1912,10 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                             func_label.pc = new_frame.limit;
                         }
 
-                        for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
-                            WasmType ltype = target_func->internal_func.local_types[i - sig.param_count];
-                            WasmValue val = {};
-                            val.type = ltype;
-                            val.value.i64 = 0;
-                            new_frame.locals[i] = val;
+                        if (target_func->internal_func.local_types) {
+                            for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
+                                new_frame.locals[i].type = target_func->internal_func.local_types[i - sig.param_count];
+                            }
                         }
                         goto frame_changed;
                     }
@@ -1617,7 +1990,6 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         if (target_func->type_index >= signature_count_) return WasmResult::kErrorRuntimeError;
                         const WasmTypeSignature& sig = signatures_[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->internal_func.local_count;
-                        if (target_total_locals > kMaxLocals) return WasmResult::kErrorOutOfMemory;
 
                         frame.ip = ip;
 
@@ -1628,6 +2000,17 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                         new_frame.limit = target_func->internal_func.code_ptr + target_func->internal_func.code_size;
                         new_frame.total_locals = target_total_locals;
                         new_frame.label_stack_top = 0;
+
+                        // ローカル変数プールからスライスを切り出す
+                        if (ctx_->locals_pool_top + target_total_locals > kLocalsPoolSize) {
+                            --ctx_->call_stack_top;
+                            return WasmResult::kErrorOutOfMemory;
+                        }
+                        new_frame.locals = ctx_->locals_pool + ctx_->locals_pool_top;
+                        ctx_->locals_pool_top += target_total_locals;
+                        for (uint32_t i = 0; i < target_total_locals; ++i) {
+                            new_frame.locals[i] = WasmValue{};
+                        }
 
                         if (ctx_->stack_top < sig.param_count) return WasmResult::kErrorRuntimeError;
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
@@ -1644,12 +2027,10 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
                             func_label.pc = new_frame.limit;
                         }
 
-                        for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
-                            WasmType ltype = target_func->internal_func.local_types[i - sig.param_count];
-                            WasmValue val = {};
-                            val.type = ltype;
-                            val.value.i64 = 0;
-                            new_frame.locals[i] = val;
+                        if (target_func->internal_func.local_types) {
+                            for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
+                                new_frame.locals[i].type = target_func->internal_func.local_types[i - sig.param_count];
+                            }
                         }
                         goto frame_changed;
                     }
@@ -2830,6 +3211,7 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
         // 関数の末尾に達した場合は暗黙のリターン
         frame.ip = ip;
         if (ctx_->call_stack_top > 0) {
+            ctx_->locals_pool_top -= frame.total_locals;
             --ctx_->call_stack_top;
         }
 

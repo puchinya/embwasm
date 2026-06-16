@@ -23,7 +23,7 @@ struct WasmFrame {
     const WasmFunction* func;
     const uint8_t* ip;
     const uint8_t* limit;
-    WasmValue locals[kMaxLocals];
+    WasmValue* locals;      // WasmThreadContext::locals_pool 内のスライスへのポインタ
     uint32_t total_locals;
 
     // ラベルスタック（制御フロー用）
@@ -43,7 +43,7 @@ enum class ThreadState : uint8_t {
 struct WasmThreadContext {
     uint32_t id;
     ThreadState state;
-    
+
     // データスタック
     WasmValue stack[kWasmStackSize];
     std::size_t stack_top;
@@ -52,12 +52,17 @@ struct WasmThreadContext {
     WasmFrame call_stack[kWasmCallStackSize];
     std::size_t call_stack_top;
 
+    // ローカル変数プール（全フレームで共有。フレームごとに必要数を切り出す）
+    WasmValue locals_pool[kLocalsPoolSize];
+    std::size_t locals_pool_top; // 現在の使用済み先頭インデックス
+
     // 待ちイベントID（kWaiting時のみ有効）
     uint32_t wait_event_id;
 
     void Reset() noexcept {
         id = 0;
         state = ThreadState::kTerminated;
+        locals_pool_top = 0;
     }
 };
 

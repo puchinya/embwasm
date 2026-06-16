@@ -45,6 +45,7 @@ enum class WasmResult : uint8_t {
     kErrorInvalidVersion,
     kErrorUnknownSection,
     kErrorOutOfMemory,
+    kErrorValidationFailed, // 事前検査失敗（型不整合・制限超過）
     kErrorFunctionNotFound,
     kErrorStackOverflow,
     kErrorRuntimeError

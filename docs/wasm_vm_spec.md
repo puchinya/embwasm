@@ -114,7 +114,55 @@ WasmResult WasmEngine::ExecuteInternal(uint32_t func_index) noexcept {
   - 最上位フレームが終了した場合は `WasmResult::kOk` を返します。
   - 呼び出し元に戻る場合は `goto frame_changed;` で呼び出し元の状態を再ロードします。
 
-## 5. マルチスレッドと Yield (協調的マルチタスク)
+## 5. 事前検査 (Pre-Validation)
+
+`Load()` は `ParseSections()` 完了後、Start 関数の実行前に `Validate()` を呼び出す。
+実行時エラーをロード時に早期検出することで、リソース制約の厳しい環境における安全性を高める。
+
+### 5.1 検査フロー
+
+```
+Load()
+ └─ ParseSections()   // セクションを解析し関数・シグネチャ等を確定
+ └─ Validate()        // 事前検査（以下を順に実施）
+     ├─ 全関数の type_index が signature_count_ 未満であること
+     └─ 各内部関数について ValidateFunctionBody()
+         ├─ バイトコードを線形スキャン:
+         │   ├─ ラベルネスト深度の追跡 → 最大値を max_label_depth に記録
+         │   ├─ データスタック深度のシミュレーション → 最大値を max_stack_depth に記録
+         │   ├─ local.get/set/tee のインデックスが total_locals 未満
+         │   ├─ global.get/set のインデックスが global_count_ 未満
+         │   └─ call/call_indirect の関数・型インデックスが有効範囲内
+         └─ max_label_depth ≤ kMaxLabels かつ max_stack_depth ≤ kWasmStackSize
+ └─ Start 関数の実行
+```
+
+### 5.2 スタック深度シミュレーション
+
+バイトコードを線形スキャンしながら `stack_depth` を整数カウンタで管理する。
+制御フロー分岐（`br`, `return`）後の到達不能コードについては保守的にカウンタをそのまま維持する（過大評価になるが安全側に倒れる）。
+
+ブロック構造 (`block`/`loop`/`if`) の進入・退出では、ラベルスタック（`ValLabel` 配列）を用いて
+進入時のスタック深度と期待される結果数を記録し、`end` / `else` で正確に復元する。
+
+### 5.3 算出値の保存先
+
+`ValidateFunctionBody()` が算出した値は `WasmFunction::InternalFunc` のメンバーに格納する:
+
+| フィールド | 意味 |
+|---|---|
+| `local_count` | 関数内で宣言されたローカル変数数 (引数を除く) |
+| `max_label_depth` | ラベルスタックの最大深度（関数ブロック = 深度 1 を含む） |
+| `max_stack_depth` | データスタックの最大深度（バイトコード線形スキャンで得た上界） |
+
+### 5.4 失敗コード
+
+検査に失敗した場合 `WasmResult::kErrorValidationFailed` を返す。
+`Load()` はこれを呼び出し元に伝播させ、以降の Start 関数実行は行わない。
+
+---
+
+## 6. マルチスレッドと Yield (協調的マルチタスク)
 マルチスレッドが有効（`EMBWASM_ENABLE_MULTITHREADING`）な場合、インタプリタはスレッドの一時中断（Yield）をサポートします。
 - ホストAPI（スレッド同期、スリープ等）が `WasmResult::kYield` を返すと、インタプリタは現在のフレーム状態（`ip`等）を保存した上で、`ExecuteInternal` から一旦リターンします。
 - スケジューラ（`WasmScheduler`）がスレッドを切り替えて実行し、再度対象スレッドの実行順が回ってきたときに、再び `ExecuteInternal` が呼ばれて中断した `ip` から実行を再開します。

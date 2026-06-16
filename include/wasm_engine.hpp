@@ -15,6 +15,8 @@ struct WasmFunction {
         uint32_t code_size;
         uint32_t local_count;
         const WasmType* local_types;
+        uint32_t max_label_depth; // Validate()で算出: 必要な最大ラベルスタック深度（関数ブロック含む）
+        uint32_t max_stack_depth; // Validate()で算出: 必要な最大データスタック深度
     };
     bool is_import;
     uint32_t type_index;
@@ -106,6 +108,10 @@ private:
 #endif
 
     WasmResult ParseSections(const uint8_t* binary, std::size_t size) noexcept;
+
+    // 事前検査: ParseSections後にLoad内で呼び出す
+    WasmResult Validate() noexcept;
+    WasmResult ValidateFunctionBody(uint32_t func_idx) noexcept;
 
     // ロード済みモジュールのプール確保メモリを個別解放するヘルパー
     void FreeLoadedModule() noexcept;
