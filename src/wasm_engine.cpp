@@ -54,17 +54,61 @@ static inline uint32_t PopCount64(uint64_t v) noexcept {
     return PopCount32(static_cast<uint32_t>(v & 0xFFFFFFFFULL)) + PopCount32(static_cast<uint32_t>(v >> 32));
 }
 
+#if defined(__arm__) || defined(__thumb__) || defined(__ARM_ARCH_7M__) || defined(__ARM_ARCH_7EM__)
+// ARM Thumb-2 / Cortex-M: ROR 命令を使用（ROTL は符号反転シフトで実現）
 static inline uint32_t Rotl32(uint32_t x, uint32_t y) noexcept {
-    y &= 31;
-    if (y == 0) return x;
-    return (x << y) | (x >> (32 - y));
+    uint32_t result;
+    uint32_t shift = (-y) & 31u;
+    __asm__ volatile ("ror %0, %1, %2" : "=r"(result) : "r"(x), "r"(shift));
+    return result;
 }
-
 static inline uint32_t Rotr32(uint32_t x, uint32_t y) noexcept {
-    y &= 31;
-    if (y == 0) return x;
-    return (x >> y) | (x << (32 - y));
+    uint32_t result;
+    __asm__ volatile ("ror %0, %1, %2" : "=r"(result) : "r"(x), "r"(y));
+    return result;
 }
+#elif defined(__aarch64__)
+// AArch64: 32 ビット ROR 命令（%w 修飾子で Wn レジスタを指定）
+static inline uint32_t Rotl32(uint32_t x, uint32_t y) noexcept {
+    uint32_t result;
+    uint32_t shift = (-y) & 31u;
+    __asm__ volatile ("ror %w0, %w1, %w2" : "=r"(result) : "r"(x), "r"(shift));
+    return result;
+}
+static inline uint32_t Rotr32(uint32_t x, uint32_t y) noexcept {
+    uint32_t result;
+    __asm__ volatile ("ror %w0, %w1, %w2" : "=r"(result) : "r"(x), "r"(y));
+    return result;
+}
+#elif defined(__i386__) || defined(__x86_64__)
+// x86/x86_64: ROL / ROR 命令（シフト量は CL レジスタ経由）
+static inline uint32_t Rotl32(uint32_t x, uint32_t y) noexcept {
+    __asm__ volatile ("roll %%cl, %0" : "+r"(x) : "c"(y));
+    return x;
+}
+static inline uint32_t Rotr32(uint32_t x, uint32_t y) noexcept {
+    __asm__ volatile ("rorl %%cl, %0" : "+r"(x) : "c"(y));
+    return x;
+}
+#elif defined(_MSC_VER)
+// MSVC: _rotl / _rotr 組み込み関数
+static inline uint32_t Rotl32(uint32_t x, uint32_t y) noexcept {
+    return _rotl(x, static_cast<int>(y));
+}
+static inline uint32_t Rotr32(uint32_t x, uint32_t y) noexcept {
+    return _rotr(x, static_cast<int>(y));
+}
+#else
+// ソフトウェアフォールバック（GCC/Clang はローテートイディオムを最適化）
+static inline uint32_t Rotl32(uint32_t x, uint32_t y) noexcept {
+    y &= 31u;
+    return (x << y) | (x >> ((-y) & 31u));
+}
+static inline uint32_t Rotr32(uint32_t x, uint32_t y) noexcept {
+    y &= 31u;
+    return (x >> y) | (x << ((-y) & 31u));
+}
+#endif
 
 static inline uint64_t Rotl64(uint64_t x, uint64_t y) noexcept {
     y &= 63;
