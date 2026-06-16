@@ -136,7 +136,8 @@ public:
     int64_t  to_i64(WasmValue val) { (void)val; return 0; }
     float    to_f32(WasmValue val) { (void)val; return 0.0f; }
     double   to_f64(WasmValue val) { (void)val; return 0.0; }
-    bool     is_nan(WasmValue val) { (void)val; return false; }
+    bool     is_nan_f32(WasmValue val) { (void)val; return false; }
+    bool     is_nan_f64(WasmValue val) { (void)val; return false; }
     
     uint32_t to_f32_bits(WasmValue val) { (void)val; return 0; }
     uint64_t to_f64_bits(WasmValue val) { (void)val; return 0; }
@@ -281,7 +282,7 @@ def process_combined_assets(input_dir, output_dir):
                                 test_lines.append(f'        WasmValue result = {invoke_call};')
                                 if "f32" in exp_type or "f64" in exp_type:
                                     if "nan" in str(exp['value']).lower():
-                                        test_lines.append(f'        EXPECT_TRUE(interpreter.is_nan(result));')
+                                        test_lines.append(f'        EXPECT_TRUE(interpreter.is_nan_{exp_type}(result));')
                                     elif "uint" in exp_val or "inf" in str(exp['value']).lower():
                                         test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.to_{exp_type}_bits(result));')
                                     else:

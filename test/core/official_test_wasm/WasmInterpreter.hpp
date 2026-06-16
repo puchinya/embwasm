@@ -184,22 +184,20 @@ public:
     double to_f64(WasmValue val) {
         return val.value.f64;
     }
-    bool is_nan(WasmValue val) {
-        if (val.type == embwasm::WasmType::kF32) {
-            uint32_t bits = *reinterpret_cast<uint32_t*>(&val.value);
+    bool is_nan_f32(WasmValue val) {
+        uint32_t bits = *reinterpret_cast<uint32_t*>(&val.value);
 
-            // 指数部(8bit)がすべて1: 0x7f800000
-            // 仮数部(23bit)が0以外: & 0x007fffff != 0
-            return ((bits & 0x7F800000) == 0x7F800000) && ((bits & 0x007FFFFF) != 0);
-        }
-        if (val.type == embwasm::WasmType::kF64) {uint64_t bits = *reinterpret_cast<uint64_t*>(&val.value);
+        // 指数部(8bit)がすべて1: 0x7f800000
+        // 仮数部(23bit)が0以外: & 0x007fffff != 0
+        return ((bits & 0x7F800000) == 0x7F800000) && ((bits & 0x007FFFFF) != 0);
+    }
 
-            // 指数部(11bit)がすべて1: 0x7ff0000000000000
-            // 仮数部(52bit)が0以外: & 0x000fffffffffffff != 0
-            return ((bits & 0x7FF0000000000000) == 0x7FF0000000000000) && ((bits & 0x000FFFFFFFFFFFFF) != 0);
-        }
+    bool is_nan_f64(WasmValue val) {
+        uint64_t bits = *reinterpret_cast<uint64_t*>(&val.value);
 
-        return false;
+        // 指数部(11bit)がすべて1: 0x7ff0000000000000
+        // 仮数部(52bit)が0以外: & 0x000fffffffffffff != 0
+        return ((bits & 0x7FF0000000000000) == 0x7FF0000000000000) && ((bits & 0x000FFFFFFFFFFFFF) != 0);
     }
 
     // ★生ビットパターン検証用にテストコード側から安全に覗き込むためのブリッジ
