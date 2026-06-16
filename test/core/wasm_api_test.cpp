@@ -25,7 +25,7 @@ TEST(WasmApiStaticTest, AllFunctions) {
     EXPECT_EQ(not_found, embwasm::HostFunctionId::kInvalid);
 
     // 3. ディスパッチャの直接呼び出し検証
-    embwasm::WasmValue args[1] = {{embwasm::WasmType::kI32, {99}}};
+    embwasm::WasmValue args[1] = {embwasm::WasmValue::FromI32(99)};
     embwasm::g_print_val_called = false;
     embwasm::g_last_printed_value = 0;
     
@@ -86,8 +86,8 @@ TEST(WasmApiStaticTest, StdioPrintfAndPuts) {
     std::memcpy(mem + str_addr, test_str, str_len);
 
     embwasm::WasmValue puts_args[2] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(str_addr)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(str_len)}}
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(str_addr)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(str_len))
     };
     embwasm::WasmValue puts_results[1] = {};
 
@@ -98,7 +98,6 @@ TEST(WasmApiStaticTest, StdioPrintfAndPuts) {
         puts_results, 1
     );
     EXPECT_EQ(res_puts, embwasm::WasmResult::kOk);
-    EXPECT_EQ(puts_results[0].type, embwasm::WasmType::kI32);
     EXPECT_GT(puts_results[0].value.i32, 0);
 
     // 2. Printf テスト
@@ -119,10 +118,10 @@ TEST(WasmApiStaticTest, StdioPrintfAndPuts) {
     std::memcpy(mem + list_addr, printf_list_args, sizeof(printf_list_args));
 
     embwasm::WasmValue printf_args[4] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_addr)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_len)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(list_addr)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(3)}} // 要素数 3
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_addr)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_len)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(3)) // 要素数 3
     };
 
     embwasm::WasmResult res_printf = embwasm::DispatchHostFunction(

@@ -17,7 +17,7 @@ WasmResult ThreadSpawn(
     WasmValue* results, 
     uint32_t result_count) noexcept 
 {
-    if (arg_count < 1 || args[0].type != WasmType::kI32) {
+    if (arg_count < 1) {
         return WasmResult::kErrorRuntimeError;
     }
 
@@ -60,7 +60,6 @@ WasmResult ThreadSpawn(
     
     // WASM側のシグネチャに合わせて戻り値をセット（呼び出し側が値を期待している場合）
     if (result_count > 0) {
-        results[0].type = WasmType::kI32;
         results[0].value.i32 = static_cast<int32_t>(thread_id);
     }
 
@@ -90,7 +89,7 @@ WasmResult EventWait(
     uint32_t result_count) noexcept 
 {
     (void)results; (void)result_count;
-    if (arg_count < 1 || args[0].type != WasmType::kI32) {
+    if (arg_count < 1) {
         return WasmResult::kErrorRuntimeError;
     }
 
@@ -116,7 +115,7 @@ WasmResult EventSignal(
     uint32_t result_count) noexcept 
 {
     (void)results; (void)result_count;
-    if (arg_count < 1 || args[0].type != WasmType::kI32) {
+    if (arg_count < 1) {
         return WasmResult::kErrorRuntimeError;
     }
 

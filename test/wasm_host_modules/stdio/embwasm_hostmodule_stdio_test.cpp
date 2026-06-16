@@ -66,8 +66,8 @@ TEST_F(WasmHostModuleStdioTest, PutsExecution) {
     std::memcpy(mem_ + addr, msg, len);
 
     embwasm::WasmValue args[2] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(addr)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(len)}}
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(addr)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(len))
     };
     embwasm::WasmValue results[1] = {};
 
@@ -78,13 +78,12 @@ TEST_F(WasmHostModuleStdioTest, PutsExecution) {
         results, 1
     );
     EXPECT_EQ(res, embwasm::WasmResult::kOk);
-    EXPECT_EQ(results[0].type, embwasm::WasmType::kI32);
     EXPECT_EQ(results[0].value.i32, static_cast<int32_t>(len + 1)); // 成功時は出力文字数(改行含む)
 
     // 異常系: 線形メモリ範囲外のポインタ指定
     embwasm::WasmValue oob_args[2] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(mem_size_ - 5)}},
-        {embwasm::WasmType::kI32, {10}} // 5バイト分はみ出す
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(mem_size_ - 5)),
+        embwasm::WasmValue::FromI32(10) // 5バイト分はみ出す
     };
     embwasm::WasmResult res_oob = embwasm::DispatchHostFunction(
         engine_,
@@ -115,10 +114,10 @@ TEST_F(WasmHostModuleStdioTest, PrintfExecution) {
     std::memcpy(mem_ + list_addr, list_data, sizeof(list_data));
 
     embwasm::WasmValue args[4] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_addr)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_len)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(list_addr)}},
-        {embwasm::WasmType::kI32, {4}} // 要素数 4
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_addr)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_len)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr)),
+        embwasm::WasmValue::FromI32(4) // 要素数 4
     };
 
     embwasm::WasmResult res = embwasm::DispatchHostFunction(
@@ -144,10 +143,10 @@ TEST_F(WasmHostModuleStdioTest, PrintfOmissionAndOOB) {
     std::memcpy(mem_ + list_addr, list_data, sizeof(list_data));
 
     embwasm::WasmValue args[4] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_addr)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(fmt_len)}},
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(list_addr)}},
-        {embwasm::WasmType::kI32, {1}} // 要素数 1
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_addr)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_len)),
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr)),
+        embwasm::WasmValue::FromI32(1) // 要素数 1
     };
 
     // %f は引数を消費しない（スキップされる）ため、%d が 123 を消費して正常終了するはず
@@ -161,10 +160,10 @@ TEST_F(WasmHostModuleStdioTest, PrintfOmissionAndOOB) {
 
     // 異常系: 線形メモリ範囲外のフォーマット文字列を指定
     embwasm::WasmValue oob_args[4] = {
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(mem_size_ - 2)}},
-        {embwasm::WasmType::kI32, {5}}, // はみ出し
-        {embwasm::WasmType::kI32, {static_cast<int32_t>(list_addr)}},
-        {embwasm::WasmType::kI32, {1}}
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(mem_size_ - 2)),
+        embwasm::WasmValue::FromI32(5), // はみ出し
+        embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr)),
+        embwasm::WasmValue::FromI32(1)
     };
     embwasm::WasmResult res_oob = embwasm::DispatchHostFunction(
         engine_,

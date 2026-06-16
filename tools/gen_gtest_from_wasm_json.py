@@ -177,9 +177,7 @@ def process_combined_assets(input_dir, output_dir):
     json_count = 0
 
     SKIP_SUITES = {
-        "bulk", "table_init", "table_copy", "table_grow", "table_fill", "table_size", "table_set", "table_get",
-        "memory_copy", "memory_fill", "memory_init", "ref_func", "ref_is_null", "ref_null",
-        "linking", "imports", "elem", "data"
+        "linking"
     }
 
     for root, dirs, files in os.walk(input_dir):

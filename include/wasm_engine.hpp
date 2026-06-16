@@ -24,6 +24,9 @@ struct WasmFunction {
         HostFunctionId host_func_id;
         InternalFunc internal_func;
     };
+    // モジュール間リンク用
+    class WasmEngine* link_engine;
+    const char* link_field_name;
 };
 
 // グローバル変数を表す構造体
@@ -37,7 +40,8 @@ struct WasmGlobal {
 struct WasmExportEntry {
     const char* name;
     std::size_t name_len;
-    uint32_t func_index;
+    uint8_t kind; // 0=Func, 1=Table, 2=Mem, 3=Global
+    uint32_t index;
 };
 
 // ベアメタル環境向け極小WASM実行エンジン
@@ -137,11 +141,29 @@ private:
     uint8_t* linear_memory_ptr_;
     std::size_t linear_memory_size_;
     uint32_t max_linear_memory_pages_; // メモリセクションで指定された最大ページ数(0=制限なし)
+    bool is_memory_shared_;
 
     // 間接関数テーブル (Table section / Element section)
     uint32_t* tables_[kMaxTables];
     std::size_t table_sizes_[kMaxTables];
+    uint32_t table_max_sizes_[kMaxTables];
+    WasmType table_types_[kMaxTables];
     std::size_t table_count_;
+    bool is_table_shared_[kMaxTables];
+
+    // バルクメモリ用セグメント情報
+    static constexpr std::size_t kMaxDataSegments = 256;
+    static constexpr std::size_t kMaxElemSegments = 256;
+
+    const uint8_t* data_segments_[kMaxDataSegments];
+    uint32_t data_segment_sizes_[kMaxDataSegments];
+    bool data_segment_dropped_[kMaxDataSegments];
+    std::size_t data_segment_count_;
+
+    uint32_t* elem_segments_[kMaxElemSegments];
+    uint32_t elem_segment_sizes_[kMaxElemSegments];
+    bool elem_segment_dropped_[kMaxElemSegments];
+    std::size_t elem_segment_count_;
 
     // 開始関数インデックス（Start section）
     int32_t start_function_index_;

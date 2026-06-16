@@ -17,24 +17,22 @@ enum class WasmType : uint8_t {
     kVoid    = 0x40
 };
 
-// WASM値のコンテナ（タグ付き共用体）
+// WASM値のコンテナ（型タグなし生ビット列）
+// 型はバイトコード上の命令が静的に決定するため、値に型タグを持たない。
 struct WasmValue {
-    WasmType type;
-    union ValueUnion {
+    union {
         int32_t i32;
         int64_t i64;
         float f32;
         double f64;
-
-        // デフォルトコンストラクタ: i64で8バイト全てをゼロ初期化
-        constexpr ValueUnion() noexcept : i64(0) {}
-        // i32コンストラクタ: ゼロ拡張してi64に格納し上位4バイトをゼロ保証
-        constexpr ValueUnion(int32_t val) noexcept
-            : i64(static_cast<int64_t>(static_cast<uint32_t>(val))) {}
-        constexpr ValueUnion(int64_t val) noexcept : i64(val) {}
-        constexpr ValueUnion(float val) noexcept : f32(val) {}
-        constexpr ValueUnion(double val) noexcept : f64(val) {}
     } value;
+
+    WasmValue() noexcept { value.i64 = 0; }
+
+    static WasmValue FromI32(int32_t v) noexcept { WasmValue r; r.value.i32 = v; return r; }
+    static WasmValue FromI64(int64_t v) noexcept { WasmValue r; r.value.i64 = v; return r; }
+    static WasmValue FromF32(float v) noexcept { WasmValue r; r.value.f32 = v; return r; }
+    static WasmValue FromF64(double v) noexcept { WasmValue r; r.value.f64 = v; return r; }
 };
 
 // WASMエンジン実行結果のステータスコード

@@ -16,10 +16,7 @@ WasmResult Printf(
     (void)results; (void)result_count;
     // fmt (string) -> ptr, len (2 arguments)
     // args (list<s32>) -> ptr, len (2 arguments)
-    if (arg_count < 4 || 
-        args[0].type != WasmType::kI32 || args[1].type != WasmType::kI32 ||
-        args[2].type != WasmType::kI32 || args[3].type != WasmType::kI32) 
-    {
+    if (arg_count < 4) {
         return WasmResult::kErrorRuntimeError;
     }
 
@@ -150,7 +147,7 @@ WasmResult Puts(
     uint32_t result_count) noexcept
 {
     // s (string) -> ptr, len (2 arguments)
-    if (arg_count < 2 || args[0].type != WasmType::kI32 || args[1].type != WasmType::kI32) {
+    if (arg_count < 2) {
         return WasmResult::kErrorRuntimeError;
     }
 
@@ -173,7 +170,6 @@ WasmResult Puts(
     std::fflush(stdout);
 
     if (result_count >= 1) {
-        results[0].type = WasmType::kI32;
         results[0].value.i32 = static_cast<int32_t>(str_len + 1);
     }
 

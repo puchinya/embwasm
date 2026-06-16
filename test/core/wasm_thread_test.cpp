@@ -83,7 +83,7 @@ TEST_F(WasmThreadTest, WaitSignaledEvent) {
 }
 
 TEST_F(WasmThreadTest, ThreadSpawnApi) {
-    WasmValue args[1] = {{WasmType::kI32, {10}}}; // func_idx = 10
+    WasmValue args[1] = {embwasm::WasmValue::FromI32(10)}; // func_idx = 10
     WasmValue results[1];
     WasmResult res = hostmodules::thread::ThreadSpawn(engine, args, 1, results, 1);
     
@@ -100,7 +100,7 @@ TEST_F(WasmThreadTest, EventWaitSignalApi) {
     (void)scheduler.CreateThread(0);
     uint32_t eid = scheduler.CreateEvent();
     
-    WasmValue args[1] = {{WasmType::kI32, {static_cast<int32_t>(eid)}}};
+    WasmValue args[1] = {embwasm::WasmValue::FromI32(static_cast<int32_t>(eid))};
     WasmResult res = hostmodules::thread::EventWait(engine, args, 1, nullptr, 0);
     
     EXPECT_EQ(res, WasmResult::kYield);

@@ -20,7 +20,7 @@ WasmResult PrintVal(
     (void)results;
     (void)result_count;
 
-    if (arg_count < 1 || args[0].type != WasmType::kI32) {
+    if (arg_count < 1) {
         return WasmResult::kErrorRuntimeError;
     }
 
@@ -40,7 +40,7 @@ WasmResult PrintChar(
     (void)results;
     (void)result_count;
 
-    if (arg_count < 1 || args[0].type != WasmType::kI32) {
+    if (arg_count < 1) {
         return WasmResult::kErrorRuntimeError;
     }
 

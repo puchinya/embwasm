@@ -218,7 +218,7 @@ WasmResult SocketCreate(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = handle;
     return WasmResult::kOk;
 }
@@ -242,7 +242,7 @@ WasmResult SocketClose(WasmEngine& engine,
         FreeHandle(handle);
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -276,7 +276,7 @@ WasmResult SocketBind(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -301,7 +301,7 @@ WasmResult SocketListen(WasmEngine& engine,
         ret = PlatformSocketListen(ps, backlog);
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -348,7 +348,7 @@ WasmResult SocketAccept(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = new_handle;
     return WasmResult::kOk;
 }
@@ -382,7 +382,7 @@ WasmResult SocketConnect(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -417,7 +417,7 @@ WasmResult SocketSend(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -452,7 +452,7 @@ WasmResult SocketRecv(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -493,7 +493,7 @@ WasmResult SocketSendTo(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -537,7 +537,7 @@ WasmResult SocketRecvFrom(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -572,7 +572,7 @@ WasmResult SocketSetOpt(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -611,7 +611,7 @@ WasmResult SocketGetOpt(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -635,7 +635,7 @@ WasmResult SocketSetNonBlocking(WasmEngine& engine,
         ret = PlatformSocketSetNonBlocking(ps, nonblocking);
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -660,7 +660,7 @@ WasmResult SocketPoll(WasmEngine& engine,
         ret = PlatformSocketPoll(ps, events, timeout_ms);
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = ret;
     return WasmResult::kOk;
 }
@@ -698,7 +698,7 @@ WasmResult InetAddr(WasmEngine& engine,
         }
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = static_cast<int32_t>(addr);
     return WasmResult::kOk;
 }
@@ -715,7 +715,7 @@ WasmResult HostToNetShort(WasmEngine& engine,
 
     const uint16_t host_short =
         static_cast<uint16_t>(args[0].value.i32 & 0xFFFF);
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 =
         static_cast<int32_t>(PlatformHostToNetShort(host_short));
     return WasmResult::kOk;
@@ -733,7 +733,7 @@ WasmResult NetToHostShort(WasmEngine& engine,
 
     const uint16_t net_short =
         static_cast<uint16_t>(args[0].value.i32 & 0xFFFF);
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 =
         static_cast<int32_t>(PlatformNetToHostShort(net_short));
     return WasmResult::kOk;
@@ -749,7 +749,7 @@ WasmResult SocketGetLastError(WasmEngine& engine,
         return WasmResult::kErrorRuntimeError;
     }
 
-    results[0].type = WasmType::kI32;
+    
     results[0].value.i32 = PlatformSocketGetLastError();
     return WasmResult::kOk;
 }

@@ -5,12 +5,6 @@
 #include <string>
 #include "embwasm.hpp"
 
-// インタプリタ内部で使う真のデータ構造（テストコードには見せない）
-struct MyInternalValue {
-    int64_t raw_bits;
-    uint8_t type_tag;
-};
-
 // テストコード側が使うエイリアス。値型として扱えるように実体をバッファにする
 
 using WasmValue = embwasm::WasmValue;
@@ -35,6 +29,17 @@ private:
 
 public:
     WasmInterpreter() {
+        // spectest モック用のダミーモジュールをロード
+        static const uint8_t spectest_wasm[] = {
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // magic & version
+            0x04, 0x05, 0x01, 0x70, 0x01, 0x0a, 0x14,       // table section (funcref, min 10, max 20)
+            0x05, 0x04, 0x01, 0x01, 0x01, 0x02,             // memory section (min 1, max 2)
+            0x07, 0x12, 0x02,                               // export section (2 exports)
+              0x06, 'm', 'e', 'm', 'o', 'r', 'y', 0x02, 0x00, // "memory" (kind memory, index 0)
+              0x05, 't', 'a', 'b', 'l', 'e', 0x01, 0x00      // "table" (kind table, index 0)
+        };
+        loadModule(spectest_wasm, sizeof(spectest_wasm));
+
         // デフォルトのモジュールを1つ用意しておく
         ModuleInstance* inst = new ModuleInstance();
         active_module_ = inst;
@@ -66,20 +71,19 @@ public:
 
     // 値型を安全に生成する各種ファクトリ
     WasmValue create_i32(int32_t val) {
-        return { embwasm::WasmType::kI32, val };
+        WasmValue _v; _v.value.i32 = val; return _v;
     }
     WasmValue create_i64(int64_t val) {
-        return { embwasm::WasmType::kI64, val };
+        WasmValue _v; _v.value.i64 = val; return _v;
     }
     WasmValue create_f32(float val) {
-        return { embwasm::WasmType::kF32, val };
+        WasmValue _v; _v.value.f32 = val; return _v;
     }
     WasmValue create_f64(double val) {
-        return { embwasm::WasmType::kF64, val };
+        WasmValue _v; _v.value.f64 = val; return _v;
     }
     WasmValue create_f32_nan(uint32_t bit_pattern) {
         WasmValue val = {};
-        val.type = embwasm::WasmType::kF32;
 
         *reinterpret_cast<uint32_t*>(&val.value) = bit_pattern;
 
@@ -87,7 +91,6 @@ public:
     }
     WasmValue create_f64_nan(uint64_t bit_pattern) {
         WasmValue val = {};
-        val.type = embwasm::WasmType::kF64;
 
         *reinterpret_cast<uint64_t*>(&val.value) = bit_pattern;
 
@@ -97,7 +100,6 @@ public:
     // 生ビットパターンから直接浮動小数点数（NaN等含む）を作るための拡張関数
     WasmValue create_f32_bits(uint32_t bits) {
         WasmValue val = {};
-        val.type = embwasm::WasmType::kF32;
 
         *reinterpret_cast<uint32_t*>(&val.value) = bits;
 
@@ -105,22 +107,29 @@ public:
     }
     WasmValue create_f64_bits(uint64_t bits) {
         WasmValue val = {};
-        val.type = embwasm::WasmType::kF64;
 
         *reinterpret_cast<uint64_t*>(&val.value) = bits;
 
         return val;
     }
 
+    WasmValue create_externref(std::nullptr_t) {
+        WasmValue v = {};
+        v.value.i64 = -1;
+        return v;
+    }
     WasmValue create_externref(const void* val) {
         WasmValue v = {};
-        v.type = embwasm::WasmType::kExternRef;
         v.value.i64 = reinterpret_cast<int64_t>(val);
+        return v;
+    }
+    WasmValue create_funcref(std::nullptr_t) {
+        WasmValue v = {};
+        v.value.i64 = -1;
         return v;
     }
     WasmValue create_funcref(const void* val) {
         WasmValue v = {};
-        v.type = embwasm::WasmType::kFuncRef;
         v.value.i64 = reinterpret_cast<int64_t>(val);
         return v;
     }
@@ -154,6 +163,7 @@ public:
             embwasm::WasmResult run_res = target_inst->engine.Execute(func_name, name_len, args, args_count, &res, result_count);
             if (run_res != embwasm::WasmResult::kOk) {
                 std::printf("invoke failed with error code: %d\n", static_cast<int>(run_res));
+                res.value.i64 = -1LL;
             }
         }
         return res;
@@ -186,24 +196,23 @@ public:
     }
     bool is_nan_f32(WasmValue val) {
         uint32_t bits = *reinterpret_cast<uint32_t*>(&val.value);
-
-        // 指数部(8bit)がすべて1: 0x7f800000
-        // 仮数部(23bit)が0以外: & 0x007fffff != 0
         return ((bits & 0x7F800000) == 0x7F800000) && ((bits & 0x007FFFFF) != 0);
     }
 
     bool is_nan_f64(WasmValue val) {
         uint64_t bits = *reinterpret_cast<uint64_t*>(&val.value);
-
-        // 指数部(11bit)がすべて1: 0x7ff0000000000000
-        // 仮数部(52bit)が0以外: & 0x000fffffffffffff != 0
         return ((bits & 0x7FF0000000000000) == 0x7FF0000000000000) && ((bits & 0x000FFFFFFFFFFFFF) != 0);
     }
 
-    // ★生ビットパターン検証用にテストコード側から安全に覗き込むためのブリッジ
     uint32_t to_f32_bits(WasmValue val) { return val.value.i32; }
     uint64_t to_f64_bits(WasmValue val) { return val.value.i64; }
 
-    void* to_externref(WasmValue val) { return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64)); }
-    void* to_funcref(WasmValue val)   { return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64)); }
+    void* to_externref(WasmValue val) {
+        if (val.value.i64 == -1) return nullptr;
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64));
+    }
+    void* to_funcref(WasmValue val) {
+        if (val.value.i64 == -1) return nullptr;
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64));
+    }
 };
