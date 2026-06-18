@@ -88,7 +88,7 @@ private:
             0x02, 0x00, 0x0B,   // print_i32_f32
             0x02, 0x00, 0x0B,   // print_f64_f64
         };
-        engine_.Load("spectest", kSpectestWasm, sizeof(kSpectestWasm));
+        engine_.Load("spectest", 8, kSpectestWasm, sizeof(kSpectestWasm));
     }
 
 public:
@@ -113,17 +113,17 @@ public:
             std::strncpy(name, module_name, sizeof(name) - 1);
             name[sizeof(name) - 1] = '\0';
             // 同名モジュールが既にあれば置き換える
-            engine_.Unload(name);
+            engine_.Unload(name, std::strlen(name));
         } else {
             std::snprintf(name, sizeof(name), "mod%zu", load_count_++);
             // 前回の匿名モジュールをアンロード（registerされていなければ）
             if (current_anonymous_name_[0] != '\0') {
-                engine_.Unload(current_anonymous_name_);
+                engine_.Unload(current_anonymous_name_, std::strlen(current_anonymous_name_));
             }
             std::strncpy(current_anonymous_name_, name, sizeof(current_anonymous_name_) - 1);
             current_anonymous_name_[sizeof(current_anonymous_name_) - 1] = '\0';
         }
-        int32_t id = engine_.Load(name, bytes, size);
+        int32_t id = engine_.Load(name, std::strlen(name), bytes, size);
         if (id < 0) {
             std::printf("loadModule failed with error code: %d\n", -id);
             return false;
@@ -136,9 +136,11 @@ public:
     // アクティブモジュールにエイリアス名を登録
     void registerModule(const char* alias_name) {
         if (alias_name == nullptr || active_module_name_[0] == '\0') return;
-        engine_.RegisterAlias(active_module_name_, alias_name);
+        size_t active_len = std::strlen(active_module_name_);
+        engine_.RegisterAlias(active_module_name_, active_len, alias_name, std::strlen(alias_name));
         // registerされたので匿名モジュールとして追跡しない
-        if (std::strcmp(current_anonymous_name_, active_module_name_) == 0) {
+        size_t anon_len = std::strlen(current_anonymous_name_);
+        if (anon_len == active_len && std::memcmp(current_anonymous_name_, active_module_name_, active_len) == 0) {
             current_anonymous_name_[0] = '\0';
         }
     }
@@ -146,9 +148,11 @@ public:
     // 指定モジュールにエイリアス名を登録（register "$name" as "alias" の形式用）
     void registerModule(const char* real_name, const char* alias_name) {
         if (real_name == nullptr || alias_name == nullptr) return;
-        engine_.RegisterAlias(real_name, alias_name);
+        size_t real_len = std::strlen(real_name);
+        engine_.RegisterAlias(real_name, real_len, alias_name, std::strlen(alias_name));
         // registerされたので匿名モジュールとして追跡しない
-        if (std::strcmp(current_anonymous_name_, real_name) == 0) {
+        size_t anon_len = std::strlen(current_anonymous_name_);
+        if (anon_len == real_len && std::memcmp(current_anonymous_name_, real_name, real_len) == 0) {
             current_anonymous_name_[0] = '\0';
         }
     }
@@ -199,24 +203,25 @@ public:
     }
 
     WasmValue invoke_internal(const char* module_name, size_t module_name_len, const char* func_name, size_t func_name_len, const WasmValue* args, size_t args_count) {
-        (void)module_name_len;
         WasmValue res = {};
 
         // アクティブモジュールで検索、なければ全スロットを検索
         const char* target_module = module_name;
+        size_t target_module_len = module_name_len;
         if (target_module == nullptr) {
             target_module = active_module_name_;
+            target_module_len = std::strlen(active_module_name_);
         }
 
-        if (!target_module) {
+        if (!target_module || target_module_len == 0) {
             res.value.i64 = -1LL;
             return res;
         }
 
-        uint32_t result_count = engine_.GetExportFunctionResultCount(target_module, func_name, func_name_len);
+        uint32_t result_count = engine_.GetExportFunctionResultCount(target_module, target_module_len, func_name, func_name_len);
         if (result_count > 1) result_count = 1;
         embwasm::WasmResult run_res = engine_.Execute(
-            target_module, func_name, func_name_len, args,
+            target_module, target_module_len, func_name, func_name_len, args,
             static_cast<uint32_t>(args_count), &res, result_count);
         if (run_res != embwasm::WasmResult::kOk) {
             std::printf("invoke failed with error code: %d\n", static_cast<int>(run_res));

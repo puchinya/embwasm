@@ -71,6 +71,7 @@ struct WasmModuleInstance {
     bool is_active;
     bool imports_resolved; // Execute時に一度解決済みかのフラグ
     char name[64]; // モジュール名
+    std::size_t name_len; // モジュール名の長さ
 
     // 動的確保 (PreScanSections で確定したサイズをLoad時に確保)
     WasmTypeSignature* signatures;
@@ -134,74 +135,50 @@ public:
 
     // WASMバイナリ（バイト配列）の読み込みと解析
     // ロード後にインスタンスID (0以上) を返す。エラー時は負のエラーコードを返す。
-    int32_t Load(const char* module_name, const uint8_t* binary, std::size_t size) noexcept;
+    int32_t Load(const char* module_name, std::size_t module_name_len, const uint8_t* binary, std::size_t size) noexcept;
 
     // すべてのモジュールをアンロードして、メモリを解放する
     void UnloadAll() noexcept;
 
     // WASMバイナリのロード（後方互換API：最初の空きスロットに "default" として登録）
     WasmResult Load(const uint8_t* binary, std::size_t size) noexcept {
-        int32_t r = Load("default", binary, size);
+        int32_t r = Load("default", 7, binary, size);
         if (r >= 0) return WasmResult::kOk;
         return static_cast<WasmResult>(-r);
     }
 
     // エクスポートされた関数を実行する
-    WasmResult Execute(const char* module_name, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
-    WasmResult Execute(const char* module_name, const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+    WasmResult Execute(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
     // 後方互換API：最初のアクティブモジュールで実行
     WasmResult Execute(const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             if (modules_[i].is_active)
-                return Execute(modules_[i].name, name, name_len, args, arg_count, results, result_count);
-        }
-        return WasmResult::kErrorFunctionNotFound;
-    }
-    WasmResult Execute(const char* name, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
-                return Execute(modules_[i].name, name, args, arg_count, results, result_count);
+                return Execute(modules_[i].name, modules_[i].name_len, name, name_len, args, arg_count, results, result_count);
         }
         return WasmResult::kErrorFunctionNotFound;
     }
 
     // 関数名からインデックスを取得
-    int32_t GetExportFunctionIndex(const char* module_name, const char* name, std::size_t name_len) const noexcept;
-    int32_t GetExportFunctionIndex(const char* module_name, const char* name) const noexcept;
+    int32_t GetExportFunctionIndex(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len) const noexcept;
 
     // 後方互換API：最初のアクティブモジュールから検索
     int32_t GetExportFunctionIndex(const char* name, std::size_t name_len) const noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             if (modules_[i].is_active)
-                return GetExportFunctionIndex(modules_[i].name, name, name_len);
-        }
-        return -1;
-    }
-    int32_t GetExportFunctionIndex(const char* name) const noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
-                return GetExportFunctionIndex(modules_[i].name, name);
+                return GetExportFunctionIndex(modules_[i].name, modules_[i].name_len, name, name_len);
         }
         return -1;
     }
 
     // エクスポートされた関数の戻り値数を取得
-    uint32_t GetExportFunctionResultCount(const char* module_name, const char* name, std::size_t name_len) const noexcept;
-    uint32_t GetExportFunctionResultCount(const char* module_name, const char* name) const noexcept;
+    uint32_t GetExportFunctionResultCount(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len) const noexcept;
 
     // 後方互換API：最初のアクティブモジュールから検索
     uint32_t GetExportFunctionResultCount(const char* name, std::size_t name_len) const noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             if (modules_[i].is_active)
-                return GetExportFunctionResultCount(modules_[i].name, name, name_len);
-        }
-        return 0;
-    }
-    uint32_t GetExportFunctionResultCount(const char* name) const noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
-                return GetExportFunctionResultCount(modules_[i].name, name);
+                return GetExportFunctionResultCount(modules_[i].name, modules_[i].name_len, name, name_len);
         }
         return 0;
     }
@@ -291,8 +268,8 @@ public:
     WasmMemoryPool* GetMemoryPool() const noexcept { return pool_; }
 
     // 内部的なモジュール解決ヘルパー
-    WasmModuleInstance* GetModuleInstance(const char* name) noexcept;
-    const WasmModuleInstance* GetModuleInstance(const char* name) const noexcept;
+    WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) noexcept;
+    const WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) const noexcept;
     WasmModuleInstance* GetModuleInstanceById(int32_t id) noexcept {
         return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id].is_active) ? &modules_[id] : nullptr;
     }
@@ -301,10 +278,10 @@ public:
     }
 
     // モジュールをアンロード（名前で指定）
-    void Unload(const char* name) noexcept;
+    void Unload(const char* name, std::size_t name_len) noexcept;
 
     // モジュールに別名を登録（インポート解決で使用）
-    void RegisterAlias(const char* real_name, const char* alias_name) noexcept;
+    void RegisterAlias(const char* real_name, std::size_t real_name_len, const char* alias_name, std::size_t alias_name_len) noexcept;
 
 private:
     friend class WasmScheduler;
@@ -340,14 +317,16 @@ private:
     // エイリアス名 → 実モジュール名の対応表
     struct NameAlias {
         char alias[64];
+        std::size_t alias_len;
         char real[64];
+        std::size_t real_len;
     };
     static constexpr std::size_t kMaxAliases = 32;
     NameAlias name_aliases_[kMaxAliases];
     std::size_t name_alias_count_;
 
-    // エイリアスを考慮したモジュール名解決
-    const char* ResolveAlias(const char* name) const noexcept;
+    // エイリアスを考慮したモジュール名解決（out_len に解決後の長さを返す）
+    const char* ResolveAlias(const char* name, std::size_t name_len, std::size_t& out_len) const noexcept;
 
     WasmMemoryPool* pool_;
 

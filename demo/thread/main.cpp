@@ -27,7 +27,7 @@ int main() {
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
-    int32_t instance_id = engine.Load("main", kMainWasmBinary, kMainWasmBinarySize);
+    int32_t instance_id = engine.Load("main", 4, kMainWasmBinary, kMainWasmBinarySize);
     if (instance_id < 0) {
         std::cerr << "Failed to load WASM binary. Error code: " << instance_id << std::endl;
         return 1;
@@ -42,8 +42,8 @@ int main() {
 
     // 7. メインスレッドの作成
     std::cout << "\nStarting Scheduler with Multithreaded WASM..." << std::endl;
-    int32_t main_idx = engine.GetExportFunctionIndex("main", "main");
-    int32_t t2_idx = engine.GetExportFunctionIndex("main", "thread2");
+    int32_t main_idx = engine.GetExportFunctionIndex("main", 4, "main", 4);
+    int32_t t2_idx = engine.GetExportFunctionIndex("main", 4, "thread2", 7);
     
     if (main_idx < 0) {
         std::cerr << "Exported function 'main' not found." << std::endl;
@@ -62,7 +62,7 @@ int main() {
     // 単一スレッド実行
     std::cout << "\nExecuting WASM 'main' function..." << std::endl;
     embwasm::WasmValue results[1];
-    embwasm::WasmResult run_res = engine.Execute("main", "main", nullptr, 0, results, 0);
+    embwasm::WasmResult run_res = engine.Execute("main", 4, "main", 4, nullptr, 0, results, 0);
     if (run_res != embwasm::WasmResult::kOk) {
         std::cerr << "WASM execution failed. Error code: " << static_cast<int>(run_res) << std::endl;
         return 1;

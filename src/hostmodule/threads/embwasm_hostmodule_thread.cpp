@@ -43,9 +43,10 @@ WasmResult ThreadSpawn(
 
         // 文字列の終端を確認し、妥当な長さであることをチェック
         bool valid_string = false;
+        uint32_t func_name_len = 0;
         for (uint32_t i = 0; val + i < engine.GetLinearMemorySize(); ++i) {
             if (mem[val + i] == '\0') {
-                if (i > 0) valid_string = true;
+                if (i > 0) { valid_string = true; func_name_len = i; }
                 break;
             }
             // WASMの関数名として妥当でない文字が含まれている場合はスキップ
@@ -53,7 +54,7 @@ WasmResult ThreadSpawn(
         }
 
         if (valid_string && calling_mod) {
-            resolved_idx = engine.GetExportFunctionIndex(calling_mod->name, func_name);
+            resolved_idx = engine.GetExportFunctionIndex(calling_mod->name, calling_mod->name_len, func_name, func_name_len);
         }
     }
 
