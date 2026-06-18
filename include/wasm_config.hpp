@@ -23,6 +23,7 @@ constexpr std::size_t kMemoryPoolAlignment = 8;
 constexpr std::size_t kMaxLinearMemorySize = 256 * 1024; // 256 KB
 
 // サポートする最大WASM関数定義数
+constexpr std::size_t kMaxModules = 4;
 constexpr std::size_t kMaxWasmFunctions = 32;
 
 // サポートする最大WASMテーブル数

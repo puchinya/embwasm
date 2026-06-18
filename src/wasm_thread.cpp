@@ -42,6 +42,17 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
             
             // 最初の呼び出しのために実行準備
             threads_[i].wait_event_id = func_index;
+
+            // 呼び出し元のモジュールを記録（初回ExecuteInternal用）
+            {
+                WasmThreadContext* active_ctx = engine_.GetContext();
+                WasmModuleInstance* caller_mod = nullptr;
+                if (active_ctx && active_ctx->call_stack_top > 0) {
+                    const WasmFrame& top = active_ctx->call_stack[active_ctx->call_stack_top - 1];
+                    if (top.func) caller_mod = const_cast<WasmModuleInstance*>(top.func->module);
+                }
+                threads_[i].start_module = caller_mod;
+            }
             
             // 重要：ここで WasmEngine がこの新しいコンテキストを参照するようにする
             // 呼び出し元の Execute 内で引数を積むために必要。
@@ -131,10 +142,12 @@ WasmResult WasmScheduler::Step() noexcept {
                 // 初回実行。ExecuteInternal を使う場合、引数はスタックに積まれている必要がある。
                 // 現在の CreateThread 実装では引数をサポートしていないため、
                 // 内部関数の開始として func_index を指定する。
-                res = engine_.ExecuteInternal(ctx.wait_event_id);
+                res = engine_.ExecuteInternal(ctx.start_module, ctx.wait_event_id);
             } else {
-                // 再開（継続実行）
-                res = engine_.ExecuteInternal(0);
+                // 再開（継続実行）。コールスタックは残っているため、モジュールはトップフレームから取得。
+                WasmModuleInstance* resume_mod = const_cast<WasmModuleInstance*>(
+                    ctx.call_stack[ctx.call_stack_top - 1].func->module);
+                res = engine_.ExecuteInternal(resume_mod, 0);
             }
 
             if (res == WasmResult::kYield) {

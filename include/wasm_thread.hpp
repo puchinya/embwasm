@@ -8,6 +8,7 @@ namespace embwasm {
 
 class WasmEngine;
 struct WasmFunction;
+struct WasmModuleInstance;
 
 // 制御ブロックのラベル情報
 struct WasmLabel {
@@ -59,10 +60,14 @@ struct WasmThreadContext {
     // 待ちイベントID（kWaiting時のみ有効）
     uint32_t wait_event_id;
 
+    // スレッド開始モジュール（初回ExecuteInternal用）
+    WasmModuleInstance* start_module;
+
     void Reset() noexcept {
         id = 0;
         state = ThreadState::kTerminated;
         locals_pool_top = 0;
+        start_module = nullptr;
     }
 };
 

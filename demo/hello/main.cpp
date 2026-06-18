@@ -21,9 +21,9 @@ int main() {
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
-    embwasm::WasmResult load_res = engine.Load(kMainWasmBinary, kMainWasmBinarySize);
-    if (load_res != embwasm::WasmResult::kOk) {
-        std::cerr << "Failed to load WASM binary. Error code: " << static_cast<int>(load_res) << std::endl;
+    int32_t instance_id = engine.Load("main", kMainWasmBinary, kMainWasmBinarySize);
+    if (instance_id < 0) {
+        std::cerr << "Failed to load WASM binary. Error code: " << instance_id << std::endl;
         return 1;
     }
     std::cout << "WASM Loaded successfully." << std::endl;
@@ -31,9 +31,9 @@ int main() {
 
     // 6. エクスポートされた関数の実行
     std::cout << "\nExecuting Exported Function 'main'..." << std::endl;
-    
+
     // 文字出力関数によりコンソールへ "Hello\n" と出力されます
-    embwasm::WasmResult exec_res = engine.Execute("main", nullptr, 0, nullptr, 0);
+    embwasm::WasmResult exec_res = engine.Execute("main", "main", nullptr, 0, nullptr, 0);
     if (exec_res != embwasm::WasmResult::kOk) {
         std::cerr << "Failed to execute. Error code: " << static_cast<int>(exec_res) << std::endl;
         return 1;

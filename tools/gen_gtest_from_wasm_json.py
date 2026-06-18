@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import json
 import os
 import sys
@@ -209,6 +210,7 @@ def process_combined_assets(input_dir, output_dir):
 
                 local_wasm_map = {}
                 test_lines.append(f'TEST_F({suite_name}, RunSpecTests) {{')
+                test_lines.append(f'    interpreter.unloadAll();')
 
                 for cmd in data.get("commands", []):
                     line_num = cmd.get("line", 0)
@@ -232,8 +234,24 @@ def process_combined_assets(input_dir, output_dir):
                                 data_lines.append('')
 
                             var_name, size_name = local_wasm_map[wasm_filename]
+                            module_name = cmd.get("name")
+                            if module_name:
+                                name_arg = escape_wasm_string_literal(module_name)
+                            else:
+                                name_arg = "nullptr"
                             test_lines.append(f'    {{ // Line {line_num} (Load module {wasm_filename})')
-                            test_lines.append(f'        ASSERT_TRUE(interpreter.loadModule({var_name}, {size_name}));')
+                            test_lines.append(f'        ASSERT_TRUE(interpreter.loadModule({name_arg}, {var_name}, {size_name}));')
+                            test_lines.append(f'    }}')
+
+                    elif cmd_type == "register":
+                        as_name = cmd.get("as", "")
+                        module_name_ref = cmd.get("name")
+                        if as_name:
+                            test_lines.append(f'    {{ // Line {line_num} (Register as "{as_name}")')
+                            if module_name_ref:
+                                test_lines.append(f'        interpreter.registerModule({escape_wasm_string_literal(module_name_ref)}, {escape_wasm_string_literal(as_name)});')
+                            else:
+                                test_lines.append(f'        interpreter.registerModule({escape_wasm_string_literal(as_name)});')
                             test_lines.append(f'    }}')
 
                     elif cmd_type in ["assert_return", "action"]:
@@ -270,7 +288,12 @@ def process_combined_assets(input_dir, output_dir):
                             else:
                                 args_param, args_count_param = "nullptr", "0"
 
-                            invoke_call = f'interpreter.invoke({escaped_func_name}, {args_param}, {args_count_param})'
+                            action_module = action.get("module")
+                            if action_module:
+                                invoke_module_arg = escape_wasm_string_literal(action_module) + ", "
+                            else:
+                                invoke_module_arg = ""
+                            invoke_call = f'interpreter.invoke({invoke_module_arg}{escaped_func_name}, {args_param}, {args_count_param})'
 
                             if expected:
                                 exp = expected[0]
@@ -310,7 +333,7 @@ def process_combined_assets(input_dir, output_dir):
         f.write("\n".join(test_lines))
     print(f"生成: {cpp_path}")
 
-    print(f"\n[成功] nullptrの型ミスマッチを完全攻略したコードを生成しました。")
+    print(f"\n[成功]")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

@@ -28,11 +28,19 @@ WasmResult ThreadSpawn(
     // スケジューラからエンジンを取得してインデックスを解決
     int32_t resolved_idx = -1;
 
+    // 呼び出し元のモジュールを取得
+    WasmThreadContext* ctx = engine.GetContext();
+    WasmModuleInstance* calling_mod = nullptr;
+    if (ctx && ctx->call_stack_top > 0 && ctx->call_stack[ctx->call_stack_top - 1].func) {
+        calling_mod = const_cast<WasmModuleInstance*>(
+            ctx->call_stack[ctx->call_stack_top - 1].func->module);
+    }
+
     // 引数が文字列（ポインタ）として渡された場合を想定して解決を試みる
     uint8_t* mem = engine.GetLinearMemory();
     if (mem && val < engine.GetLinearMemorySize()) {
         const char* func_name = reinterpret_cast<const char*>(&mem[val]);
-        
+
         // 文字列の終端を確認し、妥当な長さであることをチェック
         bool valid_string = false;
         for (uint32_t i = 0; val + i < engine.GetLinearMemorySize(); ++i) {
@@ -44,14 +52,26 @@ WasmResult ThreadSpawn(
             if (mem[val + i] < 32 || mem[val + i] > 126) break;
         }
 
-        if (valid_string) {
-            resolved_idx = engine.GetExportFunctionIndex(func_name);
+        if (valid_string && calling_mod) {
+            resolved_idx = engine.GetExportFunctionIndex(calling_mod->name, func_name);
         }
     }
 
     // もし名前で見つからない場合は、エクスポートインデックスまたは直接の関数インデックスとして扱う（後方互換性）
     if (resolved_idx < 0) {
-        resolved_idx = engine.GetFunctionIndexByExportIndex(val);
+        // 呼び出し元モジュールのinstance_idを探す
+        int32_t calling_instance_id = -1;
+        if (calling_mod) {
+            for (int32_t m = 0; m < static_cast<int32_t>(kMaxModules); ++m) {
+                if (engine.GetModuleInstanceById(m) == calling_mod) {
+                    calling_instance_id = m;
+                    break;
+                }
+            }
+        }
+        if (calling_instance_id >= 0) {
+            resolved_idx = engine.GetFunctionIndexByExportIndex(calling_instance_id, val);
+        }
     }
     
     uint32_t func_idx = (resolved_idx >= 0) ? static_cast<uint32_t>(resolved_idx) : val;

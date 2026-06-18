@@ -1,6 +1,7 @@
 # Build directories
 cmake-build-*/
 build/
+/build*/
 
 # IDE files
 .idea/

@@ -1,175 +1,173 @@
 # Agent Instructions (AGENTS.md)
 
-このドキュメントは、このリポジトリを編集・拡張するAIエージェント（Antigravity等）に対する指示書です。
-コードの生成、リファクタリング、バグ修正などを行う際は、必ず以下の基本制約および詳細ルールを厳守してください。
+This document serves as an instruction manual for AI agents (such as Antigravity) that edit or extend this repository.  
+When generating code, refactoring, or fixing bugs, you must strictly adhere to the following basic constraints and detailed rules.
 
 ---
 
-## 1. プロジェクト概要
+## 1. Project Overview
 
-### 1.1 このリポジトリは何か？
+### 1.1 What is this repository?
 
-`embwasm` は、**Cortex-M シリーズなどのリソース制限の厳しいマイコン（ベアメタル環境）で WebAssembly (WASM) バイナリを実行するための C++11 極小ランタイムエンジン**です。
+`embwasm` is an **ultra-minimal WebAssembly (WASM) binary runtime engine written in C++11 for resource-constrained microcontrollers (bare-metal environments)**, such as the Cortex-M series.
 
-- **動的メモリ（ヒープ）割り当てゼロ**: `malloc` / `new` を一切使わず、静的メモリプールのみで動作します。
-- **STL・例外・RTTI 完全排除**: ベアメタルコンパイラの制約（`-fno-exceptions`, `-fno-rtti`）に完全準拠します。
-- **高速ホストAPIディスパッチ**: WIT (WebAssembly Interface Type) 設定に基づいてビルド時に C++ ルックアップテーブルを自動生成し、`switch` 文による直接呼び出しで $O(1)$ に近いディスパッチを実現します。
+* **Zero Dynamic Memory (Heap) Allocation**: Operates entirely within static memory pools without using `malloc` or `new` at all.
+* **Complete Elimination of STL, Exceptions, and RTTI**: Fully complies with bare-metal compiler constraints (`-fno-exceptions`, `-fno-rtti`).
+* **High-Speed Host API Dispatch**: Automatically generates a C++ lookup table at build time based on WIT (WebAssembly Interface Type) configurations, achieving near-$O(1)$ dispatch via direct `switch` statement calls.
 
-### 1.2 基本情報
+### 1.2 Basic Information
 
-| 項目 | 内容 |
+| Item | Content |
 |---|---|
-| **言語** | C++11 以上 |
-| **コーディングスタイル** | Google C++ Style Guide 準拠 |
-| **対応コンパイラ** | GCC, Clang |
-| **対応アーキテクチャ** | Cortex-M シリーズ, ARM/ARM64, x86, x86_64 |
-| **対応OS/RTOS** | macOS, Linux, Windows, FreeRTOS, uITRON |
-| **ビルドシステム** | CMake 3.11 以上 |
-| **名前空間** | `embwasm` |
+| **Language** | C++11 or higher |
+| **Coding Style** | Compliant with Google C++ Style Guide |
+| **Supported Compilers** | GCC, Clang |
+| **Supported Architectures** | Cortex-M series, ARM/ARM64, x86, x86_64 |
+| **Supported OS/RTOS** | macOS, Linux, Windows, FreeRTOS, uITRON |
+| **Build System** | CMake 3.11 or higher |
+| **Namespace** | `embwasm` |
 
 ---
 
-## 2. ディレクトリ構成とファイルマップ
+## 2. Directory Structure and File Map
 
-```
 embwasm/
-├── include/              # コアライブラリの公開ヘッダ群
-│   ├── embwasm.hpp         # 全ヘッダをまとめた単一インクルードエントリポイント
-│   ├── wasm_config.hpp     # constexpr による全エンジン設定定数（メモリプールサイズ等）
-│   ├── wasm_types.hpp      # 基本型定義 (WasmValue, WasmResult, WasmType 等)
-│   ├── wasm_api.hpp        # ホストAPI登録/ディスパッチのインタフェース宣言
-│   ├── wasm_memory_pool.hpp# 静的メモリプールクラスの宣言
-│   ├── wasm_engine.hpp     # WASMエンジン本体クラスの宣言
-│   └── wasm_platform.hpp   # プラットフォーム依存処理の抽象化（割り込み制御、CLZ命令等）
+├── include/              # Public headers for the core library
+│   ├── embwasm.hpp         # Single include entry point aggregating all headers
+│   ├── wasm_config.hpp     # All engine configuration constants via constexpr (memory pool size, etc.)
+│   ├── wasm_types.hpp      # Basic type definitions (WasmValue, WasmResult, WasmType, etc.)
+│   ├── wasm_api.hpp        # Interface declarations for Host API registration/dispatch
+│   ├── wasm_memory_pool.hpp# Declaration of the static memory pool class
+│   ├── wasm_engine.hpp     # Declaration of the core WASM engine class
+│   └── wasm_platform.hpp   # Abstraction of platform-dependent processing (interrupt control, CLZ instructions, etc.)
 │
-├── src/                  # コアライブラリの実装
-│   ├── wasm_engine.cpp   # WASMバイナリのパース・実行エンジン本体（最重要ファイル）
-│   ├── wasm_memory_pool.cpp # 静的メモリプールの実装
-│   └── hostmodule/       # ホストAPIモジュールの実装（threads等のコア組み込み用）
-│       └── threads/      # スレッド関連ホストAPI
+├── src/                  # Core library implementation
+│   ├── wasm_engine.cpp   # WASM binary parsing and execution engine body (Most Important File)
+│   ├── wasm_memory_pool.cpp # Implementation of the static memory pool
+│   └── hostmodule/       # Implementation of host API modules (for core built-ins like threads)
+│       └── threads/      # Thread-related host APIs
 │
-├── wasm_host_modules/    # 標準ホストAPIモジュールの定義とソース
-│   └── <module_name>/    # 各モジュールの wit ファイルと実装
+├── wasm_host_modules/    # Definitions and sources for standard host API modules
+│   └── <module_name>/    # wit files and implementations for each module
 │
-├── demo/                 # 動作確認用デモアプリケーション
-│   └── hello/            # WASMからホストAPIを呼び出すサンプル
+├── demo/                 # Demo applications for operation verification
+│   └── hello/            # Sample calling a host API from WASM
 │
-├── test/                 # 単体テストコードのベースディレクトリ
-│   └── core/             # コアエンジン・ライブラリの GoogleTest 単体テスト
+├── test/                 # Base directory for unit test code
+│   └── core/             # GoogleTest unit tests for the core engine and library
 │
-├── platform/             # プラットフォーム固有の実装
-│   ├── macos/            # macOS 向け割り込み制御実装
-│   ├── windows/          # Windows 向け割り込み制御実装
-│   ├── freertos/         # FreeRTOS 向け割り込み制御実装
-│   └── uitron/           # uITRON 向け割り込み制御実装
+├── platform/             # Platform-specific implementations
+│   ├── macos/            # Interrupt control implementation for macOS
+│   ├── windows/          # Interrupt control implementation for Windows
+│   ├── freertos/         # Interrupt control implementation for FreeRTOS
+│   └── uitron/           # Interrupt control implementation for uITRON
 │
 ├── tools/
 │   └── codegen/
-│       ├── gen_api.py    # WIT設定からホストAPIルックアップテーブルを自動生成するツール
-│       └── wasm_to_cpp.py# WASMバイナリをC++バイト配列に変換するユーティリティ
+│       ├── gen_api.py    # Tool to automatically generate host API lookup tables from WIT configurations
+│       └── wasm_to_cpp.py# Utility to convert WASM binaries into C++ byte arrays
 │
 └── docs/
-    ├── coding_style.md   # 命名規則・言語機能制限の詳細ガイド（必読）
-    ├── getting_started.md# ビルド手順とクイックスタートガイド
-    ├── api_impl_for_wasm.md # ホストAPIの実装・公開手順
-    ├── tool_usage.md     # コード生成ツールの使い方
-    └── wasm_vm_spec.md   # WASMインタプリタ実装仕様書（スタック・制御フロー等）
-```
+├── coding_style.md   # Detailed guide on naming conventions and language feature restrictions (Must-read)
+├── getting_started.md# Build procedures and quick start guide
+├── api_impl_for_wasm.md # Procedures for implementing and exposing host APIs
+├── tool_usage.md     # How to use code generation tools
+└── wasm_vm_spec.md   # WASM interpreter implementation specification (stack, control flow, etc.)
+
 
 
 ---
 
-## 3. コアコンポーネントの概要
+## 3. Overview of Core Components
 
-### 3.1 主要クラス・型
+### 3.1 Main Classes and Types
 
-| クラス / 型 | ファイル | 役割 |
+| Class / Type | File | Role |
 |---|---|---|
-| `WasmEngine` | `include/wasm_engine.hpp` | WASMバイナリのLoad・Execute を担うエンジン本体 |
-| `WasmMemoryPool` | `include/wasm_memory_pool.hpp` | ヒープ不使用の静的バンプアロケータ |
-| `WasmValue` | `include/wasm_types.hpp` | WASM値のタグ付き共用体（i32/i64/f32/f64） |
-| `WasmResult` | `include/wasm_types.hpp` | エラーコード列挙型（例外の代替） |
-| `WasmType` | `include/wasm_types.hpp` | WASM値型の列挙型 |
-| `WasmTypeSignature` | `include/wasm_types.hpp` | WASM関数シグネチャ（上限付き静的配列） |
-| `HostFunctionId` | `include/wasm_api.hpp` | ホスト関数の識別ID（Enum） |
-| `WasmFunction` | `include/wasm_engine.hpp` | インポート関数・内部関数のユニオン構造体 |
+| `WasmEngine` | `include/wasm_engine.hpp` | The engine body responsible for loading and executing WASM binaries |
+| `WasmMemoryPool` | `include/wasm_memory_pool.hpp` | Heapless static bump allocator |
+| `WasmValue` | `include/wasm_types.hpp` | Tagged union for WASM values (i32/i64/f32/f64) |
+| `WasmResult` | `include/wasm_types.hpp` | Enum for error codes (alternative to exceptions) |
+| `WasmType` | `include/wasm_types.hpp` | Enum for WASM value types |
+| `WasmTypeSignature` | `include/wasm_types.hpp` | WASM function signature (bounded static array) |
+| `HostFunctionId` | `include/wasm_api.hpp` | Identification ID for host functions (Enum) |
+| `WasmFunction` | `include/wasm_engine.hpp` | Union structure for imported and internal functions |
 
-### 3.2 主要な設定定数（`include/wasm_config.hpp`）
+### 3.2 Key Configuration Constants (`include/wasm_config.hpp`)
 
-エンジンの各制限値はすべて `constexpr` 定数で管理されます。変更する場合はこのファイルのみを編集してください。
+All limits for the engine are managed using `constexpr` constants. If changes are required, modify only this file.
 
-| 定数 | デフォルト値 | 意味 |
+| Constant | Default Value | Meaning |
 |---|---|---|
-| `kMemoryPoolSize` | 65536 (64 KB) | 静的メモリプールの総サイズ |
-| `kMaxWasmFunctions` | 32 | サポートするWASM関数数の上限 |
-| `kMaxWasmTypes` | 16 | サポートするWASM型シグネチャ数の上限 |
-| `kWasmStackSize` | 64 | WASM実行スタックの最大深度 |
-| `kWasmCallStackSize` | 16 | コールスタックの最大深度 |
-| `kMaxLocals` | 32 | 1関数あたりの最大ローカル変数数 |
+| `kMemoryPoolSize` | 65536 (64 KB) | Total size of the static memory pool |
+| `kMaxWasmFunctions` | 32 | Upper limit on the number of supported WASM functions |
+| `kMaxWasmTypes` | 16 | Upper limit on the number of supported WASM type signatures |
+| `kWasmStackSize` | 64 | Maximum depth of the WASM execution stack |
+| `kWasmCallStackSize` | 16 | Maximum depth of the call stack |
+| `kMaxLocals` | 32 | Maximum number of local variables allowed per function |
 
-### 3.3 ホストAPIの仕組み
+### 3.3 Host API Mechanism
 
-WASMからホスト（C++）側の関数を呼び出す仕組みは以下のとおりです。
+The mechanism for calling host-side (C++) functions from WASM is as follows:
 
-1. **定義**: WIT設定ファイル（`.wit`）にモジュール名・フィールド名・引数型およびC++マッピングを記述します。
-2. **自動生成**: `tools/codegen/gen_api.py` が WIT を読み込み、`HostFunctionId` 列挙体とルックアップテーブルを C++ コードとして自動生成します。
-3. **ルックアップ**: `LookupStaticHostFunctionId()` がバイナリ探索（$O(\log N)$）でIDを解決します。
-4. **ディスパッチ**: `DispatchHostFunction()` が `switch` 文による直接呼び出しで関数を実行します（関数ポインタ禁止ルール準拠）。
+1. **Definition**: Describe the module name, field name, argument types, and C++ mapping in the WIT configuration file (`.wit`).
+2. **Auto-generation**: `tools/codegen/gen_api.py` reads the WIT file and automatically generates the `HostFunctionId` enum and lookup tables as C++ code.
+3. **Lookup**: `LookupStaticHostFunctionId()` resolves the ID using a binary search ($O(\log N)$).
+4. **Dispatch**: `DispatchHostFunction()` executes the function via a direct call inside a `switch` statement (complying with the rule banning function pointers).
 
-### 3.4 ホストAPIモジュールの配置ルール
+### 3.4 Placement Rules for Host API Modules
 
-標準で同梱するホストAPIモジュールは、以下のルールに従って配置します。
+Standard bundled host API modules must be organized according to the following rules:
 
-* **原則**: `.wit` ファイルおよびソースコードは `wasm_host_modules/<module_name>` ディレクトリ内に配置します。これらは個別にビルドし、必要に応じて選択してリンクできる構成とします。
-* **例外 (`threads`)**: `threads` モジュールのみ、ソースコードを `src/hostmodule/threads` に配置し、コアライブラリ (`src`) と一括でビルドします。`.wit` ファイルは `wasm_host_modules/threads` に配置します。
-
----
-
-4. **開発上の重要制約（厳守）**
-
-ベアメタル環境向けにビルドされるため、以下の機能はコンパイラレベルで無効化されています。これらを使用したコードはビルドエラーになるか、実行時エラーを引き起こします。
-
-1. **STL (Standard Template Library) の使用禁止**
-   * 暗黙的な動的メモリ（ヒープ）割り当てを行うコンテナ（`std::vector`, `std::string`, `std::map` など）は使用できません。
-   * 固定長（`std::array`）や、スタックまたは静的メモリ領域を使用するアロケータフリーな設計にしてください。
-2. **ベアメタル非互換ライブラリの使用禁止**
-   * `include/` および `src/` ディレクトリには、デバッグ目的を除き、ベアメタル環境で使用できないライブラリを導入してはいけません。
-3. **例外処理 (Exceptions) の禁止**
-   * `throw`, `try`, `catch` は使用できません（`-fno-exceptions`）。
-   * エラーハンドリングは、エラーコードや `Result` / `Status` オブジェクトの返却で行ってください。
-4. **RTTI (Run-Time Type Information) の禁止**
-   * `dynamic_cast` や `typeid` は使用できません（`-fno-rtti`）。
-   * 多態性のキャストが必要な場合は、`static_cast` または型判別用のメンバ変数（Tag/Enum）を介した安全なダウンキャストを使用してください。
-5. **再帰呼び出し (Recursion) の禁止**
-   * マイコンの非常に小さなスタック領域を保護し、予期せぬスタックオーバーフローを防ぐため、再帰呼び出しは使用できません。
-   * ループ（反復処理）や、明示的なコールスタック / キューなどのデータ構造を用いた反復アルゴリズム（Iterative algorithm）で実装してください。
-6. **関数ポインタおよびメンバー関数ポインタの使用禁止**
-   * 間接呼び出し（indirect call）によるスタックの最大消費量が静的解析ツールで算出不能になるのを避けるため、関数ポインタおよびメンバー関数ポインタは原則使用禁止とします。
-   * ディスパッチ処理や動的な切り替えが必要な場合は、ID（Enum等）と `switch` 文などの直接呼び出し（Direct Call）を用いて実装してください。
+* **General Rule**: Place `.wit` files and source code inside the `wasm_host_modules/<module_name>` directory. These must be structured so they can be built individually and linked selectively as needed.
+* **Exception (`threads`)**: For the `threads` module only, place the source code in `src/hostmodule/threads` to build it bundled together with the core library (`src`). The `.wit` file should still be placed in `wasm_host_modules/threads`.
 
 ---
 
-## 5. コーディングスタイルの詳細
+## 4. Critical Development Constraints (Strict Compliance Required)
 
-命名規則やC++機能の制限に関する詳細なガイドラインは、以下のドキュメントに定義されています。コードを変更する前に必ず参照してください。
+Because this library is built for bare-metal environments, the following features are disabled at the compiler level. Code using these features will cause build errors or trigger runtime failures.
 
-* **詳細コーディングスタイル**: [docs/coding_style.md](docs/coding_style.md)
+1. **Ban on STL (Standard Template Library) Usage**
+   * Containers that perform implicit dynamic memory (heap) allocation (such as `std::vector`, `std::string`, `std::map`) cannot be used.
+   * Design your code to be allocator-free, using fixed-size collections (`std::array`) or structures that utilize stack or static memory regions.
+2. **Ban on Bare-Metal Incompatible Libraries**
+   * Do not introduce libraries into the `include/` and `src/` directories that cannot be used in a bare-metal environment, except strictly for debugging purposes.
+3. **Prohibition of Exception Handling**
+   * `throw`, `try`, and `catch` cannot be used (`-fno-exceptions`).
+   * Handle errors by returning error codes or `Result` / `Status` objects.
+4. **Prohibition of RTTI (Run-Time Type Information)**
+   * `dynamic_cast` and `typeid` cannot be used (`-fno-rtti`).
+   * If polymorphic casting is necessary, use `static_cast` or safe downcasting via type-discriminating member variables (Tag/Enum).
+5. **Prohibition of Recursion**
+   * To protect the extremely small stack space of microcontrollers and prevent unexpected stack overflows, recursive calls are strictly prohibited.
+   * Implement logic using loops (iterative processing) or iterative algorithms with explicit data structures like call stacks or queues.
+6. **Prohibition of Function Pointers and Member Function Pointers**
+   * To prevent indirect calls from making worst-case stack consumption uncalculable by static analysis tools, function pointers and member function pointers are banned in principle.
+   * If dispatching or dynamic switching is required, implement static dispatch using IDs (such as Enums) and direct calls within a `switch` statement.
 
 ---
 
-## 6. エージェントへの具体的アクション要求
+## 5. Coding Style Details
 
-* 新しいファイルを提案または作成する場合、[docs/coding_style.md](docs/coding_style.md) に記載されている命名規則（クラス名: `CamelCase`、メンバ変数: `snake_case_` など）を必ず適用してください。
-* 動的メモリ割り当てを排除するため、配列サイズなどは `constexpr` による静的定数として決定してください。
-* 未定義動作（UB）を避けるため、ポインタ演算や型キャストは最小限にし、必要であれば `reinterpret_cast` ではなく明示的なインタフェースを使用してください。
-* ホストスタックの保護のため、関数のネストや再帰呼び出しを行う場合は、必ず明示的なコールスタック（データ構造）を用いた反復処理を実装してください。
-* 静的解析ツールによる最悪スタック消費量の算出を可能にするため、関数ポインタやメンバー関数ポインタによる間接呼び出しは行わず、IDと `switch` 分岐等を用いた直接呼び出しによる静的ディスパッチを実装してください。
-* エンジンの容量制限値を変更する必要がある場合は `include/wasm_config.hpp` の `constexpr` 定数のみを変更し、コード内にマジックナンバーを直接記述しないでください。
-* プラットフォーム固有の処理（割り込み制御など）を追加する場合は `platform/` 配下に対応するディレクトリを作成し、`wasm_platform.hpp` のインタフェースに従って実装してください。
-* 新しいホストAPIを追加する場合は、コードを手書きせず `tools/codegen/gen_api.py` を用いた自動生成フローに従ってください（詳細: [docs/api_impl_for_wasm.md](docs/api_impl_for_wasm.md)）。
-* 新しいホストAPIモジュールを追加する場合は、`threads` などの例外を除き、`wasm_host_modules/<module_name>` 配下に `.wit` とソースコードを配置してください。
-* テストコードは必ず `test/core/` ディレクトリ（コア）または適切なサブディレクトリ配下に作成し、`include/`, `src/`, `wasm_host_modules/` 内のすべての関数に対してテストを実装してください。
-* WASMモジュールが仕様通り動作するかのテスト（WASM仕様準拠テスト）は既に `test/core/official_test_wasm` に含まれているため、同一モジュールの動作検証を目的とした別のテストコード（`wasm_engine_test.cpp` などへの追加）を別途作成する必要はありません。
-* テストコード（`test/core/wasm_engine_test.cpp` など）で使用する正常系テスト用のWASMバイナリ配列は、手動で適当に組み立てたものではなく、必ず `clang` で生成したWASM仕様に完全に準拠したバイト配列を使用してください。バイナリ配列を生成・更新する際は、`tools/codegen/generate_test_wasms.py` などの自動生成スクリプトを利用してください。
-* WASMインタプリタ（VMのデコードループ、スタック操作、制御フローなど）のコードを修正・拡張する場合は、必ず [docs/wasm_vm_spec.md](docs/wasm_vm_spec.md) に記載されている実装方針（データスタック・コールスタックの管理、ラベルスタックによる制御フロー分岐、Yield処理など）を理解・準拠し、必要に応じて同仕様書も更新してください。
+Detailed guidelines regarding naming conventions and restrictions on C++ features are defined in the following document. Be sure to reference it before modifying any code.
 
+* **Detailed Coding Style**: [docs/coding_style.md](docs/coding_style.md)
+
+---
+
+## 6. Specific Action Requests for Agents
+
+* When proposing or creating new files, always apply the naming conventions detailed in [docs/coding_style.md](docs/coding_style.md) (e.g., `CamelCase` for class names, `snake_case_` for member variables).
+* To eliminate dynamic memory allocation, determine array sizes and boundaries as static constants using `constexpr`.
+* To avoid undefined behavior (UB), minimize pointer arithmetic and type casting. If casting is necessary, use explicit interfaces rather than brute-force `reinterpret_cast`.
+* To protect the host stack, if a function requires deep nesting or recursive logic, you must implement it iteratively using an explicit call stack (data structure).
+* To ensure static analysis tools can compute the worst-case stack consumption, do not use indirect calls via function pointers or member function pointers. Implement static dispatch using IDs and `switch` branching instead.
+* If you need to change the engine's capacity limits, modify only the `constexpr` constants in `include/wasm_config.hpp`. Do not hardcode magic numbers directly into the codebase.
+* When adding platform-specific logic (such as interrupt control), create a corresponding directory under `platform/` and implement it according to the interface defined in `wasm_platform.hpp`.
+* When adding a new host API, do not write the boilerplate by hand. Follow the automated generation workflow using `tools/codegen/gen_api.py` (Details: [docs/api_impl_for_wasm.md](docs/api_impl_for_wasm.md)).
+* When adding a new host API module, place the `.wit` file and source code under `wasm_host_modules/<module_name>`, except for special exclusions like `threads`.
+* Test code must be created within the `test/core/` directory (for core features) or an appropriate subdirectory. Implement tests for all functions inside `include/`, `src/`, and `wasm_host_modules/`.
+* WASM specification compliance tests (verifying if the WASM module behaves according to specifications) are already included in `test/core/official_test_wasm`. Therefore, you do not need to create separate test code (such as additions to `wasm_engine_test.cpp`) purely to validate the same module operations.
+* WASM binary arrays used for successful path testing within test code (like `test/core/wasm_engine_test.cpp`) must not be manually or arbitrarily assembled. Always use byte arrays fully compliant with the WASM specification generated by `clang`. When generating or updating binary arrays, utilize automated scripts such as `tools/codegen/generate_test_wasms.py`.
+* When modifying or extending the WASM interpreter (VM decode loops, stack operations, control flow, etc.), you must understand and adhere to the implementation strategies outlined in [docs/wasm_vm_spec.md](docs/wasm_vm_spec.md) (management of data/call stacks, control flow branching via label stacks, yield processing, etc.), and update the specification document itself as necessary.
