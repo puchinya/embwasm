@@ -226,24 +226,8 @@ public:
     WasmScheduler* GetScheduler() noexcept { return &scheduler_; }
 #endif
 
-public:
     /// @brief 指定モジュール・関数インデックスで実行ループを起動します（内部 API）。
     WasmResult ExecuteInternal(WasmModuleInstance* module, uint32_t func_index) noexcept;
-
-    /// @brief 指定インスタンスのエクスポートエントリ配列を返します。
-    /// @param instance_id  インスタンス ID。
-    /// @return エクスポートエントリの先頭ポインタ。無効な ID の場合は `nullptr`。
-    const WasmExportEntry* GetExports(int32_t instance_id) const noexcept {
-        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
-            ? modules_[instance_id]->exports : nullptr;
-    }
-
-    /// @brief 指定インスタンスのエクスポート数を返します。
-    /// @param instance_id  インスタンス ID。
-    std::size_t GetExportCount(int32_t instance_id) const noexcept {
-        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
-            ? modules_[instance_id]->export_count : 0;
-    }
 
     /// @brief 指定インスタンスの線形メモリ先頭ポインタを返します。
     /// @param instance_id  インスタンス ID。
