@@ -64,7 +64,35 @@
 
 ---
 
-## 5. 静的解析とフォーマッタ
+## 5. コメントとドキュメント
+
+### 5.1. 外部公開ヘッダーのDoxygenコメント
+
+`include/` 配下の外部向けヘッダーファイル（`.h` / `.hpp`）に定義するクラス・構造体・関数・定数には、**Doxygenスタイルのコメント**を付与します。
+
+```cpp
+/// @brief センサーから現在値を読み取るホストAPI。
+/// @param[in]  engine      エンジンインスタンスへの参照。
+/// @param[in]  args        WASM側から渡された引数配列（本関数では使用しない）。
+/// @param[in]  arg_count   引数の個数。
+/// @param[out] results     戻り値を格納する配列。results[0].value.i32 に値を設定する。
+/// @param[in]  result_count 戻り値の個数。
+/// @return kOk: 正常終了。kErrorRuntimeError: result_count が不足している場合。
+WasmResult GetSensorValue(
+    WasmEngine& engine,
+    const WasmValue* args, uint32_t arg_count,
+    WasmValue* results, uint32_t result_count) noexcept;
+```
+
+**適用ルール**:
+* 使用するタグは `@brief`、`@param[in]`、`@param[out]`、`@param[in,out]`、`@return` を基本とします。
+* `@brief` は1行で関数・クラスの目的を端的に記述します。
+* `src/` 配下の実装ファイルや内部ヘッダー（`private` メンバ等）への適用は任意です。
+* 自明な getter/setter などへの冗長なコメントは不要です。
+
+---
+
+## 6. 静的解析とフォーマッタ
 
 * すべてのコードは `clang-format` (Googleスタイル) で整形すること。
 * コンパイラの警告レベルは高く設定し（`-Wall -Wextra -Wpedantic`）、警告をエラーとして処理（`-Werror`）することを推奨します。

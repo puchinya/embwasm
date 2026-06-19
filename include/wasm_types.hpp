@@ -6,7 +6,7 @@
 
 namespace embwasm {
 
-// WASM値の型定義
+/// @brief WASM の値型タグ（WebAssembly 1.0 仕様の valtype に対応）。
 enum class WasmType : uint8_t {
     kI32     = 0x7F,
     kI64     = 0x7E,
@@ -17,8 +17,10 @@ enum class WasmType : uint8_t {
     kVoid    = 0x40
 };
 
-// WASM値のコンテナ（型タグなし生ビット列）
-// 型はバイトコード上の命令が静的に決定するため、値に型タグを持たない。
+/// @brief WASM の演算スタック上の値コンテナ。
+///
+/// 型タグを持たない生ビット列で値を保持します。型はバイトコード上の命令が静的に決定するため、
+/// 実行時に型タグを添付する必要がなく、スタックサイズとコピーコストを削減できます。
 struct WasmValue {
     union {
         int32_t i32;
@@ -29,46 +31,60 @@ struct WasmValue {
 
     WasmValue() noexcept { value.i64 = 0; }
 
+    /// @brief i32 値から WasmValue を生成します。
     static WasmValue FromI32(int32_t v) noexcept { WasmValue r; r.value.i32 = v; return r; }
+    /// @brief i64 値から WasmValue を生成します。
     static WasmValue FromI64(int64_t v) noexcept { WasmValue r; r.value.i64 = v; return r; }
+    /// @brief f32 値から WasmValue を生成します。
     static WasmValue FromF32(float v) noexcept { WasmValue r; r.value.f32 = v; return r; }
+    /// @brief f64 値から WasmValue を生成します。
     static WasmValue FromF64(double v) noexcept { WasmValue r; r.value.f64 = v; return r; }
 };
 
-// WASMエンジン実行結果のステータスコード
+/// @brief WASM エンジンの実行結果ステータスコード。
+///
+/// 例外処理が無効（`-fno-exceptions`）なため、エラーは戻り値のこの enum で表現します。
 enum class WasmResult : int32_t {
     kOk = 0,
-    kYield = 1, // 実行を一時中断（スケジューラへ戻る）
-    kErrorInvalidMagic = -1,
-    kErrorInvalidVersion = -2,
-    kErrorUnknownSection = -3,
-    kErrorOutOfMemory = -4,
-    kErrorValidationFailed = -5, // 事前検査失敗（型不整合・制限超過）
-    kErrorFunctionNotFound = -6,
-    kErrorStackOverflow = -7,
-    kErrorRuntimeError = -8
+    kYield = 1,                  ///< 実行を一時中断（協調スケジューラへ戻る）。
+    kErrorInvalidMagic = -1,     ///< WASM マジックナンバーが不正。
+    kErrorInvalidVersion = -2,   ///< WASM バージョンが非対応。
+    kErrorUnknownSection = -3,   ///< 未知のセクションを検出。
+    kErrorOutOfMemory = -4,      ///< メモリプールが枯渇。
+    kErrorValidationFailed = -5, ///< 事前検査失敗（型不整合・制限超過）。
+    kErrorFunctionNotFound = -6, ///< 指定した関数が見つからない。
+    kErrorStackOverflow = -7,    ///< スタックオーバーフロー。
+    kErrorRuntimeError = -8      ///< その他の実行時エラー。
 };
 
-// ホスト関数のシグネチャ定義
-// 例外無効（-fno-exceptions）のため、実行結果を WasmResult で返し、値は results 引数に格納します。
+/// @brief ホスト関数のシグネチャ型。
+///
+/// 例外無効（`-fno-exceptions`）のため、実行結果を WasmResult で返し、値は results 引数に格納します。
+/// @param args         WASM 側から渡された引数配列。
+/// @param arg_count    引数の個数。
+/// @param results      WASM 側へ返す結果を格納する配列。
+/// @param result_count 結果の個数。
+/// @param user_data    ホスト側が任意に設定できるユーザーデータポインタ。
 typedef WasmResult (*HostFunction)(const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count, void* user_data);
 
-// ホストAPIの登録エントリ
+/// @brief 静的ホスト API テーブルのエントリ。
 struct HostApiEntry {
-    const char* module_name;
-    const char* field_name;
-    HostFunction function;
+    const char* module_name; ///< インポートモジュール名（NULL 終端文字列）。
+    const char* field_name;  ///< インポートフィールド名（NULL 終端文字列）。
+    HostFunction function;   ///< 対応するホスト関数ポインタ。
 };
 
-// WASM関数シグネチャの定義（ベアメタル上の制限に準拠した上限付き静的配列）
+/// @brief WASM 関数シグネチャ（引数型リスト＋戻り値型リスト）。
+///
+/// 静的配列で保持し、動的メモリを使用しません。
 struct WasmTypeSignature {
-    static constexpr std::size_t kMaxParams = 128;
-    static constexpr std::size_t kMaxResults = 128;
-    
-    uint32_t param_count;
-    uint32_t result_count;
-    WasmType params[kMaxParams];
-    WasmType results[kMaxResults];
+    static constexpr std::size_t kMaxParams = 128;  ///< 引数の最大数。
+    static constexpr std::size_t kMaxResults = 128; ///< 戻り値の最大数。
+
+    uint32_t param_count;          ///< 実際の引数数。
+    uint32_t result_count;         ///< 実際の戻り値数。
+    WasmType params[kMaxParams];   ///< 引数の型リスト。
+    WasmType results[kMaxResults]; ///< 戻り値の型リスト。
 };
 
 } // namespace embwasm

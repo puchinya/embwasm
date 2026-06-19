@@ -11,89 +11,90 @@ namespace embwasm {
 struct WasmModuleInstance;
 struct WasmFunction;
 
+/// @brief WASM 関数の種別。
 enum class WasmFunctionKind : uint8_t {
-    kLocal = 0,
-    kHost = 1,
-    kImport = 2,
+    kLocal = 0,  ///< モジュール内部で定義された関数。
+    kHost = 1,   ///< ホスト側（C++）から提供された関数。
+    kImport = 2, ///< インポート宣言（ロード時に解決される）。
 };
 
+/// @brief モジュール内部に定義された WASM 関数のメタデータ。
 struct WasmLocalFunction {
-    const uint8_t* code_ptr;
-    uint32_t code_size;
-    uint32_t local_count;
-    const WasmType* local_types;
-    uint32_t max_label_depth; // Validate()で算出: 必要な最大ラベルスタック深度（関数ブロック含む）
-    uint32_t max_stack_depth; // Validate()で算出: 必要な最大データスタック深度
+    const uint8_t* code_ptr;   ///< バイトコードの先頭ポインタ（ROM を指す）。
+    uint32_t code_size;        ///< バイトコードのバイト数。
+    uint32_t local_count;      ///< 引数を除くローカル変数数。
+    const WasmType* local_types; ///< ローカル変数の型リスト。
+    uint32_t max_label_depth;  ///< `Validate()` で算出した最大ラベルスタック深度（関数ブロック含む）。
+    uint32_t max_stack_depth;  ///< `Validate()` で算出した最大データスタック深度。
 };
 
+/// @brief ホスト側（C++）から提供される関数のメタデータ。
 struct WasmHostFunction {
-    HostFunctionId host_func_id;
+    HostFunctionId host_func_id; ///< `DispatchHostFunction()` に渡すホスト関数 ID。
 };
 
+/// @brief インポート宣言（ロード時に未解決、`Execute()` 時に解決される）。
 struct WasmImportFunction {
-    const char* module_name;
-    size_t module_name_len;
-    const char* field_name;
-    size_t field_name_len;
-    WasmFunction* resolved_func;
+    const char* module_name;     ///< インポートモジュール名（ROM を指す）。
+    size_t module_name_len;      ///< モジュール名の長さ（バイト数）。
+    const char* field_name;      ///< インポートフィールド名（ROM を指す）。
+    size_t field_name_len;       ///< フィールド名の長さ（バイト数）。
+    WasmFunction* resolved_func; ///< 解決後の関数へのポインタ。未解決時は `nullptr`。
 };
 
+/// @brief WASM 関数エントリ（内部関数・ホスト関数・インポート宣言を統合）。
 struct WasmFunction {
-    WasmFunctionKind kind;
-    uint32_t type_index;
+    WasmFunctionKind kind; ///< 関数の種別。
+    uint32_t type_index;   ///< 対応するシグネチャのインデックス。
     union {
         WasmHostFunction host;
         WasmLocalFunction local;
         WasmImportFunction import;
     };
 
-    // この関数が属するモジュールインスタンス
-    struct WasmModuleInstance* module;
+    struct WasmModuleInstance* module; ///< この関数が属するモジュールインスタンス。
 };
 
-// グローバル変数を表す構造体
+/// @brief WASM グローバル変数。
 struct WasmGlobal {
-    WasmType type;
-    bool is_mutable;
-    WasmValue value;
+    WasmType type;    ///< 値の型。
+    bool is_mutable;  ///< ミュータブルフラグ。
+    WasmValue value;  ///< 現在値。
 };
 
-// WASMエクスポートを表す構造体
+/// @brief WASM エクスポートエントリ。
 struct WasmExportEntry {
-    const char* name;
-    std::size_t name_len;
-    uint8_t kind; // 0=Func, 1=Table, 2=Mem, 3=Global
-    uint32_t index;
+    const char* name;    ///< エクスポート名（ROM を指す）。
+    std::size_t name_len; ///< エクスポート名の長さ（バイト数）。
+    uint8_t kind;        ///< エクスポート種別（0=Func, 1=Table, 2=Mem, 3=Global）。
+    uint32_t index;      ///< エクスポート対象のインデックス。
 };
 
-// WASMモジュールのインスタンス情報を表す構造体
+/// @brief ロード済み WASM モジュールのインスタンス情報。
 struct WasmModuleInstance {
-    bool is_active;
-    bool imports_resolved; // Execute時に一度解決済みかのフラグ
-    char name[64]; // モジュール名
-    std::size_t name_len; // モジュール名の長さ
+    bool is_active;         ///< スロットが使用中かどうか。
+    bool imports_resolved;  ///< インポート解決済みフラグ（`Execute()` 時に一度だけ解決）。
+    char name[64];          ///< モジュール名。
+    std::size_t name_len;   ///< モジュール名の長さ。
 
-    // 動的確保 (PreScanSections で確定したサイズをLoad時に確保)
-    WasmTypeSignature* signatures;
+    WasmTypeSignature* signatures;   ///< 型シグネチャ配列（プールから確保）。
     std::size_t signature_count;
 
-    WasmFunction* functions;
+    WasmFunction* functions;         ///< 関数配列（プールから確保）。
     std::size_t function_count;
 
-    WasmExportEntry* exports;
+    WasmExportEntry* exports;        ///< エクスポートエントリ配列（プールから確保）。
     std::size_t export_count;
 
-    WasmGlobal* globals;
+    WasmGlobal* globals;             ///< グローバル変数配列（プールから確保）。
     std::size_t global_count;
 
-    // 線形メモリ（Memory section / Data section）
-    uint8_t* linear_memory_ptr;
-    std::size_t linear_memory_size;         // 現在の使用サイズ (min_pages * 65536)
-    std::size_t linear_memory_capacity;     // プールから確保した実際のバイト数
-    uint32_t max_linear_memory_pages;       // メモリセクションで指定された最大ページ数(0=制限なし)
+    uint8_t* linear_memory_ptr;             ///< 線形メモリの先頭ポインタ（プールから確保）。
+    std::size_t linear_memory_size;         ///< 現在のサイズ（min_pages * 65536）。
+    std::size_t linear_memory_capacity;     ///< プールから確保した実際のバイト数。
+    uint32_t max_linear_memory_pages;       ///< メモリセクションで指定された最大ページ数（0 = 制限なし）。
     bool is_memory_shared;
 
-    // テーブルメタデータ配列（各テーブルのサイズ分だけ確保）
     uint32_t** tables;
     std::size_t* table_sizes;
     uint32_t* table_max_sizes;
@@ -102,7 +103,6 @@ struct WasmModuleInstance {
     std::size_t table_count;
     std::size_t table_capacity;
 
-    // バルクメモリ用セグメント情報（動的確保）
     const uint8_t** data_segments;
     uint32_t* data_segment_sizes;
     bool* data_segment_dropped;
@@ -115,94 +115,152 @@ struct WasmModuleInstance {
     std::size_t elem_segment_count;
     std::size_t elem_segment_capacity;
 
-    // 開始関数インデックス（Start section）
-    int32_t start_function_index;
+    int32_t start_function_index; ///< Start セクションで指定された関数インデックス（-1 = なし）。
 
+    /// @brief 線形メモリの先頭ポインタを返します。
     uint8_t *GetLinearMemory() const noexcept {
         return linear_memory_ptr;
     }
 
+    /// @brief 線形メモリの現在サイズを返します。
     std::size_t GetLinearMemorySize() const noexcept {
         return linear_memory_size;
     }
 };
 
-// ベアメタル環境向け極小WASM実行エンジン
+/// @brief ベアメタル環境向け極小 WASM 実行エンジン。
+///
+/// STL・例外・RTTI・動的メモリを一切使用しません。
+/// `Init()` で渡した `WasmMemoryPool` からのみメモリを確保します。
 class WasmEngine {
 public:
     WasmEngine() noexcept;
     ~WasmEngine() noexcept;
 
-    // 明示的な初期化と終了
+    /// @brief エンジンを初期化します。使用前に必ず呼んでください。
+    /// @param pool  エンジンが使用するメモリプール。
     void Init(WasmMemoryPool& pool) noexcept;
+
+    /// @brief エンジンを終了し、すべてのリソースを解放します。
     void Deinit() noexcept;
 
-    // WASMバイナリ（バイト配列）の読み込みと解析
-    // ロード後にインスタンスID (0以上) を返す。エラー時は負のエラーコードを返す。
+    /// @brief WASM バイナリをロードし、指定名のモジュールとして登録します。
+    /// @param module_name      モジュール名文字列。
+    /// @param module_name_len  モジュール名の長さ（バイト数）。
+    /// @param binary           WASM バイナリデータの先頭ポインタ。
+    /// @param size             バイナリのバイト数。
+    /// @return 0 以上のインスタンス ID（成功）。負値のエラーコード（失敗）。
     int32_t Load(const char* module_name, std::size_t module_name_len, const uint8_t* binary, std::size_t size) noexcept;
 
-    // すべてのモジュールをアンロードして、メモリを解放する
+    /// @brief すべてのモジュールをアンロードし、プール上のメモリを解放します。
     void UnloadAll() noexcept;
 
-    // WASMバイナリのロード（後方互換API：最初の空きスロットに "default" として登録）
+    /// @brief WASM バイナリをロードする後方互換 API（"default" モジュールとして登録）。
+    /// @param binary  WASM バイナリデータの先頭ポインタ。
+    /// @param size    バイナリのバイト数。
+    /// @return kOk（成功）またはエラーコード。
     WasmResult Load(const uint8_t* binary, std::size_t size) noexcept {
         int32_t r = Load("default", 7, binary, size);
         if (r >= 0) return WasmResult::kOk;
         return static_cast<WasmResult>(r);
     }
 
-    // エクスポートされた関数を実行する
+    /// @brief 指定モジュールのエクスポート関数を実行します。
+    /// @param module_name      モジュール名。
+    /// @param module_name_len  モジュール名の長さ（バイト数）。
+    /// @param name             エクスポート関数名。
+    /// @param name_len         関数名の長さ（バイト数）。
+    /// @param args             引数配列（引数なしの場合は `nullptr`）。
+    /// @param arg_count        引数の個数。
+    /// @param results          結果格納配列（戻り値なしの場合は `nullptr`）。
+    /// @param result_count     戻り値の個数。
+    /// @return 実行結果を示す WasmResult。
     WasmResult Execute(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
-    // 関数名からインデックスを取得
+    /// @brief 指定モジュールのエクスポート関数インデックスを返します。
+    /// @param module_name      モジュール名。
+    /// @param module_name_len  モジュール名の長さ（バイト数）。
+    /// @param name             エクスポート関数名。
+    /// @param name_len         関数名の長さ（バイト数）。
+    /// @return 関数インデックス（0 以上）。見つからない場合は -1。
     int32_t GetExportFunctionIndex(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len) const noexcept;
 
-    // エクスポートされた関数の戻り値数を取得
+    /// @brief 指定モジュールのエクスポート関数の戻り値数を返します。
+    /// @param module_name      モジュール名。
+    /// @param module_name_len  モジュール名の長さ（バイト数）。
+    /// @param name             エクスポート関数名。
+    /// @param name_len         関数名の長さ（バイト数）。
+    /// @return 戻り値の個数。関数が見つからない場合は 0。
     uint32_t GetExportFunctionResultCount(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len) const noexcept;
 
-    // エクスポートインデックスから内部関数インデックスを取得
+    /// @brief エクスポートインデックスから内部関数インデックスを返します。
+    /// @param instance_id  モジュールのインスタンス ID。
+    /// @param export_idx   エクスポートテーブル上のインデックス。
+    /// @return 内部関数インデックス。無効な場合は -1。
     int32_t GetFunctionIndexByExportIndex(int32_t instance_id, uint32_t export_idx) const noexcept;
 
-    // 統計情報の取得
+    /// @brief 実行中に到達した最大コールスタック深度を返します（統計情報）。
     std::size_t GetMaxCallStackDepth() const noexcept { return max_call_stack_depth_; }
+
+    /// @brief 実行中に到達した最大データスタック深度を返します（統計情報）。
     std::size_t GetMaxStackDepth() const noexcept { return max_stack_depth_; }
 
-    // ユーザーデータの設定と取得（Host関数向け）
+    /// @brief ホスト関数向けユーザーデータポインタを返します。
     void* GetUserData() const noexcept { return user_data_; }
+
+    /// @brief ホスト関数向けユーザーデータポインタを設定します。
+    /// @param user_data  任意のポインタ。
     void SetUserData(void* user_data) noexcept { user_data_ = user_data; }
 
-    // モジュールごとのユーザーデータ設定と取得
+    /// @brief 指定ホストモジュールのユーザーデータポインタを返します。
+    /// @param module_id  対象のホストモジュール ID。
     void* GetModuleUserData(HostModuleId module_id) const noexcept;
+
+    /// @brief 指定ホストモジュールのユーザーデータポインタを設定します。
+    /// @param module_id  対象のホストモジュール ID。
+    /// @param user_data  任意のポインタ。
     void SetModuleUserData(HostModuleId module_id, void* user_data) noexcept;
 
 #if EMBWASM_ENABLE_MULTITHREADING
-    // スケジューラの取得
+    /// @brief エンジン内蔵の協調スケジューラへのポインタを返します。
     WasmScheduler* GetScheduler() noexcept { return &scheduler_; }
 #endif
 
 public:
+    /// @brief 指定モジュール・関数インデックスで実行ループを起動します（内部 API）。
     WasmResult ExecuteInternal(WasmModuleInstance* module, uint32_t func_index) noexcept;
 
-    // 公開関数を外部から解決可能にする
+    /// @brief 指定インスタンスのエクスポートエントリ配列を返します。
+    /// @param instance_id  インスタンス ID。
+    /// @return エクスポートエントリの先頭ポインタ。無効な ID の場合は `nullptr`。
     const WasmExportEntry* GetExports(int32_t instance_id) const noexcept {
         return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
             ? modules_[instance_id]->exports : nullptr;
     }
+
+    /// @brief 指定インスタンスのエクスポート数を返します。
+    /// @param instance_id  インスタンス ID。
     std::size_t GetExportCount(int32_t instance_id) const noexcept {
         return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
             ? modules_[instance_id]->export_count : 0;
     }
 
-    // 線形メモリへのアクセス
+    /// @brief 指定インスタンスの線形メモリ先頭ポインタを返します。
+    /// @param instance_id  インスタンス ID。
+    /// @return 線形メモリの先頭ポインタ。メモリなし / 無効 ID の場合は `nullptr`。
     uint8_t* GetLinearMemory(int32_t instance_id) const noexcept {
         return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
             ? modules_[instance_id]->linear_memory_ptr : nullptr;
     }
+
+    /// @brief 指定インスタンスの線形メモリサイズを返します。
+    /// @param instance_id  インスタンス ID。
     std::size_t GetLinearMemorySize(int32_t instance_id) const noexcept {
         return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
             ? modules_[instance_id]->linear_memory_size : 0;
     }
-    // 現在実行中のモジュールのメモリを返す（ホストモジュール向け後方互換API）
+
+    /// @brief 現在実行中のモジュールの線形メモリ先頭ポインタを返します（ホストモジュール向け後方互換 API）。
     uint8_t* GetLinearMemory() const noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
         const WasmThreadContext* ctx = scheduler_.GetCurrentThreadContext();
@@ -222,6 +280,8 @@ public:
         }
         return nullptr;
     }
+
+    /// @brief 現在実行中のモジュールの線形メモリサイズを返します（ホストモジュール向け後方互換 API）。
     std::size_t GetLinearMemorySize() const noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
         const WasmThreadContext* ctx = scheduler_.GetCurrentThreadContext();
@@ -241,22 +301,35 @@ public:
         }
         return 0;
     }
+
+    /// @brief エンジンが使用するメモリプールへのポインタを返します。
     WasmMemoryPool* GetMemoryPool() const noexcept { return pool_; }
 
-    // 内部的なモジュール解決ヘルパー
+    /// @brief モジュール名でモジュールインスタンスを検索します。
     WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) noexcept;
+    /// @brief モジュール名でモジュールインスタンスを検索します（const 版）。
     const WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) const noexcept;
+
+    /// @brief インスタンス ID でモジュールインスタンスを返します。
+    /// @param id  インスタンス ID（`Load()` の戻り値）。
     WasmModuleInstance* GetModuleInstanceById(int32_t id) noexcept {
         return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id] && modules_[id]->is_active) ? modules_[id] : nullptr;
     }
+    /// @brief インスタンス ID でモジュールインスタンスを返します（const 版）。
     const WasmModuleInstance* GetModuleInstanceById(int32_t id) const noexcept {
         return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id] && modules_[id]->is_active) ? modules_[id] : nullptr;
     }
 
-    // モジュールをアンロード（名前で指定）
+    /// @brief 指定名のモジュールをアンロードします。
+    /// @param name      モジュール名。
+    /// @param name_len  モジュール名の長さ（バイト数）。
     void Unload(const char* name, std::size_t name_len) noexcept;
 
-    // モジュールに別名を登録（インポート解決で使用）
+    /// @brief モジュールに別名を登録します（インポート解決で使用）。
+    /// @param real_name      実モジュール名。
+    /// @param real_name_len  実モジュール名の長さ（バイト数）。
+    /// @param alias_name     別名。
+    /// @param alias_name_len 別名の長さ（バイト数）。
     void RegisterAlias(const char* real_name, std::size_t real_name_len, const char* alias_name, std::size_t alias_name_len) noexcept;
 
 private:
@@ -275,17 +348,12 @@ private:
 
     WasmResult ParseSections(WasmModuleInstance* mod, const uint8_t* binary, std::size_t size) noexcept;
 
-    // 事前検査: ParseSections後にLoad内で呼び出す
     WasmResult Validate(WasmModuleInstance* mod) noexcept;
     WasmResult ValidateFunctionBody(WasmModuleInstance* mod, uint32_t func_idx) noexcept;
 
-    // Execute時に未解決のkImportをすべて解決する
     void ResolveImports(WasmModuleInstance* mod) noexcept;
-
-    // ロード済みモジュールのプール確保メモリを個別解放するヘルパー
     void FreeModuleInstance(WasmModuleInstance* mod) noexcept;
 
-    // エイリアス名 → 実モジュール名の対応表
     struct NameAlias {
         char alias[64];
         std::size_t alias_len;
@@ -296,26 +364,19 @@ private:
     NameAlias name_aliases_[kMaxAliases];
     std::size_t name_alias_count_;
 
-    // エイリアスを考慮したモジュール名解決（out_len に解決後の長さを返す）
     const char* ResolveAlias(const char* name, std::size_t name_len, std::size_t& out_len) const noexcept;
 
     WasmMemoryPool* pool_;
-
-    // 複数モジュールを格納するポインタ配列（インスタンスはLoad時にプールから確保）
     WasmModuleInstance* modules_[kMaxModules];
 
 #if EMBWASM_ENABLE_MULTITHREADING
     WasmScheduler scheduler_;
 #else
-    // 現在の実行コンテキスト（非MTビルドのみ）
     WasmThreadContext* ctx_;
 #endif
 
-    // 統計情報
     std::size_t max_call_stack_depth_;
     std::size_t max_stack_depth_;
-
-    // ユーザーデータ
     void* user_data_;
     void** module_user_datas_;
 };

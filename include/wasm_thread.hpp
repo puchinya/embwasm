@@ -10,59 +10,62 @@ class WasmEngine;
 struct WasmFunction;
 struct WasmModuleInstance;
 
-// 制御ブロックのラベル情報
+/// @brief 制御ブロック（`block` / `loop` / `if`）のラベル情報。
+///
+/// 分岐（`br`）時のジャンプ先 IP とスタック巻き戻し位置を保持します。
 struct WasmLabel {
-    const uint8_t* pc;         // ブロック終了（end）またはループ開始のIP
-    std::size_t stack_top;     // 入場時のスタックトップ（br時にここまで戻す）
-    uint8_t opcode;            // ブロックの種類（0x02: block, 0x03: loop, 0x04: if）
-    uint32_t param_count;      // ブロックのパラメータ数
-    uint32_t result_count;     // ブロックの結果数
+    const uint8_t* pc;      ///< ジャンプ先 IP。`block`/`if` は `end` の次、`loop` はループ先頭。
+    std::size_t stack_top;  ///< ブロック進入時のデータスタック高さ（`br` 時にここまで巻き戻す）。
+    uint8_t opcode;         ///< ブロック種別（0x02: block, 0x03: loop, 0x04: if）。
+    uint32_t param_count;   ///< ブロックのパラメータ数。
+    uint32_t result_count;  ///< ブロックの結果数。
 };
 
-// WASM関数呼び出しのフレーム情報
+/// @brief WASM 関数呼び出し 1 フレームの実行コンテキスト。
+///
+/// コールスタック（`WasmThreadContext::call_stack`）に積まれ、
+/// 再帰を使わずループで関数呼び出しを実現します。
 struct WasmFrame {
-    const WasmFunction* func;
-    const uint8_t* ip;
-    const uint8_t* limit;
-    WasmValue* locals;      // WasmThreadContext::locals_pool 内のスライスへのポインタ
-    uint32_t total_locals;
+    const WasmFunction* func; ///< 実行中の関数。
+    const uint8_t* ip;        ///< 現在のインストラクションポインタ。
+    const uint8_t* limit;     ///< バイトコードの終端ポインタ。
+    WasmValue* locals;        ///< `WasmThreadContext::locals_pool` 内のスライスへのポインタ。
+    uint32_t total_locals;    ///< 引数＋ローカル変数の合計数。
 
-    // ラベルスタック（制御フロー用）
-    WasmLabel labels[kMaxLabels];
-    std::size_t label_stack_top;
+    WasmLabel labels[kMaxLabels]; ///< 制御フロー用ラベルスタック。
+    std::size_t label_stack_top;  ///< ラベルスタックの現在深さ。
 };
 
-// スレッドの実行状態
+/// @brief スレッドの実行状態。
 enum class ThreadState : uint8_t {
-    kReady,     // 実行可能
-    kRunning,   // 実行中
-    kWaiting,   // イベント待ち
-    kTerminated // 終了
+    kReady,      ///< 実行可能状態。スケジューラに選択される待ち。
+    kRunning,    ///< 現在実行中。
+    kWaiting,    ///< イベント待ち（`event_wait` により移行）。
+    kTerminated  ///< 実行終了。
 };
 
-// スレッドごとの実行コンテキスト
+/// @brief スレッドごとの実行コンテキスト。
+///
+/// データスタック・コールスタック・ローカル変数プールをすべて静的配列で保持します。
+/// 動的メモリ確保を行いません。
 struct WasmThreadContext {
-    uint32_t id;
-    ThreadState state;
+    uint32_t id;        ///< スレッド ID（1-based）。
+    ThreadState state;  ///< 現在の実行状態。
 
-    // データスタック
-    WasmValue stack[kWasmStackSize];
-    std::size_t stack_top;
+    WasmValue stack[kWasmStackSize]; ///< WASM 演算スタック。
+    std::size_t stack_top;           ///< スタックの現在深さ。
 
-    // コールスタック
-    WasmFrame call_stack[kWasmCallStackSize];
-    std::size_t call_stack_top;
+    WasmFrame call_stack[kWasmCallStackSize]; ///< WASM コールスタック。
+    std::size_t call_stack_top;               ///< コールスタックの現在深さ。
 
-    // ローカル変数プール（全フレームで共有。フレームごとに必要数を切り出す）
+    /// @brief 全フレーム共有のローカル変数プール。フレームごとに必要数を切り出します。
     WasmValue locals_pool[kLocalsPoolSize];
-    std::size_t locals_pool_top; // 現在の使用済み先頭インデックス
+    std::size_t locals_pool_top; ///< 現在の使用済み先頭インデックス。
 
-    // 待ちイベントID（kWaiting時のみ有効）
-    uint32_t wait_event_id;
+    uint32_t wait_event_id;        ///< 待機中のイベント ID（kWaiting 時のみ有効）。
+    WasmModuleInstance* start_module; ///< 初回 `ExecuteInternal` に渡すモジュールインスタンス。
 
-    // スレッド開始モジュール（初回ExecuteInternal用）
-    WasmModuleInstance* start_module;
-
+    /// @brief コンテキストを初期状態（`kTerminated`）にリセットします。
     void Reset() noexcept {
         id = 0;
         state = ThreadState::kTerminated;
@@ -73,68 +76,97 @@ struct WasmThreadContext {
 
 #if EMBWASM_ENABLE_MULTITHREADING
 
-// イベント（セマフォ/フラグ的な役割）
+/// @brief スレッド間同期用イベント（セマフォ / フラグ相当）。
 struct WasmEvent {
-    uint32_t id;
-    bool signaled;
+    uint32_t id;    ///< イベント ID（1-based）。
+    bool signaled;  ///< シグナル済みフラグ。
 
+    /// @brief イベントを未シグナル状態にリセットします。
     void Reset() noexcept {
         id = 0;
         signaled = false;
     }
 };
 
-// スケジューラ
+/// @brief 協調型マルチスレッドスケジューラ。
+///
+/// `WasmEngine` に内包されており、ユーザーが直接インスタンス化する必要はありません。
+/// `engine.GetScheduler()` で参照を取得できます。
+/// ラウンドロビン方式で `kReady` 状態のスレッドを順に実行します。
 class WasmScheduler {
 public:
-    // slot 0 をメインスレッド専用に予約（Execute / start関数はここで実行）
+    /// @brief メインスレッド専用スロットのインデックス（slot 0）。
     static constexpr std::size_t kMainThreadIndex = 0;
 
+    /// @brief コンストラクタ。`WasmEngine` の初期化時に自動的に呼ばれます。
+    /// @param engine  所属するエンジンインスタンスへの参照。
     WasmScheduler(WasmEngine& engine) noexcept;
 
-    // スレッドプール確保＆メインスレッド初期化（WasmEngine::Init() から呼ぶ）
+    /// @brief スレッドプールを確保しメインスレッドを初期化します。`WasmEngine::Init()` から呼ばれます。
     void Init() noexcept;
 
-    // クリーンアップ（WasmEngine::Deinit() から呼ぶ）
+    /// @brief スケジューラをクリーンアップします。`WasmEngine::Deinit()` から呼ばれます。
     void Deinit() noexcept;
 
-    // ワーカースレッドの作成（slot 1 以降を使用。ホスト API から呼ぶ）
+    /// @brief ワーカースレッドを作成します（slot 1 以降を使用）。ホスト API から呼ばれます。
+    /// @param func_index  実行する WASM 関数のインデックス。
+    /// @return 作成されたスレッドの ID（1-based）。作成失敗時は 0 を返します。
     uint32_t CreateThread(uint32_t func_index) noexcept;
 
-    // イベントの取得/シグナル
+    /// @brief 新しいイベントを取得します。
+    /// @return イベント ID（1-based）。取得失敗時は 0 を返します。
     uint32_t CreateEvent() noexcept;
+
+    /// @brief 指定イベントをシグナルし、待機中のスレッドを `kReady` にします。
+    /// @param event_id  シグナルするイベント ID。
     void SignalEvent(uint32_t event_id) noexcept;
+
+    /// @brief 指定スレッドを指定イベントの待機状態（`kWaiting`）に移行します。
+    ///        既にシグナル済みの場合は待機せずに `kReady` のままにします。
+    /// @param thread_id  対象スレッドの ID（1-based）。
+    /// @param event_id   待機するイベント ID。
     void WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept;
 
-    // スケジューリング実行（すべてのスレッドが終了するまで回す、または1ステップ実行）
+    /// @brief すべてのスレッドが終了するまでラウンドロビンで実行します。
+    /// @return 正常終了時は kOk。いずれかのスレッドでエラーが発生した場合はそのエラーコード。
     WasmResult Run() noexcept;
 
-    // メインスレッドにモジュールと関数を割り当て、kReady 状態にする（Execute / start関数 から呼ぶ）
+    /// @brief メインスレッドにモジュールと関数を割り当て `kReady` 状態にします。
+    ///        `WasmEngine::Execute()` および Start 関数実行時に内部から呼ばれます。
+    /// @param mod         実行するモジュールインスタンス。
+    /// @param func_index  実行する関数のインデックス。
+    /// @return メインスレッドの ID。
     uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
 
-    // メインスレッドコンテキストの取得
+    /// @brief メインスレッドのコンテキストを返します。未初期化時は `nullptr` を返します。
     WasmThreadContext* GetMainThreadContext() noexcept {
         return (threads_) ? threads_[kMainThreadIndex] : nullptr;
     }
 
-    // スレッドコンテキストの取得（thread_id は CreateThread の戻り値、1-based）
+    /// @brief 指定 ID のスレッドコンテキストを返します。
+    /// @param thread_id  スレッド ID（`CreateThread` の戻り値、1-based）。
+    /// @return 対応する WasmThreadContext へのポインタ。無効な ID の場合は `nullptr`。
     WasmThreadContext* GetThreadContext(uint32_t thread_id) noexcept {
         if (thread_id == 0 || thread_id > kMaxThreads || !threads_) return nullptr;
         return threads_[thread_id - 1];
     }
 
+    /// @brief 所属するエンジンインスタンスへの参照を返します。
     WasmEngine& GetEngine() noexcept { return engine_; }
 
+    /// @brief 現在実行中のスレッドコンテキストを返します。
     WasmThreadContext* GetCurrentThreadContext() noexcept {
         return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
     }
+    /// @brief 現在実行中のスレッドコンテキストを返します（const 版）。
     const WasmThreadContext* GetCurrentThreadContext() const noexcept {
         return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
     }
 
 private:
+    /// @brief ラウンドロビンで kReady なスレッドを 1 つ選び 1 ステップ実行します。
     WasmResult Step() noexcept;
-    
+
     WasmEngine& engine_;
     WasmThreadContext** threads_;
     WasmEvent events_[kMaxEvents];
