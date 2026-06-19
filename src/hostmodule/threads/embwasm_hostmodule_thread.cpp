@@ -29,7 +29,7 @@ WasmResult ThreadSpawn(
     int32_t resolved_idx = -1;
 
     // 呼び出し元のモジュールを取得
-    WasmThreadContext* ctx = engine.GetContext();
+    WasmThreadContext* ctx = scheduler->GetCurrentThreadContext();
     WasmModuleInstance* calling_mod = nullptr;
     if (ctx && ctx->call_stack_top > 0 && ctx->call_stack[ctx->call_stack_top - 1].func) {
         calling_mod = const_cast<WasmModuleInstance*>(

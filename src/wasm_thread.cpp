@@ -68,7 +68,7 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
             threads_[i].wait_event_id = func_index;
 
             // 呼び出し元のモジュールを記録（初回ExecuteInternal用）
-            WasmThreadContext* active_ctx = engine_.GetContext();
+            WasmThreadContext* active_ctx = GetCurrentThreadContext();
             WasmModuleInstance* caller_mod = nullptr;
             if (active_ctx && active_ctx->call_stack_top > 0) {
                 const WasmFrame& top = active_ctx->call_stack[active_ctx->call_stack_top - 1];
@@ -146,8 +146,6 @@ WasmResult WasmScheduler::Step() noexcept {
         if (threads_[idx].state == ThreadState::kReady) {
             current_thread_index_ = idx;
             WasmThreadContext& ctx = threads_[idx];
-            
-            engine_.SetContext(&ctx);
             ctx.state = ThreadState::kRunning;
             
             WasmResult res;

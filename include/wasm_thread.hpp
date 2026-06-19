@@ -129,6 +129,9 @@ public:
     WasmThreadContext* GetCurrentThreadContext() noexcept {
         return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr;
     }
+    const WasmThreadContext* GetCurrentThreadContext() const noexcept {
+        return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr;
+    }
 
 private:
     bool EnsureThreadsAllocated() noexcept;

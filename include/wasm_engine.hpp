@@ -208,8 +208,6 @@ public:
     void SetModuleUserData(HostModuleId module_id, void* user_data) noexcept;
 
 #if EMBWASM_ENABLE_MULTITHREADING
-    WasmThreadContext* GetContext() const noexcept { return ctx_; }
-
     // スケジューラの取得
     WasmScheduler* GetScheduler() noexcept { return &scheduler_; }
 #endif
@@ -238,8 +236,13 @@ public:
     }
     // 現在実行中のモジュールのメモリを返す（ホストモジュール向け後方互換API）
     uint8_t* GetLinearMemory() const noexcept {
-        if (ctx_ && ctx_->call_stack_top > 0) {
-            const WasmFrame& frame = ctx_->call_stack[ctx_->call_stack_top - 1];
+#if EMBWASM_ENABLE_MULTITHREADING
+        const WasmThreadContext* ctx = scheduler_.GetCurrentThreadContext();
+#else
+        const WasmThreadContext* ctx = ctx_;
+#endif
+        if (ctx && ctx->call_stack_top > 0) {
+            const WasmFrame& frame = ctx->call_stack[ctx->call_stack_top - 1];
             if (frame.func && frame.func->module) {
                 return frame.func->module->linear_memory_ptr;
             }
@@ -252,8 +255,13 @@ public:
         return nullptr;
     }
     std::size_t GetLinearMemorySize() const noexcept {
-        if (ctx_ && ctx_->call_stack_top > 0) {
-            const WasmFrame& frame = ctx_->call_stack[ctx_->call_stack_top - 1];
+#if EMBWASM_ENABLE_MULTITHREADING
+        const WasmThreadContext* ctx = scheduler_.GetCurrentThreadContext();
+#else
+        const WasmThreadContext* ctx = ctx_;
+#endif
+        if (ctx && ctx->call_stack_top > 0) {
+            const WasmFrame& frame = ctx->call_stack[ctx->call_stack_top - 1];
             if (frame.func && frame.func->module) {
                 return frame.func->module->linear_memory_size;
             }
@@ -285,10 +293,6 @@ public:
 
 private:
     friend class WasmScheduler;
-
-#if EMBWASM_ENABLE_MULTITHREADING
-    void SetContext(WasmThreadContext* ctx) noexcept { ctx_ = ctx; }
-#endif
 
     struct WasmModuleCounts {
         std::size_t type_count;
@@ -332,8 +336,10 @@ private:
     // 複数モジュールを格納する配列
     WasmModuleInstance modules_[kMaxModules];
 
-    // 現在の実行コンテキスト
+#if !EMBWASM_ENABLE_MULTITHREADING
+    // 現在の実行コンテキスト（非MTビルドのみ）
     WasmThreadContext* ctx_;
+#endif
 
 #if EMBWASM_ENABLE_MULTITHREADING
     WasmScheduler scheduler_;
