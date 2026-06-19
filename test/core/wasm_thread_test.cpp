@@ -17,14 +17,13 @@ class WasmThreadTest : public ::testing::Test {
 protected:
     WasmMemoryPool pool;
     WasmEngine engine;
-    WasmScheduler scheduler;
+    WasmScheduler& scheduler;
 
-    WasmThreadTest() : engine(), scheduler(engine) {}
+    WasmThreadTest() : engine(), scheduler(*engine.GetScheduler()) {}
 
     void SetUp() override {
         pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
-        engine.Init(pool);
-        scheduler.SetAsInstance();
+        engine.Init(pool); // Init() 内で scheduler_.SetAsInstance() が呼ばれる
     }
 
     void TearDown() override {
@@ -48,9 +47,12 @@ TEST_F(WasmThreadTest, EventReset) {
 }
 
 TEST_F(WasmThreadTest, CreateThread) {
+    // ワーカースレッド（slot 1 以降）が生成されることを確認
     uint32_t tid = scheduler.CreateThread(0);
     EXPECT_NE(tid, 0);
-    EXPECT_EQ(scheduler.GetCurrentThread()->id, tid);
+    WasmThreadContext* ctx = scheduler.GetThreadContext(tid);
+    ASSERT_NE(ctx, nullptr);
+    EXPECT_EQ(ctx->id, tid);
 }
 
 TEST_F(WasmThreadTest, CreateEvent) {
@@ -61,25 +63,27 @@ TEST_F(WasmThreadTest, CreateEvent) {
 TEST_F(WasmThreadTest, SignalWaitEvent) {
     uint32_t tid = scheduler.CreateThread(0);
     uint32_t eid = scheduler.CreateEvent();
-    
+    WasmThreadContext* ctx = scheduler.GetThreadContext(tid);
+    ASSERT_NE(ctx, nullptr);
+
     scheduler.WaitEvent(tid, eid);
-    // ctx.stateは threads_ がプライベートなので直接見れないが、GetCurrentThread経由で確認
-    EXPECT_EQ(scheduler.GetCurrentThread()->state, ThreadState::kWaiting);
-    EXPECT_EQ(scheduler.GetCurrentThread()->wait_event_id, eid);
+    EXPECT_EQ(ctx->state, ThreadState::kWaiting);
+    EXPECT_EQ(ctx->wait_event_id, eid);
 
     scheduler.SignalEvent(eid);
-    EXPECT_EQ(scheduler.GetCurrentThread()->state, ThreadState::kReady);
+    EXPECT_EQ(ctx->state, ThreadState::kReady);
 }
 
 TEST_F(WasmThreadTest, WaitSignaledEvent) {
     uint32_t tid = scheduler.CreateThread(0);
     uint32_t eid = scheduler.CreateEvent();
-    
+    WasmThreadContext* ctx = scheduler.GetThreadContext(tid);
+    ASSERT_NE(ctx, nullptr);
+
     scheduler.SignalEvent(eid);
     scheduler.WaitEvent(tid, eid);
-    
     // シグナル済みなら即座にReadyに戻る
-    EXPECT_EQ(scheduler.GetCurrentThread()->state, ThreadState::kReady);
+    EXPECT_EQ(ctx->state, ThreadState::kReady);
 }
 
 TEST_F(WasmThreadTest, ThreadSpawnApi) {

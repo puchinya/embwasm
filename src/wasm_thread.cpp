@@ -7,9 +7,24 @@ namespace embwasm {
 
 WasmScheduler* WasmScheduler::instance_ = nullptr;
 
-WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept 
+WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept
     : engine_(engine), threads_(nullptr), current_thread_index_(0) {
-    engine_.SetScheduler(this);
+    for (std::size_t i = 0; i < kMaxEvents; ++i) {
+        events_[i].Reset();
+        events_[i].id = static_cast<uint32_t>(i + 1);
+    }
+}
+
+void WasmScheduler::Init() noexcept {
+    if (!EnsureThreadsAllocated()) return;
+    // メインスレッド（slot 0）は EnsureThreadsAllocated() 内で kTerminated として確保済み。
+    // 実行タスクの割り当ては SetupMainThread(mod, func_index) で行う。
+    SetAsInstance();
+}
+
+void WasmScheduler::Deinit() noexcept {
+    threads_ = nullptr;
+    current_thread_index_ = 0;
     for (std::size_t i = 0; i < kMaxEvents; ++i) {
         events_[i].Reset();
         events_[i].id = static_cast<uint32_t>(i + 1);
@@ -32,37 +47,40 @@ bool WasmScheduler::EnsureThreadsAllocated() noexcept {
     return true;
 }
 
+uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept {
+    if (!EnsureThreadsAllocated()) return 0;
+    // メインスレッド（slot 0）を設定して返す
+    WasmThreadContext& main = threads_[kMainThreadIndex];
+    main.Reset();
+    main.id = static_cast<uint32_t>(kMainThreadIndex + 1);
+    main.state = ThreadState::kReady;
+    main.stack_top = 0;
+    main.call_stack_top = 0;
+    main.locals_pool_top = 0;
+    main.wait_event_id = func_index;
+    main.start_module = mod;
+    return main.id;
+}
+
 uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
     if (!EnsureThreadsAllocated()) return 0;
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+    // ワーカースレッド: slot 1 以降を使用（slot 0 はメインスレッド専用）
+    for (std::size_t i = kMainThreadIndex + 1; i < kMaxThreads; ++i) {
         if (threads_[i].state == ThreadState::kTerminated) {
             threads_[i].state = ThreadState::kReady;
             threads_[i].stack_top = 0;
             threads_[i].call_stack_top = 0;
-            
-            // 最初の呼び出しのために実行準備
             threads_[i].wait_event_id = func_index;
 
             // 呼び出し元のモジュールを記録（初回ExecuteInternal用）
-            {
-                WasmThreadContext* active_ctx = engine_.GetContext();
-                WasmModuleInstance* caller_mod = nullptr;
-                if (active_ctx && active_ctx->call_stack_top > 0) {
-                    const WasmFrame& top = active_ctx->call_stack[active_ctx->call_stack_top - 1];
-                    if (top.func) caller_mod = const_cast<WasmModuleInstance*>(top.func->module);
-                }
-                threads_[i].start_module = caller_mod;
-            }
-            
-            // 重要：ここで WasmEngine がこの新しいコンテキストを参照するようにする
-            // 呼び出し元の Execute 内で引数を積むために必要。
-            // ただし、現在すでに実行中のスレッドがある場合は、その実行コンテキストを壊さないように、
-            // コンテキストの切り替えを行わない。
             WasmThreadContext* active_ctx = engine_.GetContext();
-            if (!active_ctx || active_ctx->state != ThreadState::kRunning) {
-                engine_.SetContext(&threads_[i]);
+            WasmModuleInstance* caller_mod = nullptr;
+            if (active_ctx && active_ctx->call_stack_top > 0) {
+                const WasmFrame& top = active_ctx->call_stack[active_ctx->call_stack_top - 1];
+                if (top.func) caller_mod = const_cast<WasmModuleInstance*>(top.func->module);
             }
-            
+            threads_[i].start_module = caller_mod;
+
             return threads_[i].id;
         }
     }

@@ -334,7 +334,7 @@ WasmEngine::WasmEngine() noexcept
       pool_(nullptr),
       ctx_(nullptr),
 #if EMBWASM_ENABLE_MULTITHREADING
-      scheduler_(nullptr),
+      scheduler_(*this),
 #endif
       max_call_stack_depth_(0), max_stack_depth_(0),
       user_data_(nullptr),
@@ -369,6 +369,9 @@ void WasmEngine::Init(WasmMemoryPool& pool) noexcept {
         }
     }
     InitializeAllHostModules(*this);
+#if EMBWASM_ENABLE_MULTITHREADING
+    scheduler_.Init();
+#endif
 }
 
 void WasmEngine::ResolveImports(WasmModuleInstance* mod) noexcept {
@@ -494,6 +497,9 @@ void WasmEngine::Deinit() noexcept {
     module_user_datas_ = nullptr;
     user_data_ = nullptr;
     pool_ = nullptr;
+#if EMBWASM_ENABLE_MULTITHREADING
+    scheduler_.Deinit();
+#endif
 }
 
 void WasmEngine::UnloadAll() noexcept {
@@ -780,22 +786,21 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
 
     // Start 関数の実行
     if (mod->start_function_index != -1) {
-        WasmThreadContext default_ctx;
-        bool has_custom_ctx = (ctx_ != nullptr);
-        if (!has_custom_ctx) {
-            default_ctx.Reset();
-            default_ctx.state = ThreadState::kRunning;
-            default_ctx.stack_top = 0;
-            default_ctx.call_stack_top = 0;
-            ctx_ = &default_ctx;
+#if EMBWASM_ENABLE_MULTITHREADING
+        if (ctx_ != nullptr) {
+            // 既にスケジューラが実行中（別スレッドから Load が呼ばれた場合）はそのコンテキストで実行
+            res = ExecuteInternal(mod, static_cast<uint32_t>(mod->start_function_index));
+        } else {
+            uint32_t tid = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(mod->start_function_index));
+            if (tid == 0) {
+                FreeModuleInstance(mod);
+                return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+            }
+            res = scheduler_.Run();
         }
-
+#else
         res = ExecuteInternal(mod, static_cast<uint32_t>(mod->start_function_index));
-
-        if (!has_custom_ctx) {
-            ctx_ = nullptr;
-        }
-
+#endif
         if (res != WasmResult::kOk) {
             FreeModuleInstance(mod);
             return -static_cast<int32_t>(res);
@@ -2050,56 +2055,41 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
         return WasmResult::kErrorFunctionNotFound;
     }
 
-    // デフォルトのコンテキストを使用（マルチスレッドを想定していない場合）
-    WasmThreadContext default_ctx;
-    if (!ctx_) {
-        default_ctx.Reset();
-        default_ctx.state = ThreadState::kRunning;
-        default_ctx.stack_top = 0;
-        default_ctx.call_stack_top = 0;
-        ctx_ = &default_ctx;
-    }
+#if EMBWASM_ENABLE_MULTITHREADING
+    // メインスレッドを使って実行
+    uint32_t thread_id = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(func_idx));
+    if (thread_id == 0) return WasmResult::kErrorOutOfMemory;
 
-    // 引数を仮想スタックにセット。
-    if (ctx_) {
-        ctx_->stack_top = 0;
-        for (uint32_t i = 0; i < arg_count; ++i) {
-            if (ctx_->stack_top >= kWasmStackSize) {
-                if (ctx_ == &default_ctx) ctx_ = nullptr;
-                return WasmResult::kErrorStackOverflow;
-            }
-            ctx_->stack[ctx_->stack_top++] = args[i];
-            if (ctx_->stack_top > max_stack_depth_) {
-                max_stack_depth_ = ctx_->stack_top;
-            }
+    WasmThreadContext* exec_ctx = scheduler_.GetMainThread();
+    if (!exec_ctx) return WasmResult::kErrorOutOfMemory;
+
+    exec_ctx->stack_top = 0;
+    for (uint32_t i = 0; i < arg_count; ++i) {
+        if (exec_ctx->stack_top >= kWasmStackSize) {
+            exec_ctx->state = ThreadState::kTerminated;
+            return WasmResult::kErrorStackOverflow;
+        }
+        exec_ctx->stack[exec_ctx->stack_top++] = args[i];
+        if (exec_ctx->stack_top > max_stack_depth_) {
+            max_stack_depth_ = exec_ctx->stack_top;
         }
     }
 
-    // 内部実行開始
-    WasmResult res = ExecuteInternal(mod, func_idx);
+    WasmResult res = scheduler_.Run();
 
     if (res == WasmResult::kOk) {
-        // 実行結果を戻り値配列に格納
         const WasmFunction& func = mod->functions[func_idx];
         uint32_t actual_result_count = 0;
         if (func.type_index < mod->signature_count) {
             actual_result_count = mod->signatures[func.type_index].result_count;
         }
 
-        // result_count が actual_result_count より多い場合はエラー（バッファ不足）
-        if (result_count > actual_result_count) {
-            if (ctx_ == &default_ctx) ctx_ = nullptr;
-            return WasmResult::kErrorRuntimeError;
-        }
-
-        if (!ctx_ || ctx_->stack_top < actual_result_count) {
-            if (ctx_ == &default_ctx) ctx_ = nullptr;
-            return WasmResult::kErrorRuntimeError;
-        }
+        if (result_count > actual_result_count) return WasmResult::kErrorRuntimeError;
+        if (exec_ctx->stack_top < actual_result_count) return WasmResult::kErrorRuntimeError;
 
         WasmValue temp_results[WasmTypeSignature::kMaxResults];
         for (uint32_t i = 0; i < actual_result_count; ++i) {
-            temp_results[actual_result_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
+            temp_results[actual_result_count - 1 - i] = exec_ctx->stack[--exec_ctx->stack_top];
         }
 
         uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
@@ -2108,8 +2098,58 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
         }
     }
 
-    if (ctx_ == &default_ctx) ctx_ = nullptr;
     return res;
+#else
+    WasmThreadContext default_ctx;
+    default_ctx.Reset();
+    default_ctx.state = ThreadState::kRunning;
+    default_ctx.stack_top = 0;
+    default_ctx.call_stack_top = 0;
+    ctx_ = &default_ctx;
+
+    for (uint32_t i = 0; i < arg_count; ++i) {
+        if (default_ctx.stack_top >= kWasmStackSize) {
+            ctx_ = nullptr;
+            return WasmResult::kErrorStackOverflow;
+        }
+        default_ctx.stack[default_ctx.stack_top++] = args[i];
+        if (default_ctx.stack_top > max_stack_depth_) {
+            max_stack_depth_ = default_ctx.stack_top;
+        }
+    }
+
+    WasmResult res = ExecuteInternal(mod, static_cast<uint32_t>(func_idx));
+
+    if (res == WasmResult::kOk) {
+        const WasmFunction& func = mod->functions[func_idx];
+        uint32_t actual_result_count = 0;
+        if (func.type_index < mod->signature_count) {
+            actual_result_count = mod->signatures[func.type_index].result_count;
+        }
+
+        if (result_count > actual_result_count) {
+            ctx_ = nullptr;
+            return WasmResult::kErrorRuntimeError;
+        }
+        if (default_ctx.stack_top < actual_result_count) {
+            ctx_ = nullptr;
+            return WasmResult::kErrorRuntimeError;
+        }
+
+        WasmValue temp_results[WasmTypeSignature::kMaxResults];
+        for (uint32_t i = 0; i < actual_result_count; ++i) {
+            temp_results[actual_result_count - 1 - i] = default_ctx.stack[--default_ctx.stack_top];
+        }
+
+        uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
+        for (uint32_t i = 0; i < copy_count; ++i) {
+            results[i] = temp_results[i];
+        }
+    }
+
+    ctx_ = nullptr;
+    return res;
+#endif
 }
 
 WasmModuleInstance* WasmEngine::GetModuleInstance(const char* name, std::size_t name_len) noexcept {

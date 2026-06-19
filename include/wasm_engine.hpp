@@ -211,7 +211,7 @@ public:
     WasmThreadContext* GetContext() const noexcept { return ctx_; }
 
     // スケジューラの取得
-    class WasmScheduler* GetScheduler() const noexcept { return scheduler_; }
+    WasmScheduler* GetScheduler() noexcept { return &scheduler_; }
 #endif
 
 public:
@@ -288,7 +288,6 @@ private:
 
 #if EMBWASM_ENABLE_MULTITHREADING
     void SetContext(WasmThreadContext* ctx) noexcept { ctx_ = ctx; }
-    void SetScheduler(class WasmScheduler* scheduler) noexcept { scheduler_ = scheduler; }
 #endif
 
     struct WasmModuleCounts {
@@ -337,7 +336,7 @@ private:
     WasmThreadContext* ctx_;
 
 #if EMBWASM_ENABLE_MULTITHREADING
-    WasmScheduler* scheduler_;
+    WasmScheduler scheduler_;
 #endif
 
     // 統計情報

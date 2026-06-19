@@ -35,39 +35,12 @@ int main() {
     std::cout << "WASM Loaded successfully." << std::endl;
     std::cout << "Memory Used: " << pool.GetUsedBytes() << " / " << pool.GetTotalBytes() << " bytes" << std::endl;
 
-#if EMBWASM_ENABLE_MULTITHREADING
-    // 6. スケジューラの初期化
-    embwasm::WasmScheduler scheduler(engine);
-    scheduler.SetAsInstance();
-
-    // 7. メインスレッドの作成
-    std::cout << "\nStarting Scheduler with Multithreaded WASM..." << std::endl;
-    int32_t main_idx = engine.GetExportFunctionIndex("main", 4, "main", 4);
-    int32_t t2_idx = engine.GetExportFunctionIndex("main", 4, "thread2", 7);
-    
-    if (main_idx < 0) {
-        std::cerr << "Exported function 'main' not found." << std::endl;
-        return 1;
-    }
-    std::cout << "Main func idx: " << main_idx << ", Thread2 func idx: " << t2_idx << std::endl;
-
-    scheduler.CreateThread(static_cast<uint32_t>(main_idx));
-
-    embwasm::WasmResult run_res = scheduler.Run();
-    if (run_res != embwasm::WasmResult::kOk) {
-        std::cerr << "Scheduler execution failed. Error code: " << static_cast<int>(run_res) << std::endl;
-        return 1;
-    }
-#else
-    // 単一スレッド実行
     std::cout << "\nExecuting WASM 'main' function..." << std::endl;
-    embwasm::WasmValue results[1];
-    embwasm::WasmResult run_res = engine.Execute("main", 4, "main", 4, nullptr, 0, results, 0);
+    embwasm::WasmResult run_res = engine.Execute("main", 4, "main", 4, nullptr, 0, nullptr, 0);
     if (run_res != embwasm::WasmResult::kOk) {
-        std::cerr << "WASM execution failed. Error code: " << static_cast<int>(run_res) << std::endl;
+        std::cerr << "Execution failed. Error code: " << static_cast<int>(run_res) << std::endl;
         return 1;
     }
-#endif
 
     std::cout << "\nExecution finished successfully." << std::endl;
     std::cout << "Max function nesting depth reached: " << engine.GetMaxCallStackDepth() << std::endl;

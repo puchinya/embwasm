@@ -87,9 +87,18 @@ struct WasmEvent {
 // スケジューラ
 class WasmScheduler {
 public:
+    // slot 0 をメインスレッド専用に予約（Execute / start関数はここで実行）
+    static constexpr std::size_t kMainThreadIndex = 0;
+
     WasmScheduler(WasmEngine& engine) noexcept;
 
-    // スレッドの作成
+    // スレッドプール確保＆メインスレッド初期化（WasmEngine::Init() から呼ぶ）
+    void Init() noexcept;
+
+    // クリーンアップ（WasmEngine::Deinit() から呼ぶ）
+    void Deinit() noexcept;
+
+    // ワーカースレッドの作成（slot 1 以降を使用。ホスト API から呼ぶ）
     uint32_t CreateThread(uint32_t func_index) noexcept;
 
     // イベントの取得/シグナル
@@ -101,15 +110,30 @@ public:
     WasmResult Run() noexcept;
     WasmResult Step() noexcept;
 
+    // メインスレッドにモジュールと関数を割り当て、kReady 状態にする（Execute / start関数 から呼ぶ）
+    uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
+
+    // メインスレッドコンテキストの取得
+    WasmThreadContext* GetMainThread() noexcept {
+        return (threads_) ? &threads_[kMainThreadIndex] : nullptr;
+    }
+
+    // スレッドコンテキストの取得（thread_id は CreateThread の戻り値、1-based）
+    WasmThreadContext* GetThreadContext(uint32_t thread_id) noexcept {
+        if (thread_id == 0 || thread_id > kMaxThreads || !threads_) return nullptr;
+        return &threads_[thread_id - 1];
+    }
+
     WasmEngine& GetEngine() noexcept { return engine_; }
 
     // ホストAPIから呼び出すための静的アクセサ（簡易実装のためグローバルまたはシングルトン）
     static WasmScheduler* GetInstance() noexcept { return instance_; }
     void SetAsInstance() noexcept { instance_ = this; }
 
-    WasmThreadContext* GetCurrentThread() noexcept { 
-        return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr; 
+    WasmThreadContext* GetCurrentThread() noexcept {
+        return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr;
     }
+
 
 private:
     bool EnsureThreadsAllocated() noexcept;
