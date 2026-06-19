@@ -117,6 +117,14 @@ struct WasmModuleInstance {
 
     // 開始関数インデックス（Start section）
     int32_t start_function_index;
+
+    uint8_t *GetLinearMemory() const noexcept {
+        return linear_memory_ptr;
+    }
+
+    std::size_t GetLinearMemorySize() const noexcept {
+        return linear_memory_size;
+    }
 };
 
 // ベアメタル環境向け極小WASM実行エンジン
