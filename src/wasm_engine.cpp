@@ -408,6 +408,15 @@ void WasmEngine::ResolveImports(WasmModuleInstance* mod) noexcept {
     mod->imports_resolved = true;
 }
 
+WasmResult WasmEngine::InstantiateModules() noexcept {
+    for (std::size_t i = 0; i < kMaxModules; ++i) {
+        if (modules_[i] && modules_[i]->is_active && !modules_[i]->imports_resolved) {
+            ResolveImports(modules_[i]);
+        }
+    }
+    return WasmResult::kOk;
+}
+
 void WasmEngine::FreeModuleInstance(WasmModuleInstance* mod) noexcept {
     if (!pool_ || !mod || !mod->is_active) return;
 
@@ -488,7 +497,7 @@ void WasmEngine::FreeModuleInstance(WasmModuleInstance* mod) noexcept {
 
 void WasmEngine::Deinit() noexcept {
     if (pool_) {
-        UnloadAll();
+        UnloadAllModules();
         DeinitializeAllHostModules(*this);
         if (module_user_datas_) {
             pool_->Free(module_user_datas_);
@@ -502,7 +511,7 @@ void WasmEngine::Deinit() noexcept {
 #endif
 }
 
-void WasmEngine::UnloadAll() noexcept {
+void WasmEngine::UnloadAllModules() noexcept {
     if (!pool_) return;
     for (std::size_t i = 0; i < kMaxModules; ++i) {
         if (modules_[i]) {
@@ -513,7 +522,7 @@ void WasmEngine::UnloadAll() noexcept {
     name_alias_count_ = 0;
 }
 
-void WasmEngine::Unload(const char* name, std::size_t name_len) noexcept {
+void WasmEngine::UnloadModule(const char* name, std::size_t name_len) noexcept {
     if (!name || !pool_) return;
     for (std::size_t i = 0; i < kMaxModules; ++i) {
         if (modules_[i] && modules_[i]->is_active &&
@@ -573,7 +582,7 @@ const char* WasmEngine::ResolveAlias(const char* name, std::size_t name_len, std
     return name;
 }
 
-int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, const uint8_t* binary, std::size_t size) noexcept {
+int32_t WasmEngine::LoadModule(const char* module_name, std::size_t module_name_len, const uint8_t* binary, std::size_t size) noexcept {
     if (!pool_) return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     if (size < 8) return static_cast<int32_t>(WasmResult::kErrorInvalidMagic);
     if (!module_name || module_name_len == 0 || module_name_len >= 64) {
@@ -2048,9 +2057,7 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
         return WasmResult::kErrorFunctionNotFound;
     }
 
-    if (!mod->imports_resolved) {
-        ResolveImports(mod);
-    }
+    InstantiateModules();
 
     int32_t func_idx = GetExportFunctionIndex(module_name, module_name_len, name, name_len);
     if (func_idx == -1) {

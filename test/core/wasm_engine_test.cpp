@@ -75,15 +75,15 @@ TEST(WasmEngineTest, LoadErrors) {
 
     // 1. サイズ不足
     constexpr uint8_t kTooShort[] = { 0x00, 0x61 };
-    EXPECT_EQ(engine.Load(kTooShort, sizeof(kTooShort)), embwasm::WasmResult::kErrorInvalidMagic);
+    EXPECT_EQ(engine.LoadModule(kTooShort, sizeof(kTooShort)), embwasm::WasmResult::kErrorInvalidMagic);
 
     // 2. マジックナンバーエラー
     constexpr uint8_t kBadMagic[] = { 0x11, 0x22, 0x33, 0x44, 0x01, 0x00, 0x00, 0x00 };
-    EXPECT_EQ(engine.Load(kBadMagic, sizeof(kBadMagic)), embwasm::WasmResult::kErrorInvalidMagic);
+    EXPECT_EQ(engine.LoadModule(kBadMagic, sizeof(kBadMagic)), embwasm::WasmResult::kErrorInvalidMagic);
 
     // 3. バージョンエラー
     constexpr uint8_t kBadVersion[] = { 0x00, 0x61, 0x73, 0x6d, 0x02, 0x00, 0x00, 0x00 };
-    EXPECT_EQ(engine.Load(kBadVersion, sizeof(kBadVersion)), embwasm::WasmResult::kErrorInvalidVersion);
+    EXPECT_EQ(engine.LoadModule(kBadVersion, sizeof(kBadVersion)), embwasm::WasmResult::kErrorInvalidVersion);
 
     // 4. 不明なセクション形式 (form != 0x60) -> kErrorUnknownSection
     constexpr uint8_t kWasmBadForm[] = {
@@ -92,7 +92,7 @@ TEST(WasmEngineTest, LoadErrors) {
           0x61, // 0x60 であるべきところを 0x61
           0x00, 0x00
     };
-    EXPECT_EQ(engine.Load(kWasmBadForm, sizeof(kWasmBadForm)), embwasm::WasmResult::kErrorUnknownSection);
+    EXPECT_EQ(engine.LoadModule(kWasmBadForm, sizeof(kWasmBadForm)), embwasm::WasmResult::kErrorUnknownSection);
 
     // 5. 完全に不正なインポート種類 (kind=0x05, 仕様外) -> kOk (スキップ扱い)
     // 注: kind=0x01(table), 0x02(memory), 0x03(global) は有効なインポート種別として処理される
@@ -105,7 +105,7 @@ TEST(WasmEngineTest, LoadErrors) {
           0x01, // table import (有効な種別)
           0x70, 0x00, 0x00  // funcref, min=0 (tableの構文)
     };
-    EXPECT_EQ(engine.Load(kWasmBadImportKind, sizeof(kWasmBadImportKind)), embwasm::WasmResult::kOk);
+    EXPECT_EQ(engine.LoadModule(kWasmBadImportKind, sizeof(kWasmBadImportKind)), embwasm::WasmResult::kOk);
 
     // 6. ホスト関数が見つからない -> kOk (未解決インポートはno-opとして許容)
     constexpr uint8_t kWasmImportNotFound[] = {
@@ -117,7 +117,7 @@ TEST(WasmEngineTest, LoadErrors) {
           0x00, // kind: Function
           0x00  // type index
     };
-    EXPECT_EQ(engine.Load(kWasmImportNotFound, sizeof(kWasmImportNotFound)), embwasm::WasmResult::kOk);
+    EXPECT_EQ(engine.LoadModule(kWasmImportNotFound, sizeof(kWasmImportNotFound)), embwasm::WasmResult::kOk);
 
     // 7. 型の引数制限超え -> kErrorOutOfMemory
     {
@@ -155,7 +155,7 @@ TEST(WasmEngineTest, LoadErrors) {
         };
         too_many_params_wasm.insert(too_many_params_wasm.end(), sec_len_bytes.begin(), sec_len_bytes.end());
         too_many_params_wasm.insert(too_many_params_wasm.end(), type_body.begin(), type_body.end());
-        EXPECT_EQ(engine.Load(too_many_params_wasm.data(), too_many_params_wasm.size()), embwasm::WasmResult::kErrorOutOfMemory);
+        EXPECT_EQ(engine.LoadModule(too_many_params_wasm.data(), too_many_params_wasm.size()), embwasm::WasmResult::kErrorOutOfMemory);
     }
 
     // 8. 型の戻り値制限超え -> kErrorOutOfMemory
@@ -194,6 +194,6 @@ TEST(WasmEngineTest, LoadErrors) {
         };
         too_many_results_wasm.insert(too_many_results_wasm.end(), sec_len_bytes.begin(), sec_len_bytes.end());
         too_many_results_wasm.insert(too_many_results_wasm.end(), type_body.begin(), type_body.end());
-        EXPECT_EQ(engine.Load(too_many_results_wasm.data(), too_many_results_wasm.size()), embwasm::WasmResult::kErrorOutOfMemory);
+        EXPECT_EQ(engine.LoadModule(too_many_results_wasm.data(), too_many_results_wasm.size()), embwasm::WasmResult::kErrorOutOfMemory);
     }
 }

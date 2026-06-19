@@ -21,7 +21,7 @@ int main() {
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
-    int32_t instance_id = engine.Load("main", 4, kMainWasmBinary, kMainWasmBinarySize);
+    int32_t instance_id = engine.LoadModule("main", 4, kMainWasmBinary, kMainWasmBinarySize);
     if (instance_id < 0) {
         std::cerr << "Failed to load WASM binary. Error code: " << instance_id << std::endl;
         return 1;

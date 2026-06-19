@@ -88,7 +88,7 @@ private:
             0x02, 0x00, 0x0B,   // print_i32_f32
             0x02, 0x00, 0x0B,   // print_f64_f64
         };
-        engine_.Load("spectest", 8, kSpectestWasm, sizeof(kSpectestWasm));
+        engine_.LoadModule("spectest", 8, kSpectestWasm, sizeof(kSpectestWasm));
     }
 
 public:
@@ -113,17 +113,17 @@ public:
             std::strncpy(name, module_name, sizeof(name) - 1);
             name[sizeof(name) - 1] = '\0';
             // 同名モジュールが既にあれば置き換える
-            engine_.Unload(name, std::strlen(name));
+            engine_.UnloadModule(name, std::strlen(name));
         } else {
             std::snprintf(name, sizeof(name), "mod%zu", load_count_++);
             // 前回の匿名モジュールをアンロード（registerされていなければ）
             if (current_anonymous_name_[0] != '\0') {
-                engine_.Unload(current_anonymous_name_, std::strlen(current_anonymous_name_));
+                engine_.UnloadModule(current_anonymous_name_, std::strlen(current_anonymous_name_));
             }
             std::strncpy(current_anonymous_name_, name, sizeof(current_anonymous_name_) - 1);
             current_anonymous_name_[sizeof(current_anonymous_name_) - 1] = '\0';
         }
-        int32_t id = engine_.Load(name, std::strlen(name), bytes, size);
+        int32_t id = engine_.LoadModule(name, std::strlen(name), bytes, size);
         if (id < 0) {
             std::printf("loadModule failed with error code: %d\n", -id);
             return false;
@@ -245,7 +245,7 @@ public:
     }
 
     void unloadAll() {
-        engine_.UnloadAll();
+        engine_.UnloadAllModules();
         active_module_name_[0] = '\0';
         current_anonymous_name_[0] = '\0';
         reloadSpectest();
