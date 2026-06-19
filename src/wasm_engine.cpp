@@ -342,7 +342,7 @@ WasmEngine::WasmEngine() noexcept
       user_data_(nullptr),
       module_user_datas_(nullptr) {
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        ClearModuleInstance(modules_[i]);
+        modules_[i] = nullptr;
     }
 }
 
@@ -355,7 +355,7 @@ void WasmEngine::Init(WasmMemoryPool& pool) noexcept {
 
     pool_ = &pool;
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        ClearModuleInstance(modules_[i]);
+        modules_[i] = nullptr;
     }
 
 #if !EMBWASM_ENABLE_MULTITHREADING
@@ -392,14 +392,14 @@ void WasmEngine::ResolveImports(WasmModuleInstance* mod) noexcept {
         std::size_t field_len = func.import.field_name_len;
 
         for (std::size_t m = 0; m < kMaxModules; ++m) {
-            if (!modules_[m].is_active) continue;
-            if (modules_[m].name_len != resolved_mod_len ||
-                std::memcmp(modules_[m].name, resolved_mod_name, resolved_mod_len) != 0) continue;
-            for (std::size_t e = 0; e < modules_[m].export_count; ++e) {
-                if (modules_[m].exports[e].kind == 0 &&
-                    modules_[m].exports[e].name_len == field_len &&
-                    std::memcmp(modules_[m].exports[e].name, func.import.field_name, field_len) == 0) {
-                    func.import.resolved_func = &modules_[m].functions[modules_[m].exports[e].index];
+            if (!modules_[m] || !modules_[m]->is_active) continue;
+            if (modules_[m]->name_len != resolved_mod_len ||
+                std::memcmp(modules_[m]->name, resolved_mod_name, resolved_mod_len) != 0) continue;
+            for (std::size_t e = 0; e < modules_[m]->export_count; ++e) {
+                if (modules_[m]->exports[e].kind == 0 &&
+                    modules_[m]->exports[e].name_len == field_len &&
+                    std::memcmp(modules_[m]->exports[e].name, func.import.field_name, field_len) == 0) {
+                    func.import.resolved_func = &modules_[m]->functions[modules_[m]->exports[e].index];
                     break;
                 }
             }
@@ -485,9 +485,7 @@ void WasmEngine::FreeModuleInstance(WasmModuleInstance* mod) noexcept {
         mod->linear_memory_ptr = nullptr;
     }
 
-    mod->is_active = false;
-    mod->name[0] = '\0';
-    mod->name_len = 0;
+    pool_->Free(mod);
 }
 
 void WasmEngine::Deinit() noexcept {
@@ -509,8 +507,9 @@ void WasmEngine::Deinit() noexcept {
 void WasmEngine::UnloadAll() noexcept {
     if (!pool_) return;
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        if (modules_[i].is_active) {
-            FreeModuleInstance(&modules_[i]);
+        if (modules_[i]) {
+            FreeModuleInstance(modules_[i]);
+            modules_[i] = nullptr;
         }
     }
     name_alias_count_ = 0;
@@ -519,9 +518,10 @@ void WasmEngine::UnloadAll() noexcept {
 void WasmEngine::Unload(const char* name, std::size_t name_len) noexcept {
     if (!name || !pool_) return;
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        if (modules_[i].is_active && modules_[i].name_len == name_len &&
-            std::memcmp(modules_[i].name, name, name_len) == 0) {
-            FreeModuleInstance(&modules_[i]);
+        if (modules_[i] && modules_[i]->is_active && modules_[i]->name_len == name_len &&
+            std::memcmp(modules_[i]->name, name, name_len) == 0) {
+            FreeModuleInstance(modules_[i]);
+            modules_[i] = nullptr;
             break;
         }
     }
@@ -598,35 +598,42 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     WasmModuleInstance* mod = nullptr;
     int32_t slot_idx = -1;
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        if (modules_[i].is_active && modules_[i].name_len == module_name_len &&
-            std::memcmp(modules_[i].name, module_name, module_name_len) == 0) {
-            mod = &modules_[i];
+        if (modules_[i] && modules_[i]->is_active && modules_[i]->name_len == module_name_len &&
+            std::memcmp(modules_[i]->name, module_name, module_name_len) == 0) {
             slot_idx = static_cast<int32_t>(i);
             break;
         }
     }
 
-    if (mod) {
-        // すでにロードされている場合は、そのモジュールを解放
-        FreeModuleInstance(mod);
+    if (slot_idx >= 0) {
+        // すでにロードされている場合は、そのモジュールを解放してスロットを再利用
+        FreeModuleInstance(modules_[slot_idx]);
+        modules_[slot_idx] = nullptr;
     } else {
         // 空いているスロットを探す
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (!modules_[i].is_active) {
-                mod = &modules_[i];
+            if (!modules_[i]) {
                 slot_idx = static_cast<int32_t>(i);
                 break;
             }
         }
     }
 
-    if (!mod) {
+    if (slot_idx < 0) {
         return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
 
+    // プールから新しいインスタンスを確保
+    mod = static_cast<WasmModuleInstance*>(pool_->Allocate(sizeof(WasmModuleInstance)));
+    if (!mod) {
+        return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+    }
+    ClearModuleInstance(*mod);
+    modules_[slot_idx] = mod;
+
     // スロットの初期化
     // ParseSections中のEncodeFuncRefがこのモジュールのスロットを見つけられるよう先にtrueにする。
-    // 失敗時はFreeModuleInstance()でfalseに戻される。
+    // 失敗時はFreeModuleInstance()でmod本体ごと解放される。
     mod->is_active = true;
     mod->imports_resolved = false;
     std::size_t nlen = module_name_len < sizeof(mod->name) - 1 ? module_name_len : sizeof(mod->name) - 1;
@@ -644,7 +651,8 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         ? static_cast<WasmTypeSignature*>(pool_->Allocate(counts.type_count * sizeof(WasmTypeSignature)))
         : nullptr;
     if (counts.type_count > 0 && !mod->signatures) {
-        mod->is_active = false;
+        FreeModuleInstance(mod);
+        modules_[slot_idx] = nullptr;
         return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature));
@@ -657,6 +665,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.func_count > 0 && !mod->functions) {
         FreeModuleInstance(mod);
+        modules_[slot_idx] = nullptr;
         return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->functions) std::memset(mod->functions, 0, counts.func_count * sizeof(WasmFunction));
@@ -669,6 +678,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.export_count > 0 && !mod->exports) {
         FreeModuleInstance(mod);
+        modules_[slot_idx] = nullptr;
         return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
@@ -681,6 +691,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.global_count > 0 && !mod->globals) {
         FreeModuleInstance(mod);
+        modules_[slot_idx] = nullptr;
         return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->globals) std::memset(mod->globals, 0, counts.global_count * sizeof(WasmGlobal));
@@ -703,6 +714,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         mod->is_table_shared = static_cast<bool*>(pool_->Allocate(counts.table_count * sizeof(bool)));
         if (!mod->tables || !mod->table_sizes || !mod->table_max_sizes || !mod->table_types || !mod->is_table_shared) {
             FreeModuleInstance(mod);
+            modules_[slot_idx] = nullptr;
             return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t*));
@@ -727,6 +739,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         mod->data_segment_dropped = static_cast<bool*>(pool_->Allocate(counts.data_count * sizeof(bool)));
         if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped) {
             FreeModuleInstance(mod);
+            modules_[slot_idx] = nullptr;
             return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t*));
@@ -747,6 +760,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         mod->elem_segment_dropped = static_cast<bool*>(pool_->Allocate(counts.elem_count * sizeof(bool)));
         if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped) {
             FreeModuleInstance(mod);
+            modules_[slot_idx] = nullptr;
             return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t*));
@@ -763,6 +777,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     WasmResult res = ParseSections(mod, binary + 8, size - 8);
     if (res != WasmResult::kOk) {
         FreeModuleInstance(mod);
+        modules_[slot_idx] = nullptr;
         return static_cast<int32_t>(res);
     }
 
@@ -770,6 +785,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     res = Validate(mod);
     if (res != WasmResult::kOk) {
         FreeModuleInstance(mod);
+        modules_[slot_idx] = nullptr;
         return static_cast<int32_t>(res);
     }
 
@@ -783,8 +799,8 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
 
     // 新モジュールのロードで他モジュールのインポートが解決可能になるため全モジュールをリセット
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        if (modules_[i].is_active) {
-            modules_[i].imports_resolved = false;
+        if (modules_[i] && modules_[i]->is_active) {
+            modules_[i]->imports_resolved = false;
         }
     }
 
@@ -794,6 +810,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         uint32_t tid = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(mod->start_function_index));
         if (tid == 0) {
             FreeModuleInstance(mod);
+            modules_[slot_idx] = nullptr;
             return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         res = scheduler_.Run();
@@ -802,6 +819,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
 #endif
         if (res != WasmResult::kOk) {
             FreeModuleInstance(mod);
+            modules_[slot_idx] = nullptr;
             return static_cast<int32_t>(res);
         }
     }
@@ -1476,15 +1494,15 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                             std::size_t resolved_mod_len;
                             const char* resolved_mod = ResolveAlias(mod_name, mod_len, resolved_mod_len);
                             for (std::size_t m = 0; m < kMaxModules; ++m) {
-                                if (!modules_[m].is_active) continue;
-                                if (modules_[m].name_len != resolved_mod_len ||
-                                    std::memcmp(modules_[m].name, resolved_mod, resolved_mod_len) != 0) continue;
-                                for (std::size_t e = 0; e < modules_[m].export_count; ++e) {
-                                    if (modules_[m].exports[e].kind == 0 &&
-                                        modules_[m].exports[e].name_len == field_len &&
-                                        std::memcmp(modules_[m].exports[e].name, field_name, field_len) == 0) {
+                                if (!modules_[m] || !modules_[m]->is_active) continue;
+                                if (modules_[m]->name_len != resolved_mod_len ||
+                                    std::memcmp(modules_[m]->name, resolved_mod, resolved_mod_len) != 0) continue;
+                                for (std::size_t e = 0; e < modules_[m]->export_count; ++e) {
+                                    if (modules_[m]->exports[e].kind == 0 &&
+                                        modules_[m]->exports[e].name_len == field_len &&
+                                        std::memcmp(modules_[m]->exports[e].name, field_name, field_len) == 0) {
                                         functions_[function_count_].import.resolved_func =
-                                            &modules_[m].functions[modules_[m].exports[e].index];
+                                            &modules_[m]->functions[modules_[m]->exports[e].index];
                                         break;
                                     }
                                 }
@@ -1532,14 +1550,14 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         const char* resolved_mem_mod = ResolveAlias(mod_name, mod_len, resolved_mem_len);
                         WasmModuleInstance* found_mem_mod = nullptr;
                         for (std::size_t m = 0; m < kMaxModules; ++m) {
-                            if (!modules_[m].is_active) continue;
-                            if (modules_[m].name_len != resolved_mem_len ||
-                                std::memcmp(modules_[m].name, resolved_mem_mod, resolved_mem_len) != 0) continue;
-                            for (std::size_t e = 0; e < modules_[m].export_count; ++e) {
-                                if (modules_[m].exports[e].kind == 2 &&
-                                    modules_[m].exports[e].name_len == field_len &&
-                                    std::memcmp(modules_[m].exports[e].name, field_name, field_len) == 0) {
-                                    found_mem_mod = &modules_[m];
+                            if (!modules_[m] || !modules_[m]->is_active) continue;
+                            if (modules_[m]->name_len != resolved_mem_len ||
+                                std::memcmp(modules_[m]->name, resolved_mem_mod, resolved_mem_len) != 0) continue;
+                            for (std::size_t e = 0; e < modules_[m]->export_count; ++e) {
+                                if (modules_[m]->exports[e].kind == 2 &&
+                                    modules_[m]->exports[e].name_len == field_len &&
+                                    std::memcmp(modules_[m]->exports[e].name, field_name, field_len) == 0) {
+                                    found_mem_mod = modules_[m];
                                     break;
                                 }
                             }
@@ -1596,15 +1614,15 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         WasmModuleInstance* found_tbl_mod = nullptr;
                         uint32_t found_table_idx = 0;
                         for (std::size_t m = 0; m < kMaxModules; ++m) {
-                            if (!modules_[m].is_active) continue;
-                            if (modules_[m].name_len != resolved_tbl_len ||
-                                std::memcmp(modules_[m].name, resolved_tbl_mod, resolved_tbl_len) != 0) continue;
-                            for (std::size_t e = 0; e < modules_[m].export_count; ++e) {
-                                if (modules_[m].exports[e].kind == 1 &&
-                                    modules_[m].exports[e].name_len == field_len &&
-                                    std::memcmp(modules_[m].exports[e].name, field_name, field_len) == 0) {
-                                    found_tbl_mod = &modules_[m];
-                                    found_table_idx = modules_[m].exports[e].index;
+                            if (!modules_[m] || !modules_[m]->is_active) continue;
+                            if (modules_[m]->name_len != resolved_tbl_len ||
+                                std::memcmp(modules_[m]->name, resolved_tbl_mod, resolved_tbl_len) != 0) continue;
+                            for (std::size_t e = 0; e < modules_[m]->export_count; ++e) {
+                                if (modules_[m]->exports[e].kind == 1 &&
+                                    modules_[m]->exports[e].name_len == field_len &&
+                                    std::memcmp(modules_[m]->exports[e].name, field_name, field_len) == 0) {
+                                    found_tbl_mod = modules_[m];
+                                    found_table_idx = modules_[m]->exports[e].index;
                                     break;
                                 }
                             }
@@ -2156,9 +2174,9 @@ WasmModuleInstance* WasmEngine::GetModuleInstance(const char* name, std::size_t 
     std::size_t resolved_len;
     const char* resolved = ResolveAlias(name, name_len, resolved_len);
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        if (modules_[i].is_active && modules_[i].name_len == resolved_len &&
-            std::memcmp(modules_[i].name, resolved, resolved_len) == 0) {
-            return &modules_[i];
+        if (modules_[i] && modules_[i]->is_active && modules_[i]->name_len == resolved_len &&
+            std::memcmp(modules_[i]->name, resolved, resolved_len) == 0) {
+            return modules_[i];
         }
     }
     return nullptr;
@@ -2169,9 +2187,9 @@ const WasmModuleInstance* WasmEngine::GetModuleInstance(const char* name, std::s
     std::size_t resolved_len;
     const char* resolved = ResolveAlias(name, name_len, resolved_len);
     for (std::size_t i = 0; i < kMaxModules; ++i) {
-        if (modules_[i].is_active && modules_[i].name_len == resolved_len &&
-            std::memcmp(modules_[i].name, resolved, resolved_len) == 0) {
-            return &modules_[i];
+        if (modules_[i] && modules_[i]->is_active && modules_[i]->name_len == resolved_len &&
+            std::memcmp(modules_[i]->name, resolved, resolved_len) == 0) {
+            return modules_[i];
         }
     }
     return nullptr;
@@ -3633,9 +3651,9 @@ WasmResult WasmEngine::
                         linear_memory_size_ = static_cast<std::size_t>(new_size_bytes);
                         // 同バッファを共有する全モジュールにサイズを伝播
                         for (std::size_t _m = 0; _m < kMaxModules; ++_m) {
-                            if (&modules_[_m] == current_mod || !modules_[_m].is_active) continue;
-                            if (modules_[_m].linear_memory_ptr == linear_memory_ptr_) {
-                                modules_[_m].linear_memory_size = static_cast<std::size_t>(new_size_bytes);
+                            if (!modules_[_m] || modules_[_m] == current_mod || !modules_[_m]->is_active) continue;
+                            if (modules_[_m]->linear_memory_ptr == linear_memory_ptr_) {
+                                modules_[_m]->linear_memory_size = static_cast<std::size_t>(new_size_bytes);
                             }
                         }
                         stack_[stack_top_ - 1].value.i32 = prev_pages;
@@ -3654,11 +3672,11 @@ WasmResult WasmEngine::
                             uint8_t* old_mem = linear_memory_ptr_;
                             // 共有モジュールを含む全参照を新バッファに更新
                             for (std::size_t _m = 0; _m < kMaxModules; ++_m) {
-                                if (!modules_[_m].is_active) continue;
-                                if (modules_[_m].linear_memory_ptr == old_mem) {
-                                    modules_[_m].linear_memory_ptr = new_mem;
-                                    modules_[_m].linear_memory_size = new_cap;
-                                    modules_[_m].linear_memory_capacity = new_cap;
+                                if (!modules_[_m] || !modules_[_m]->is_active) continue;
+                                if (modules_[_m]->linear_memory_ptr == old_mem) {
+                                    modules_[_m]->linear_memory_ptr = new_mem;
+                                    modules_[_m]->linear_memory_size = new_cap;
+                                    modules_[_m]->linear_memory_capacity = new_cap;
                                 }
                             }
                             if (old_mem) {

@@ -153,8 +153,8 @@ public:
     // 後方互換API：最初のアクティブモジュールで実行
     WasmResult Execute(const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
-                return Execute(modules_[i].name, modules_[i].name_len, name, name_len, args, arg_count, results, result_count);
+            if (modules_[i] && modules_[i]->is_active)
+                return Execute(modules_[i]->name, modules_[i]->name_len, name, name_len, args, arg_count, results, result_count);
         }
         return WasmResult::kErrorFunctionNotFound;
     }
@@ -165,8 +165,8 @@ public:
     // 後方互換API：最初のアクティブモジュールから検索
     int32_t GetExportFunctionIndex(const char* name, std::size_t name_len) const noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
-                return GetExportFunctionIndex(modules_[i].name, modules_[i].name_len, name, name_len);
+            if (modules_[i] && modules_[i]->is_active)
+                return GetExportFunctionIndex(modules_[i]->name, modules_[i]->name_len, name, name_len);
         }
         return -1;
     }
@@ -177,8 +177,8 @@ public:
     // 後方互換API：最初のアクティブモジュールから検索
     uint32_t GetExportFunctionResultCount(const char* name, std::size_t name_len) const noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
-                return GetExportFunctionResultCount(modules_[i].name, modules_[i].name_len, name, name_len);
+            if (modules_[i] && modules_[i]->is_active)
+                return GetExportFunctionResultCount(modules_[i]->name, modules_[i]->name_len, name, name_len);
         }
         return 0;
     }
@@ -189,7 +189,7 @@ public:
     // 後方互換API：最初のアクティブモジュールから検索
     int32_t GetFunctionIndexByExportIndex(uint32_t export_idx) const noexcept {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active)
+            if (modules_[i] && modules_[i]->is_active)
                 return GetFunctionIndexByExportIndex(static_cast<int32_t>(i), export_idx);
         }
         return -1;
@@ -217,22 +217,22 @@ public:
 
     // 公開関数を外部から解決可能にする
     const WasmExportEntry* GetExports(int32_t instance_id) const noexcept {
-        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id].is_active)
-            ? modules_[instance_id].exports : nullptr;
+        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
+            ? modules_[instance_id]->exports : nullptr;
     }
     std::size_t GetExportCount(int32_t instance_id) const noexcept {
-        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id].is_active)
-            ? modules_[instance_id].export_count : 0;
+        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
+            ? modules_[instance_id]->export_count : 0;
     }
 
     // 線形メモリへのアクセス
     uint8_t* GetLinearMemory(int32_t instance_id) const noexcept {
-        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id].is_active)
-            ? modules_[instance_id].linear_memory_ptr : nullptr;
+        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
+            ? modules_[instance_id]->linear_memory_ptr : nullptr;
     }
     std::size_t GetLinearMemorySize(int32_t instance_id) const noexcept {
-        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id].is_active)
-            ? modules_[instance_id].linear_memory_size : 0;
+        return (instance_id >= 0 && instance_id < static_cast<int32_t>(kMaxModules) && modules_[instance_id] && modules_[instance_id]->is_active)
+            ? modules_[instance_id]->linear_memory_size : 0;
     }
     // 現在実行中のモジュールのメモリを返す（ホストモジュール向け後方互換API）
     uint8_t* GetLinearMemory() const noexcept {
@@ -248,8 +248,8 @@ public:
             }
         }
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active && modules_[i].linear_memory_ptr) {
-                return modules_[i].linear_memory_ptr;
+            if (modules_[i] && modules_[i]->is_active && modules_[i]->linear_memory_ptr) {
+                return modules_[i]->linear_memory_ptr;
             }
         }
         return nullptr;
@@ -267,8 +267,8 @@ public:
             }
         }
         for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i].is_active && modules_[i].linear_memory_ptr) {
-                return modules_[i].linear_memory_size;
+            if (modules_[i] && modules_[i]->is_active && modules_[i]->linear_memory_ptr) {
+                return modules_[i]->linear_memory_size;
             }
         }
         return 0;
@@ -279,10 +279,10 @@ public:
     WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) noexcept;
     const WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) const noexcept;
     WasmModuleInstance* GetModuleInstanceById(int32_t id) noexcept {
-        return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id].is_active) ? &modules_[id] : nullptr;
+        return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id] && modules_[id]->is_active) ? modules_[id] : nullptr;
     }
     const WasmModuleInstance* GetModuleInstanceById(int32_t id) const noexcept {
-        return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id].is_active) ? &modules_[id] : nullptr;
+        return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id] && modules_[id]->is_active) ? modules_[id] : nullptr;
     }
 
     // モジュールをアンロード（名前で指定）
@@ -333,8 +333,8 @@ private:
 
     WasmMemoryPool* pool_;
 
-    // 複数モジュールを格納する配列
-    WasmModuleInstance modules_[kMaxModules];
+    // 複数モジュールを格納するポインタ配列（インスタンスはLoad時にプールから確保）
+    WasmModuleInstance* modules_[kMaxModules];
 
 #if !EMBWASM_ENABLE_MULTITHREADING
     // 現在の実行コンテキスト（非MTビルドのみ）
