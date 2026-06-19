@@ -78,6 +78,15 @@ def escape_wasm_string_literal(name):
             escaped.append(chr(b))
     return '"' + "".join(escaped) + '"'
 
+def wasm_method_name(snake_name):
+    """WasmInterpreterのスネークケースメソッド名をCamelCaseに変換する"""
+    camel_map = {
+        'create': 'Create', 'to': 'To', 'is': 'Is', 'nan': 'Nan', 'bits': 'Bits',
+        'i32': 'I32', 'i64': 'I64', 'f32': 'F32', 'f64': 'F64',
+        'externref': 'Externref', 'funcref': 'Funcref',
+    }
+    return ''.join(camel_map.get(p, p.capitalize()) for p in snake_name.split('_'))
+
 def file_to_c_array(file_path):
     if not os.path.exists(file_path):
         return "0x00", 0
@@ -108,43 +117,43 @@ public:
     WasmInterpreter() {}
     ~WasmInterpreter() {}
     
-    bool loadModule(const uint8_t* bytes, size_t size) {
+    bool LoadModule(const uint8_t* bytes, size_t size) {
         (void)bytes; (void)size;
-        return true; 
+        return true;
     }
 
-    WasmValue create_i32(int32_t val) { (void)val; return WasmValue{}; }
-    WasmValue create_i64(int64_t val) { (void)val; return WasmValue{}; }
-    WasmValue create_f32(float val)   { (void)val; return WasmValue{}; }
-    WasmValue create_f64(double val)  { (void)val; return WasmValue{}; }
-    
-    WasmValue create_f32_bits(uint32_t bits) { (void)bits; return WasmValue{}; }
-    WasmValue create_f64_bits(uint64_t bits) { (void)bits; return WasmValue{}; }
-    
-    WasmValue create_f32_nan(uint32_t bit_pattern) { (void)bit_pattern; return WasmValue{}; }
-    WasmValue create_f64_nan(uint64_t bit_pattern) { (void)bit_pattern; return WasmValue{}; }
+    WasmValue CreateI32(int32_t val)        { (void)val; return WasmValue{}; }
+    WasmValue CreateI64(int64_t val)        { (void)val; return WasmValue{}; }
+    WasmValue CreateF32(float val)          { (void)val; return WasmValue{}; }
+    WasmValue CreateF64(double val)         { (void)val; return WasmValue{}; }
 
-    // ★修正: uintptr_t から void* に変更し、nullptr を直接受け取れるように変更
-    WasmValue create_externref(const void* val) { (void)val; return WasmValue{}; }
-    WasmValue create_funcref(const void* val)   { (void)val; return WasmValue{}; }
+    WasmValue CreateF32Bits(uint32_t bits)  { (void)bits; return WasmValue{}; }
+    WasmValue CreateF64Bits(uint64_t bits)  { (void)bits; return WasmValue{}; }
 
-    WasmValue invoke(const char* func_name, const WasmValue* args, size_t args_count) {
-        (void)func_name; (void)args; (void)args_count;
-        return WasmValue{}; 
+    WasmValue CreateF32Nan(uint32_t bit_pattern) { (void)bit_pattern; return WasmValue{}; }
+    WasmValue CreateF64Nan(uint64_t bit_pattern) { (void)bit_pattern; return WasmValue{}; }
+
+    WasmValue CreateExternref(const void* val) { (void)val; return WasmValue{}; }
+    WasmValue CreateFuncref(const void* val)   { (void)val; return WasmValue{}; }
+
+    int32_t Invoke(const char* func_name, const WasmValue* args, size_t args_count,
+                   WasmValue* out_result) {
+        (void)func_name; (void)args; (void)args_count; (void)out_result;
+        return 0;
     }
 
-    int32_t  to_i32(WasmValue val) { (void)val; return 0; }
-    int64_t  to_i64(WasmValue val) { (void)val; return 0; }
-    float    to_f32(WasmValue val) { (void)val; return 0.0f; }
-    double   to_f64(WasmValue val) { (void)val; return 0.0; }
-    bool     is_nan_f32(WasmValue val) { (void)val; return false; }
-    bool     is_nan_f64(WasmValue val) { (void)val; return false; }
-    
-    uint32_t to_f32_bits(WasmValue val) { (void)val; return 0; }
-    uint64_t to_f64_bits(WasmValue val) { (void)val; return 0; }
-    
-    void* to_externref(WasmValue val) { (void)val; return nullptr; }
-    void* to_funcref(WasmValue val)   { (void)val; return nullptr; }
+    int32_t  ToI32(WasmValue val)     { (void)val; return 0; }
+    int64_t  ToI64(WasmValue val)     { (void)val; return 0; }
+    float    ToF32(WasmValue val)     { (void)val; return 0.0f; }
+    double   ToF64(WasmValue val)     { (void)val; return 0.0; }
+    bool     IsNanF32(WasmValue val)  { (void)val; return false; }
+    bool     IsNanF64(WasmValue val)  { (void)val; return false; }
+
+    uint32_t ToF32Bits(WasmValue val) { (void)val; return 0; }
+    uint64_t ToF64Bits(WasmValue val) { (void)val; return 0; }
+
+    void* ToExternref(WasmValue val)  { (void)val; return nullptr; }
+    void* ToFuncref(WasmValue val)    { (void)val; return nullptr; }
 };
 """
 
@@ -178,7 +187,6 @@ def process_combined_assets(input_dir, output_dir):
     json_count = 0
 
     SKIP_SUITES = {
-        "linking"
     }
 
     for root, dirs, files in os.walk(input_dir):
@@ -210,7 +218,7 @@ def process_combined_assets(input_dir, output_dir):
 
                 local_wasm_map = {}
                 test_lines.append(f'TEST_F({suite_name}, RunSpecTests) {{')
-                test_lines.append(f'    interpreter.unloadAll();')
+                test_lines.append(f'    interpreter.UnloadAll();')
 
                 for cmd in data.get("commands", []):
                     line_num = cmd.get("line", 0)
@@ -240,7 +248,7 @@ def process_combined_assets(input_dir, output_dir):
                             else:
                                 name_arg = "nullptr"
                             test_lines.append(f'    {{ // Line {line_num} (Load module {wasm_filename})')
-                            test_lines.append(f'        ASSERT_TRUE(interpreter.loadModule({name_arg}, {var_name}, {size_name}));')
+                            test_lines.append(f'        ASSERT_TRUE(interpreter.LoadModule({name_arg}, {var_name}, {size_name}));')
                             test_lines.append(f'    }}')
 
                     elif cmd_type == "register":
@@ -249,9 +257,9 @@ def process_combined_assets(input_dir, output_dir):
                         if as_name:
                             test_lines.append(f'    {{ // Line {line_num} (Register as "{as_name}")')
                             if module_name_ref:
-                                test_lines.append(f'        interpreter.registerModule({escape_wasm_string_literal(module_name_ref)}, {escape_wasm_string_literal(as_name)});')
+                                test_lines.append(f'        interpreter.RegisterModule({escape_wasm_string_literal(module_name_ref)}, {escape_wasm_string_literal(as_name)});')
                             else:
-                                test_lines.append(f'        interpreter.registerModule({escape_wasm_string_literal(as_name)});')
+                                test_lines.append(f'        interpreter.RegisterModule({escape_wasm_string_literal(as_name)});')
                             test_lines.append(f'    }}')
 
                     elif cmd_type in ["assert_return", "action"]:
@@ -271,14 +279,14 @@ def process_combined_assets(input_dir, output_dir):
                                     val = python_type_to_cpp(t, a['value'])
 
                                     if "nan" in str(a['value']).lower() or "inf" in str(a['value']).lower():
-                                        factory_method = f"create_{t}_bits"
+                                        factory_method = wasm_method_name(f"create_{t}_bits")
                                     elif (t == "f32" or t == "f64") and "uint" in val:
-                                        factory_method = f"create_{t}_bits"
+                                        factory_method = wasm_method_name(f"create_{t}_bits")
                                     elif t in ["externref", "funcref"] and val != "nullptr":
-                                        factory_method = f"create_{t}"
+                                        factory_method = wasm_method_name(f"create_{t}")
                                         val = f"reinterpret_cast<const void*>({val}ULL)"
                                     else:
-                                        factory_method = f"create_{t}"
+                                        factory_method = wasm_method_name(f"create_{t}")
 
                                     arg_vals.append(f'interpreter.{factory_method}({val})')
 
@@ -293,28 +301,28 @@ def process_combined_assets(input_dir, output_dir):
                                 invoke_module_arg = escape_wasm_string_literal(action_module) + ", "
                             else:
                                 invoke_module_arg = ""
-                            invoke_call = f'interpreter.invoke({invoke_module_arg}{escaped_func_name}, {args_param}, {args_count_param})'
+                            invoke_base = f'interpreter.Invoke({invoke_module_arg}{escaped_func_name}, {args_param}, {args_count_param}'
 
                             if expected:
                                 exp = expected[0]
                                 exp_type = exp['type']
                                 exp_val = python_type_to_cpp(exp_type, exp['value'])
 
-                                test_lines.append(f'        WasmValue result = {invoke_call};')
+                                test_lines.append(f'        WasmValue result = {{}};')
+                                test_lines.append(f'        ASSERT_EQ(0, {invoke_base}, &result));')
                                 if "f32" in exp_type or "f64" in exp_type:
                                     if "nan" in str(exp['value']).lower():
-                                        test_lines.append(f'        EXPECT_TRUE(interpreter.is_nan_{exp_type}(result));')
+                                        test_lines.append(f'        EXPECT_TRUE(interpreter.{wasm_method_name("is_nan_" + exp_type)}(result));')
                                     elif "uint" in exp_val or "inf" in str(exp['value']).lower():
-                                        test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.to_{exp_type}_bits(result));')
+                                        test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.{wasm_method_name("to_" + exp_type + "_bits")}(result));')
                                     else:
-                                        test_lines.append(f'        EXPECT_NEAR({exp_val}, interpreter.to_{exp_type}(result), 1e-5);')
+                                        test_lines.append(f'        EXPECT_NEAR({exp_val}, interpreter.{wasm_method_name("to_" + exp_type)}(result), 1e-5);')
                                 elif exp_type in ["externref", "funcref"] and exp_val != "nullptr":
-                                    test_lines.append(f'        EXPECT_EQ(reinterpret_cast<void*>({exp_val}ULL), interpreter.to_{exp_type}(result));')
+                                    test_lines.append(f'        EXPECT_EQ(reinterpret_cast<void*>({exp_val}ULL), interpreter.{wasm_method_name("to_" + exp_type)}(result));')
                                 else:
-                                    test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.to_{exp_type}(result));')
+                                    test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.{wasm_method_name("to_" + exp_type)}(result));')
                             else:
-                                test_lines.append(f'        WasmValue result = {invoke_call};')
-                                test_lines.append(f'        (void)result;')
+                                test_lines.append(f'        ASSERT_EQ(0, {invoke_base}, nullptr));')
 
                             test_lines.append('    }')
 

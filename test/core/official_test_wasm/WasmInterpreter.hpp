@@ -3,7 +3,6 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
-#include <string>
 #include "embwasm.hpp"
 
 using WasmValue = embwasm::WasmValue;
@@ -18,7 +17,7 @@ private:
     size_t load_count_;
     alignas(16) uint8_t pool_buf_[embwasm::kMemoryPoolSize];
 
-    void reloadSpectest() {
+    void ReloadSpectest() {
         static const uint8_t kSpectestWasm[] = {
             // magic + version
             0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00,
@@ -97,26 +96,23 @@ public:
         engine_.Init(pool_);
         active_module_name_[0] = '\0';
         current_anonymous_name_[0] = '\0';
-        reloadSpectest();
+        ReloadSpectest();
     }
     ~WasmInterpreter() {
         engine_.Deinit();
         pool_.Deinit();
     }
 
-    // WASMバイナリをロード
-    bool loadModule(const char *module_name, const uint8_t* bytes, size_t size) {
+    bool LoadModule(const char* module_name, const uint8_t* bytes, size_t size) {
         if (bytes == nullptr || size < 8) return false;
 
         char name[64];
         if (module_name != nullptr) {
             std::strncpy(name, module_name, sizeof(name) - 1);
             name[sizeof(name) - 1] = '\0';
-            // 同名モジュールが既にあれば置き換える
             engine_.UnloadModule(name, std::strlen(name));
         } else {
             std::snprintf(name, sizeof(name), "mod%zu", load_count_++);
-            // 前回の匿名モジュールをアンロード（registerされていなければ）
             if (current_anonymous_name_[0] != '\0') {
                 engine_.UnloadModule(current_anonymous_name_, std::strlen(current_anonymous_name_));
             }
@@ -125,7 +121,7 @@ public:
         }
         int32_t id = engine_.LoadModule(name, std::strlen(name), bytes, size);
         if (id < 0) {
-            std::printf("loadModule failed with error code: %d\n", -id);
+            std::printf("LoadModule failed with error code: %d\n", -id);
             return false;
         }
         std::strncpy(active_module_name_, name, sizeof(active_module_name_) - 1);
@@ -133,79 +129,86 @@ public:
         return true;
     }
 
-    // アクティブモジュールにエイリアス名を登録
-    void registerModule(const char* alias_name) {
+    void RegisterModule(const char* alias_name) {
         if (alias_name == nullptr || active_module_name_[0] == '\0') return;
         size_t active_len = std::strlen(active_module_name_);
         engine_.RegisterAlias(active_module_name_, active_len, alias_name, std::strlen(alias_name));
-        // registerされたので匿名モジュールとして追跡しない
         size_t anon_len = std::strlen(current_anonymous_name_);
-        if (anon_len == active_len && std::memcmp(current_anonymous_name_, active_module_name_, active_len) == 0) {
+        if (anon_len == active_len &&
+            std::memcmp(current_anonymous_name_, active_module_name_, active_len) == 0) {
             current_anonymous_name_[0] = '\0';
         }
     }
 
-    // 指定モジュールにエイリアス名を登録（register "$name" as "alias" の形式用）
-    void registerModule(const char* real_name, const char* alias_name) {
+    void RegisterModule(const char* real_name, const char* alias_name) {
         if (real_name == nullptr || alias_name == nullptr) return;
         size_t real_len = std::strlen(real_name);
         engine_.RegisterAlias(real_name, real_len, alias_name, std::strlen(alias_name));
-        // registerされたので匿名モジュールとして追跡しない
         size_t anon_len = std::strlen(current_anonymous_name_);
-        if (anon_len == real_len && std::memcmp(current_anonymous_name_, real_name, real_len) == 0) {
+        if (anon_len == real_len &&
+            std::memcmp(current_anonymous_name_, real_name, real_len) == 0) {
             current_anonymous_name_[0] = '\0';
         }
     }
 
-    WasmValue create_i32(int32_t val) {
+    WasmValue CreateI32(int32_t val) {
         WasmValue v; v.value.i32 = val; return v;
     }
-    WasmValue create_i64(int64_t val) {
+    WasmValue CreateI64(int64_t val) {
         WasmValue v; v.value.i64 = val; return v;
     }
-    WasmValue create_f32(float val) {
+    WasmValue CreateF32(float val) {
         WasmValue v; v.value.f32 = val; return v;
     }
-    WasmValue create_f64(double val) {
+    WasmValue CreateF64(double val) {
         WasmValue v; v.value.f64 = val; return v;
     }
-    WasmValue create_f32_nan(uint32_t bit_pattern) {
+    WasmValue CreateF32Nan(uint32_t bit_pattern) {
         WasmValue v = {};
         *reinterpret_cast<uint32_t*>(&v.value) = bit_pattern;
         return v;
     }
-    WasmValue create_f64_nan(uint64_t bit_pattern) {
+    WasmValue CreateF64Nan(uint64_t bit_pattern) {
         WasmValue v = {};
         *reinterpret_cast<uint64_t*>(&v.value) = bit_pattern;
         return v;
     }
-    WasmValue create_f32_bits(uint32_t bits) {
+    WasmValue CreateF32Bits(uint32_t bits) {
         WasmValue v = {};
         *reinterpret_cast<uint32_t*>(&v.value) = bits;
         return v;
     }
-    WasmValue create_f64_bits(uint64_t bits) {
+    WasmValue CreateF64Bits(uint64_t bits) {
         WasmValue v = {};
         *reinterpret_cast<uint64_t*>(&v.value) = bits;
         return v;
     }
-    WasmValue create_externref(std::nullptr_t) {
+    WasmValue CreateExternref(std::nullptr_t) {
         WasmValue v = {}; v.value.i64 = -1; return v;
     }
-    WasmValue create_externref(const void* val) {
+    WasmValue CreateExternref(const void* val) {
         WasmValue v = {}; v.value.i64 = reinterpret_cast<int64_t>(val); return v;
     }
-    WasmValue create_funcref(std::nullptr_t) {
+    WasmValue CreateFuncref(std::nullptr_t) {
         WasmValue v = {}; v.value.i64 = -1; return v;
     }
-    WasmValue create_funcref(const void* val) {
+    WasmValue CreateFuncref(const void* val) {
         WasmValue v = {}; v.value.i64 = reinterpret_cast<int64_t>(val); return v;
     }
 
-    WasmValue invoke_internal(const char* module_name, size_t module_name_len, const char* func_name, size_t func_name_len, const WasmValue* args, size_t args_count) {
-        WasmValue res = {};
-
-        // アクティブモジュールで検索、なければ全スロットを検索
+    /// @brief WASM関数を実行する内部実装。
+    /// @param[in]  module_name      モジュール名（nullptrの場合はアクティブモジュールを使用）。
+    /// @param[in]  module_name_len  モジュール名の長さ。
+    /// @param[in]  func_name        関数名。
+    /// @param[in]  func_name_len    関数名の長さ。
+    /// @param[in]  args             引数配列。
+    /// @param[in]  args_count       引数の個数。
+    /// @param[out] out_result       戻り値の格納先（不要な場合はnullptr）。
+    /// @return 0: 正常終了。非0: エラーコード（embwasm::WasmResultのキャスト値）。
+    int32_t InvokeInternal(const char* module_name, size_t module_name_len,
+                           const char* func_name, size_t func_name_len,
+                           const WasmValue* args, size_t args_count,
+                           WasmValue* out_result) {
         const char* target_module = module_name;
         size_t target_module_len = module_name_len;
         if (target_module == nullptr) {
@@ -213,69 +216,67 @@ public:
             target_module_len = std::strlen(active_module_name_);
         }
 
-        if (!target_module || target_module_len == 0) {
-            res.value.i64 = -1LL;
-            return res;
+        if (target_module == nullptr || target_module_len == 0) {
+            return -1;
         }
 
-        uint32_t result_count = engine_.GetExportFunctionResultCount(target_module, target_module_len, func_name, func_name_len);
+        WasmValue res = {};
+        uint32_t result_count = engine_.GetExportFunctionResultCount(
+            target_module, target_module_len, func_name, func_name_len);
         if (result_count > 1) result_count = 1;
         embwasm::WasmResult run_res = engine_.Execute(
             target_module, target_module_len, func_name, func_name_len, args,
             static_cast<uint32_t>(args_count), &res, result_count);
         if (run_res != embwasm::WasmResult::kOk) {
-            std::printf("invoke failed with error code: %d\n", static_cast<int>(run_res));
-            res.value.i64 = -1LL;
+            std::printf("Invoke failed with error code: %d\n", static_cast<int>(run_res));
         }
-        return res;
+        if (out_result != nullptr) *out_result = res;
+        return static_cast<int32_t>(run_res);
     }
 
     template <size_t N>
-    WasmValue invoke(const char (&func_name)[N], const WasmValue* args, size_t args_count) {
-        return invoke_internal(nullptr, 0, func_name, N - 1, args, args_count);
+    int32_t Invoke(const char (&func_name)[N], const WasmValue* args, size_t args_count,
+                   WasmValue* out_result) {
+        return InvokeInternal(nullptr, 0, func_name, N - 1, args, args_count, out_result);
     }
 
     template <size_t N, size_t M>
-    WasmValue invoke(const char (&module_name)[N], const char (&func_name)[M], const WasmValue* args, size_t args_count) {
-        return invoke_internal(module_name, N - 1, func_name, M - 1, args, args_count);
+    int32_t Invoke(const char (&module_name)[N], const char (&func_name)[M],
+                   const WasmValue* args, size_t args_count, WasmValue* out_result) {
+        return InvokeInternal(module_name, N - 1, func_name, M - 1, args, args_count, out_result);
     }
 
-    WasmValue invoke(const std::string& func_name, const WasmValue* args, size_t args_count) {
-        return invoke_internal(nullptr, 0, func_name.data(), func_name.size(), args, args_count);
-    }
-
-    void unloadAll() {
+    void UnloadAll() {
         engine_.UnloadAllModules();
         active_module_name_[0] = '\0';
         current_anonymous_name_[0] = '\0';
-        reloadSpectest();
+        ReloadSpectest();
     }
 
-    int32_t to_i32(WasmValue val) { return val.value.i32; }
-    int64_t to_i64(WasmValue val) { return val.value.i64; }
-    float   to_f32(WasmValue val) { return val.value.f32; }
-    double  to_f64(WasmValue val) { return val.value.f64; }
+    int32_t ToI32(WasmValue val) { return val.value.i32; }
+    int64_t ToI64(WasmValue val) { return val.value.i64; }
+    float   ToF32(WasmValue val) { return val.value.f32; }
+    double  ToF64(WasmValue val) { return val.value.f64; }
 
-    bool is_nan_f32(WasmValue val) {
+    bool IsNanF32(WasmValue val) {
         uint32_t bits = *reinterpret_cast<uint32_t*>(&val.value);
         return ((bits & 0x7F800000) == 0x7F800000) && ((bits & 0x007FFFFF) != 0);
     }
-    bool is_nan_f64(WasmValue val) {
+    bool IsNanF64(WasmValue val) {
         uint64_t bits = *reinterpret_cast<uint64_t*>(&val.value);
         return ((bits & 0x7FF0000000000000ULL) == 0x7FF0000000000000ULL) &&
                ((bits & 0x000FFFFFFFFFFFFFULL) != 0);
     }
 
-    uint32_t to_f32_bits(WasmValue val) { return val.value.i32; }
-    uint64_t to_f64_bits(WasmValue val) { return val.value.i64; }
+    uint32_t ToF32Bits(WasmValue val) { return val.value.i32; }
+    uint64_t ToF64Bits(WasmValue val) { return val.value.i64; }
 
-    void* to_externref(WasmValue val) {
+    void* ToExternref(WasmValue val) {
         if (val.value.i64 == -1) return nullptr;
         return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64));
     }
-    void* to_funcref(WasmValue val) {
+    void* ToFuncref(WasmValue val) {
         if (val.value.i64 == -1) return nullptr;
         return reinterpret_cast<void*>(static_cast<uintptr_t>(val.value.i64));
     }
 };
-
