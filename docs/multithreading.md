@@ -66,25 +66,34 @@ void main(void) {
 
 ## 4. ホスト側 (C++) の設定
 
-ホスト側では `WasmScheduler` を初期化して実行ループを回します。
+スケジューラは `WasmEngine` に内包されており、別途インスタンス化する必要はありません。
+`engine.Init()` によってスケジューラも初期化され、`engine.Execute()` を呼ぶことで
+協調スケジューリングが自動的に動作します。
 
 ```cpp
+// 静的バッファとメモリプールの作成
+static uint8_t g_pool_buf[embwasm::kMemoryPoolSize];
 embwasm::WasmMemoryPool pool;
+pool.Init(g_pool_buf, sizeof(g_pool_buf));
+
 embwasm::WasmEngine engine;
-engine.Init(pool);
+engine.Init(pool); // 内部でスケジューラも初期化されます
 
-engine.Load(wasm_binary, was_size);
+// WASMバイナリのロード
+engine.Load("main", 4, wasm_binary, wasm_size);
 
-// スケジューラの初期化
-embwasm::WasmScheduler scheduler(engine);
-scheduler.SetAsInstance(); // ホストAPIから参照可能にする
+// Execute() を呼ぶことでスケジューラが自動的に動作します。
+// WASM内から thread_spawn / thread_yield / event_wait / event_signal を呼ぶと
+// 協調スケジューリングが行われます。
+engine.Execute("main", 4, "main", 4, nullptr, 0, nullptr, 0);
+```
 
-// メインスレッドの作成
-int32_t main_idx = engine.GetExportFunctionIndex("main");
-scheduler.CreateThread(main_idx);
+ワーカースレッドを直接制御する必要がある場合は、`engine.GetScheduler()` でスケジューラの
+参照を取得できます（通常は不要です）。
 
-// すべてのスレッドが終了するまで実行
-scheduler.Run();
+```cpp
+embwasm::WasmScheduler* scheduler = engine.GetScheduler();
+uint32_t thread_id = scheduler->CreateThread(func_index); // ワーカースレッドの追加作成
 ```
 
 ---

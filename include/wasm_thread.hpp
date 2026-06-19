@@ -108,7 +108,6 @@ public:
 
     // スケジューリング実行（すべてのスレッドが終了するまで回す、または1ステップ実行）
     WasmResult Run() noexcept;
-    WasmResult Step() noexcept;
 
     // メインスレッドにモジュールと関数を割り当て、kReady 状態にする（Execute / start関数 から呼ぶ）
     uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
@@ -134,6 +133,8 @@ public:
     }
 
 private:
+    WasmResult Step() noexcept;
+    
     WasmEngine& engine_;
     WasmThreadContext** threads_;
     WasmEvent events_[kMaxEvents];

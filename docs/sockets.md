@@ -77,19 +77,24 @@ void run_http_client() {
 ## 4. ホスト側 (C++) の設定
 
 ホスト側では `InitializeAllHostModules` を呼び出すか、個別に `socket::Initialize` を呼び出します。
+`InitializeAllHostModules` は `gen_api.py` が自動生成する `wasm_api_static.cpp` に含まれます。
 
 ```cpp
+static uint8_t g_pool_buf[embwasm::kMemoryPoolSize];
 embwasm::WasmMemoryPool pool;
-embwasm::WasmEngine engine(pool);
+pool.Init(g_pool_buf, sizeof(g_pool_buf));
+
+embwasm::WasmEngine engine;
+engine.Init(pool);
 
 // ソケットモジュールの初期化 (内部で静的テーブルが準備される)
 embwasm::InitializeAllHostModules(engine);
 
-engine.Load(wasm_binary, was_size);
-engine.Execute("run_http_client", ...);
+engine.Load("default", 7, wasm_binary, wasm_size);
+engine.Execute("default", 7, "run_http_client", 15, nullptr, 0, nullptr, 0);
 
-// 終了処理
-embwasm::DeinitializeAllHostModules(engine);
+engine.Deinit();
+pool.Deinit();
 ```
 
 ---

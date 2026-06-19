@@ -68,7 +68,7 @@ embwasm/
 │       └── wasm_to_cpp.py# Utility to convert WASM binaries into C++ byte arrays
 │
 └── docs/
-├── coding_style.md   # Detailed guide on naming conventions and language feature restrictions (Must-read)
+├── cpp_coding_style.md   # Detailed guide on naming conventions and C/C++ language feature restrictions (Must-read)
 ├── getting_started.md# Build procedures and quick start guide
 ├── api_impl_for_wasm.md # Procedures for implementing and exposing host APIs
 ├── tool_usage.md     # How to use code generation tools
@@ -152,13 +152,13 @@ Because this library is built for bare-metal environments, the following feature
 
 Detailed guidelines regarding naming conventions and restrictions on C++ features are defined in the following document. Be sure to reference it before modifying any code.
 
-* **Detailed Coding Style**: [docs/coding_style.md](docs/coding_style.md)
+* **Detailed C/C++ Coding Style**: [docs/cpp_coding_style.md](docs/cpp_coding_style.md)
 
 ---
 
 ## 6. Specific Action Requests for Agents
 
-* When proposing or creating new files, always apply the naming conventions detailed in [docs/coding_style.md](docs/coding_style.md) (e.g., `CamelCase` for class names, `snake_case_` for member variables).
+* When proposing or creating new files, always apply the naming conventions detailed in [docs/cpp_coding_style.md](docs/cpp_coding_style.md) (e.g., `CamelCase` for class names, `snake_case_` for member variables).
 * To eliminate dynamic memory allocation, determine array sizes and boundaries as static constants using `constexpr`.
 * To avoid undefined behavior (UB), minimize pointer arithmetic and type casting. If casting is necessary, use explicit interfaces rather than brute-force `reinterpret_cast`.
 * To protect the host stack, if a function requires deep nesting or recursive logic, you must implement it iteratively using an explicit call stack (data structure).

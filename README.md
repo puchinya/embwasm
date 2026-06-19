@@ -58,7 +58,7 @@ cmake --build build
 - **ネットワークソケット機能**: [docs/sockets.md](docs/sockets.md)
 
 ## コーディング規約
-C++コードの命名規則や言語機能の制限（STL・例外・RTTI禁止など）などの詳細については、[docs/coding_style.md](docs/coding_style.md) を参照してください。
+C++コードの命名規則や言語機能の制限（STL・例外・RTTI禁止など）などの詳細については、[docs/cpp_coding_style.md](docs/cpp_coding_style.md) を参照してください。
 
 ## ライセンス
 Copyright (c) 2026 embwasm Project. All rights reserved.

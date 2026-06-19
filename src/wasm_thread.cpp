@@ -146,7 +146,6 @@ WasmResult WasmScheduler::Run() noexcept {
 }
 
 WasmResult WasmScheduler::Step() noexcept {
-    if (!threads_) return WasmResult::kErrorOutOfMemory;
     // Round-robin で Ready なスレッドを探す
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
