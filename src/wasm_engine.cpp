@@ -2060,7 +2060,7 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
     uint32_t thread_id = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(func_idx));
     if (thread_id == 0) return WasmResult::kErrorOutOfMemory;
 
-    WasmThreadContext* exec_ctx = scheduler_.GetMainThread();
+    WasmThreadContext* exec_ctx = scheduler_.GetMainThreadContext();
     if (!exec_ctx) return WasmResult::kErrorOutOfMemory;
 
     exec_ctx->stack_top = 0;

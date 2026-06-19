@@ -118,7 +118,7 @@ WasmResult EventWait(
     WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorRuntimeError;
 
-    WasmThreadContext* current = scheduler->GetCurrentThread();
+    WasmThreadContext* current = scheduler->GetCurrentThreadContext();
     if (!current) return WasmResult::kErrorRuntimeError;
 
     scheduler->WaitEvent(current->id, event_id);

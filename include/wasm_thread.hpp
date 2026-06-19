@@ -114,7 +114,7 @@ public:
     uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
 
     // メインスレッドコンテキストの取得
-    WasmThreadContext* GetMainThread() noexcept {
+    WasmThreadContext* GetMainThreadContext() noexcept {
         return (threads_) ? &threads_[kMainThreadIndex] : nullptr;
     }
 
@@ -126,14 +126,9 @@ public:
 
     WasmEngine& GetEngine() noexcept { return engine_; }
 
-    // ホストAPIから呼び出すための静的アクセサ（簡易実装のためグローバルまたはシングルトン）
-    static WasmScheduler* GetInstance() noexcept { return instance_; }
-    void SetAsInstance() noexcept { instance_ = this; }
-
-    WasmThreadContext* GetCurrentThread() noexcept {
+    WasmThreadContext* GetCurrentThreadContext() noexcept {
         return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr;
     }
-
 
 private:
     bool EnsureThreadsAllocated() noexcept;
@@ -142,7 +137,6 @@ private:
     WasmThreadContext* threads_;
     WasmEvent events_[kMaxEvents];
     std::size_t current_thread_index_;
-    static WasmScheduler* instance_;
 };
 
 #endif // EMBWASM_ENABLE_MULTITHREADING

@@ -5,8 +5,6 @@ namespace embwasm {
 
 #if EMBWASM_ENABLE_MULTITHREADING
 
-WasmScheduler* WasmScheduler::instance_ = nullptr;
-
 WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept
     : engine_(engine), threads_(nullptr), current_thread_index_(0) {
     for (std::size_t i = 0; i < kMaxEvents; ++i) {
@@ -17,9 +15,6 @@ WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept
 
 void WasmScheduler::Init() noexcept {
     if (!EnsureThreadsAllocated()) return;
-    // メインスレッド（slot 0）は EnsureThreadsAllocated() 内で kTerminated として確保済み。
-    // 実行タスクの割り当ては SetupMainThread(mod, func_index) で行う。
-    SetAsInstance();
 }
 
 void WasmScheduler::Deinit() noexcept {

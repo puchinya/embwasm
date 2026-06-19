@@ -108,11 +108,11 @@ TEST_F(WasmThreadTest, EventWaitSignalApi) {
     WasmResult res = hostmodules::thread::EventWait(engine, args, 1, nullptr, 0);
     
     EXPECT_EQ(res, WasmResult::kYield);
-    EXPECT_EQ(scheduler.GetCurrentThread()->state, ThreadState::kWaiting);
+    EXPECT_EQ(scheduler.GetCurrentThreadContext()->state, ThreadState::kWaiting);
     
     res = hostmodules::thread::EventSignal(engine, args, 1, nullptr, 0);
     EXPECT_EQ(res, WasmResult::kOk);
-    EXPECT_EQ(scheduler.GetCurrentThread()->state, ThreadState::kReady);
+    EXPECT_EQ(scheduler.GetCurrentThreadContext()->state, ThreadState::kReady);
 }
 
 } // namespace embwasm
