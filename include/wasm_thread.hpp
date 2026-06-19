@@ -115,27 +115,27 @@ public:
 
     // メインスレッドコンテキストの取得
     WasmThreadContext* GetMainThreadContext() noexcept {
-        return (threads_) ? &threads_[kMainThreadIndex] : nullptr;
+        return (threads_) ? threads_[kMainThreadIndex] : nullptr;
     }
 
     // スレッドコンテキストの取得（thread_id は CreateThread の戻り値、1-based）
     WasmThreadContext* GetThreadContext(uint32_t thread_id) noexcept {
         if (thread_id == 0 || thread_id > kMaxThreads || !threads_) return nullptr;
-        return &threads_[thread_id - 1];
+        return threads_[thread_id - 1];
     }
 
     WasmEngine& GetEngine() noexcept { return engine_; }
 
     WasmThreadContext* GetCurrentThreadContext() noexcept {
-        return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr;
+        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
     }
     const WasmThreadContext* GetCurrentThreadContext() const noexcept {
-        return (current_thread_index_ < kMaxThreads && threads_) ? &threads_[current_thread_index_] : nullptr;
+        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
     }
 
 private:
     WasmEngine& engine_;
-    WasmThreadContext* threads_;
+    WasmThreadContext** threads_;
     WasmEvent events_[kMaxEvents];
     std::size_t current_thread_index_;
 };
