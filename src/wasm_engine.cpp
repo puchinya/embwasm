@@ -294,16 +294,12 @@ static void ClearModuleInstance(WasmModuleInstance& m) noexcept {
     m.name_len = 0;
     m.signatures = nullptr;
     m.signature_count = 0;
-    m.signature_capacity = 0;
     m.functions = nullptr;
     m.function_count = 0;
-    m.function_capacity = 0;
     m.exports = nullptr;
     m.export_count = 0;
-    m.export_capacity = 0;
     m.globals = nullptr;
     m.global_count = 0;
-    m.global_capacity = 0;
     m.linear_memory_ptr = nullptr;
     m.linear_memory_size = 0;
     m.linear_memory_capacity = 0;
@@ -644,8 +640,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     WasmModuleCounts counts = PreScanSections(binary + 8, size - 8);
 
     // signatures
-    mod->signature_capacity = counts.type_count;
-    mod->signature_count = 0;
+    mod->signature_count = counts.type_count;
     mod->signatures = (counts.type_count > 0)
         ? static_cast<WasmTypeSignature*>(pool_->Allocate(counts.type_count * sizeof(WasmTypeSignature)))
         : nullptr;
@@ -657,8 +652,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature));
 
     // functions
-    mod->function_capacity = counts.func_count;
-    mod->function_count = 0;
+    mod->function_count = counts.func_count;
     mod->functions = (counts.func_count > 0)
         ? static_cast<WasmFunction*>(pool_->Allocate(counts.func_count * sizeof(WasmFunction)))
         : nullptr;
@@ -670,8 +664,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     if (mod->functions) std::memset(mod->functions, 0, counts.func_count * sizeof(WasmFunction));
 
     // exports
-    mod->export_capacity = counts.export_count;
-    mod->export_count = 0;
+    mod->export_count = counts.export_count;
     mod->exports = (counts.export_count > 0)
         ? static_cast<WasmExportEntry*>(pool_->Allocate(counts.export_count * sizeof(WasmExportEntry)))
         : nullptr;
@@ -683,8 +676,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
 
     // globals
-    mod->global_capacity = counts.global_count;
-    mod->global_count = 0;
+    mod->global_count = counts.global_count;
     mod->globals = (counts.global_count > 0)
         ? static_cast<WasmGlobal*>(pool_->Allocate(counts.global_count * sizeof(WasmGlobal)))
         : nullptr;
@@ -1350,13 +1342,13 @@ WasmEngine::WasmModuleCounts WasmEngine::PreScanSections(const uint8_t* binary, 
 WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* binary, std::size_t size) noexcept {
     if (!mod) return WasmResult::kErrorRuntimeError;
     WasmTypeSignature* signatures_ = mod->signatures;
-    std::size_t& signature_count_ = mod->signature_count;
+    std::size_t sig_idx = 0;
     WasmFunction* functions_ = mod->functions;
-    std::size_t& function_count_ = mod->function_count;
+    std::size_t func_idx = 0;
     WasmExportEntry* exports_ = mod->exports;
-    std::size_t& export_count_ = mod->export_count;
+    std::size_t exp_idx = 0;
     WasmGlobal* globals_ = mod->globals;
-    std::size_t& global_count_ = mod->global_count;
+    std::size_t glob_idx = 0;
     uint8_t*& linear_memory_ptr_ = mod->linear_memory_ptr;
     std::size_t& linear_memory_size_ = mod->linear_memory_size;
     std::size_t& linear_memory_capacity_ = mod->linear_memory_capacity;
@@ -1423,10 +1415,10 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         sig.results[r] = static_cast<WasmType>(*ptr++);
                     }
 
-                    if (signature_count_ >= mod->signature_capacity) {
+                    if (sig_idx >= mod->signature_count) {
                         return WasmResult::kErrorOutOfMemory;
                     }
-                    signatures_[signature_count_++] = sig;
+                    signatures_[sig_idx++] = sig;
                 }
                 break;
             }
@@ -1454,38 +1446,38 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
 
                         HostFunctionId host_func_id = LookupStaticHostFunctionId(mod_name, mod_len, field_name, field_len);
 
-                        if (function_count_ >= mod->function_capacity) {
+                        if (func_idx >= mod->function_count) {
                             return WasmResult::kErrorOutOfMemory;
                         }
 
                         if (host_func_id != HostFunctionId::kInvalid) {
-                            functions_[function_count_].kind = WasmFunctionKind::kHost;
-                            functions_[function_count_].type_index = type_idx;
-                            functions_[function_count_].host.host_func_id = host_func_id;
+                            functions_[func_idx].kind = WasmFunctionKind::kHost;
+                            functions_[func_idx].type_index = type_idx;
+                            functions_[func_idx].host.host_func_id = host_func_id;
                         } else {
-                            functions_[function_count_].kind = WasmFunctionKind::kImport;
-                            functions_[function_count_].type_index = type_idx;
-                            functions_[function_count_].import.resolved_func = nullptr;
+                            functions_[func_idx].kind = WasmFunctionKind::kImport;
+                            functions_[func_idx].type_index = type_idx;
+                            functions_[func_idx].import.resolved_func = nullptr;
 
                             char* mn_buf = static_cast<char*>(pool_->Allocate(mod_len + 1));
                             if (mn_buf) {
                                 std::memcpy(mn_buf, mod_name, mod_len);
                                 mn_buf[mod_len] = '\0';
-                                functions_[function_count_].import.module_name = mn_buf;
-                                functions_[function_count_].import.module_name_len = mod_len;
+                                functions_[func_idx].import.module_name = mn_buf;
+                                functions_[func_idx].import.module_name_len = mod_len;
                             } else {
-                                functions_[function_count_].import.module_name = nullptr;
-                                functions_[function_count_].import.module_name_len = 0;
+                                functions_[func_idx].import.module_name = nullptr;
+                                functions_[func_idx].import.module_name_len = 0;
                             }
                             char* fn_buf = static_cast<char*>(pool_->Allocate(field_len + 1));
                             if (fn_buf) {
                                 std::memcpy(fn_buf, field_name, field_len);
                                 fn_buf[field_len] = '\0';
-                                functions_[function_count_].import.field_name = fn_buf;
-                                functions_[function_count_].import.field_name_len = field_len;
+                                functions_[func_idx].import.field_name = fn_buf;
+                                functions_[func_idx].import.field_name_len = field_len;
                             } else {
-                                functions_[function_count_].import.field_name = nullptr;
-                                functions_[function_count_].import.field_name_len = 0;
+                                functions_[func_idx].import.field_name = nullptr;
+                                functions_[func_idx].import.field_name_len = 0;
                             }
 
                             // モジュール間リンク：ロード済みモジュールから同名エクスポートを探す
@@ -1498,16 +1490,16 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                                 for (std::size_t e = 0; e < modules_[m]->export_count; ++e) {
                                     if (modules_[m]->exports[e].kind == 0 &&
                                         StrEq(modules_[m]->exports[e].name, modules_[m]->exports[e].name_len, field_name, field_len)) {
-                                        functions_[function_count_].import.resolved_func =
+                                        functions_[func_idx].import.resolved_func =
                                             &modules_[m]->functions[modules_[m]->exports[e].index];
                                         break;
                                     }
                                 }
-                                if (functions_[function_count_].import.resolved_func != nullptr) break;
+                                if (functions_[func_idx].import.resolved_func != nullptr) break;
                             }
                         }
 
-                        function_count_++;
+                        func_idx++;
                         code_index_offset++;
                     } else if (kind == 0x03) { // Global import
                         if (ptr + 2 > section_end) {
@@ -1515,7 +1507,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         }
                         WasmType gtype = static_cast<WasmType>(*ptr++);
                         bool is_mutable = (*ptr++ != 0);
-                        if (global_count_ < mod->global_capacity) {
+                        if (glob_idx < mod->global_count) {
                             WasmValue gval;
                             gval.value.i64 = 0;
                             // spectest モジュールの既知グローバル値を設定
@@ -1531,7 +1523,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                                     gval.value.f64 = 666.6;
                                 }
                             }
-                            globals_[global_count_++] = {gtype, is_mutable, gval};
+                            globals_[glob_idx++] = {gtype, is_mutable, gval};
                         }
                     } else if (kind == 0x02) { // Memory import
                         uint8_t flags = *ptr++;
@@ -1662,15 +1654,15 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                 for (uint32_t i = 0; i < num_funcs; ++i) {
                     uint32_t type_idx = DecodeVarUint32(ptr, section_end);
 
-                    if (function_count_ >= mod->function_capacity) {
+                    if (func_idx >= mod->function_count) {
                         return WasmResult::kErrorOutOfMemory;
                     }
-                    functions_[function_count_].kind = WasmFunctionKind::kLocal;
-                    functions_[function_count_].type_index = type_idx;
-                    functions_[function_count_].local.code_ptr = nullptr;
-                    functions_[function_count_].local.code_size = 0;
-                    functions_[function_count_].local.local_count = 0;
-                    function_count_++;
+                    functions_[func_idx].kind = WasmFunctionKind::kLocal;
+                    functions_[func_idx].type_index = type_idx;
+                    functions_[func_idx].local.code_ptr = nullptr;
+                    functions_[func_idx].local.code_size = 0;
+                    functions_[func_idx].local.local_count = 0;
+                    func_idx++;
                 }
                 break;
             }
@@ -1687,11 +1679,11 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                     uint8_t kind = *ptr++;
                     uint32_t idx = DecodeVarUint32(ptr, section_end);
 
-                    if (export_count_ >= mod->export_capacity) {
+                    if (exp_idx >= mod->export_count) {
                         return WasmResult::kErrorOutOfMemory;
                     }
-                    exports_[export_count_] = {name, name_len, kind, idx};
-                    export_count_++;
+                    exports_[exp_idx] = {name, name_len, kind, idx};
+                    exp_idx++;
                 }
                 break;
             }
@@ -1699,7 +1691,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
             case 6: { // Global Section
                 uint32_t num_globals = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_globals; ++i) {
-                    if (global_count_ >= mod->global_capacity) {
+                    if (glob_idx >= mod->global_count) {
                         return WasmResult::kErrorOutOfMemory;
                     }
 
@@ -1723,22 +1715,22 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         ptr += 8;
                     } else if (opcode == 0x23) { // global.get
                         uint32_t idx = DecodeVarUint32(ptr, section_end);
-                        if (idx >= global_count_) return WasmResult::kErrorRuntimeError;
+                        if (idx >= glob_idx) return WasmResult::kErrorRuntimeError;
                         val = globals_[idx].value;
                     } else if (opcode == 0xD0) { // ref.null
                         int32_t heap_type = DecodeVarInt32(ptr, section_end);
                         (void)heap_type;
                         val.value.i64 = -1;
                     } else if (opcode == 0xD2) { // ref.func
-                        uint32_t func_idx = DecodeVarUint32(ptr, section_end);
-                        val.value.i64 = static_cast<int64_t>(func_idx);
+                        uint32_t ref_func_idx = DecodeVarUint32(ptr, section_end);
+                        val.value.i64 = static_cast<int64_t>(ref_func_idx);
                     } else {
                         // 未サポートまたは無効な初期化式
                         return WasmResult::kErrorRuntimeError;
                     }
                     if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
 
-                    globals_[global_count_++] = {type, is_mutable, val};
+                    globals_[glob_idx++] = {type, is_mutable, val};
                 }
                 break;
             }
@@ -1838,7 +1830,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                             offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
                         } else if (opcode == 0x23) { // global.get
                             uint32_t gidx = DecodeVarUint32(ptr, section_end);
-                            if (gidx < global_count_) {
+                            if (gidx < glob_idx) {
                                 offset = static_cast<uint32_t>(globals_[gidx].value.value.i32);
                             }
                         } else {
@@ -1910,7 +1902,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                             offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
                         } else if (opcode == 0x23) { // global.get
                             uint32_t global_idx = DecodeVarUint32(ptr, section_end);
-                            if (global_idx < global_count_) {
+                            if (global_idx < glob_idx) {
                                 offset = globals_[global_idx].value.value.i32;
                             }
                         } else {
@@ -2015,8 +2007,8 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         }
                     }
 
-                    uint32_t func_idx = code_index_offset + i;
-                    if (func_idx >= function_count_) {
+                    uint32_t code_func_idx = code_index_offset + i;
+                    if (code_func_idx >= mod->function_count) {
                         return WasmResult::kErrorRuntimeError;
                     }
 
@@ -2029,10 +2021,10 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         std::memcpy(local_types, temp_types, local_count * sizeof(WasmType));
                     }
 
-                    functions_[func_idx].local.code_ptr = ptr;
-                    functions_[func_idx].local.code_size = static_cast<uint32_t>(body_end - ptr);
-                    functions_[func_idx].local.local_count = local_count;
-                    functions_[func_idx].local.local_types = local_types;
+                    functions_[code_func_idx].local.code_ptr = ptr;
+                    functions_[code_func_idx].local.code_size = static_cast<uint32_t>(body_end - ptr);
+                    functions_[code_func_idx].local.local_count = local_count;
+                    functions_[code_func_idx].local.local_types = local_types;
 
                     ptr = body_end;
                 }

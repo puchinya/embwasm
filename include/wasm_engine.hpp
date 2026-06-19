@@ -76,19 +76,15 @@ struct WasmModuleInstance {
     // 動的確保 (PreScanSections で確定したサイズをLoad時に確保)
     WasmTypeSignature* signatures;
     std::size_t signature_count;
-    std::size_t signature_capacity;
 
     WasmFunction* functions;
     std::size_t function_count;
-    std::size_t function_capacity;
 
     WasmExportEntry* exports;
     std::size_t export_count;
-    std::size_t export_capacity;
 
     WasmGlobal* globals;
     std::size_t global_count;
-    std::size_t global_capacity;
 
     // 線形メモリ（Memory section / Data section）
     uint8_t* linear_memory_ptr;
