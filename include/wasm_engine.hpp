@@ -146,50 +146,14 @@ public:
     // エクスポートされた関数を実行する
     WasmResult Execute(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
-    // 後方互換API：最初のアクティブモジュールで実行
-    WasmResult Execute(const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i] && modules_[i]->is_active)
-                return Execute(modules_[i]->name, modules_[i]->name_len, name, name_len, args, arg_count, results, result_count);
-        }
-        return WasmResult::kErrorFunctionNotFound;
-    }
-
     // 関数名からインデックスを取得
     int32_t GetExportFunctionIndex(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len) const noexcept;
-
-    // 後方互換API：最初のアクティブモジュールから検索
-    int32_t GetExportFunctionIndex(const char* name, std::size_t name_len) const noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i] && modules_[i]->is_active)
-                return GetExportFunctionIndex(modules_[i]->name, modules_[i]->name_len, name, name_len);
-        }
-        return -1;
-    }
 
     // エクスポートされた関数の戻り値数を取得
     uint32_t GetExportFunctionResultCount(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len) const noexcept;
 
-    // 後方互換API：最初のアクティブモジュールから検索
-    uint32_t GetExportFunctionResultCount(const char* name, std::size_t name_len) const noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i] && modules_[i]->is_active)
-                return GetExportFunctionResultCount(modules_[i]->name, modules_[i]->name_len, name, name_len);
-        }
-        return 0;
-    }
-
     // エクスポートインデックスから内部関数インデックスを取得
     int32_t GetFunctionIndexByExportIndex(int32_t instance_id, uint32_t export_idx) const noexcept;
-
-    // 後方互換API：最初のアクティブモジュールから検索
-    int32_t GetFunctionIndexByExportIndex(uint32_t export_idx) const noexcept {
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i] && modules_[i]->is_active)
-                return GetFunctionIndexByExportIndex(static_cast<int32_t>(i), export_idx);
-        }
-        return -1;
-    }
 
     // 統計情報の取得
     std::size_t GetMaxCallStackDepth() const noexcept { return max_call_stack_depth_; }
@@ -332,13 +296,11 @@ private:
     // 複数モジュールを格納するポインタ配列（インスタンスはLoad時にプールから確保）
     WasmModuleInstance* modules_[kMaxModules];
 
-#if !EMBWASM_ENABLE_MULTITHREADING
-    // 現在の実行コンテキスト（非MTビルドのみ）
-    WasmThreadContext* ctx_;
-#endif
-
 #if EMBWASM_ENABLE_MULTITHREADING
     WasmScheduler scheduler_;
+#else
+    // 現在の実行コンテキスト（非MTビルドのみ）
+    WasmThreadContext* ctx_;
 #endif
 
     // 統計情報
