@@ -144,7 +144,7 @@ public:
     WasmResult Load(const uint8_t* binary, std::size_t size) noexcept {
         int32_t r = Load("default", 7, binary, size);
         if (r >= 0) return WasmResult::kOk;
-        return static_cast<WasmResult>(-r);
+        return static_cast<WasmResult>(r);
     }
 
     // エクスポートされた関数を実行する

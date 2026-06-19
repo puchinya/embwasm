@@ -579,19 +579,19 @@ const char* WasmEngine::ResolveAlias(const char* name, std::size_t name_len, std
 }
 
 int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, const uint8_t* binary, std::size_t size) noexcept {
-    if (!pool_) return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-    if (size < 8) return -static_cast<int32_t>(WasmResult::kErrorInvalidMagic);
+    if (!pool_) return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+    if (size < 8) return static_cast<int32_t>(WasmResult::kErrorInvalidMagic);
     if (!module_name || module_name_len == 0 || module_name_len >= 64) {
-        return -static_cast<int32_t>(WasmResult::kErrorRuntimeError);
+        return static_cast<int32_t>(WasmResult::kErrorRuntimeError);
     }
 
     // マジックナンバー "\0asm" の検証
     if (binary[0] != 0x00 || binary[1] != 0x61 || binary[2] != 0x73 || binary[3] != 0x6d) {
-        return -static_cast<int32_t>(WasmResult::kErrorInvalidMagic);
+        return static_cast<int32_t>(WasmResult::kErrorInvalidMagic);
     }
     // バージョン 1 の検証
     if (binary[4] != 0x01 || binary[5] != 0x00 || binary[6] != 0x00 || binary[7] != 0x00) {
-        return -static_cast<int32_t>(WasmResult::kErrorInvalidVersion);
+        return static_cast<int32_t>(WasmResult::kErrorInvalidVersion);
     }
 
     // すでに同じ名前のモジュールがあるか探す
@@ -621,7 +621,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     }
 
     if (!mod) {
-        return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+        return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
 
     // スロットの初期化
@@ -645,7 +645,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.type_count > 0 && !mod->signatures) {
         mod->is_active = false;
-        return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+        return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature));
 
@@ -657,7 +657,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.func_count > 0 && !mod->functions) {
         FreeModuleInstance(mod);
-        return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+        return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->functions) std::memset(mod->functions, 0, counts.func_count * sizeof(WasmFunction));
 
@@ -669,7 +669,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.export_count > 0 && !mod->exports) {
         FreeModuleInstance(mod);
-        return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+        return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
 
@@ -681,7 +681,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         : nullptr;
     if (counts.global_count > 0 && !mod->globals) {
         FreeModuleInstance(mod);
-        return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+        return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     }
     if (mod->globals) std::memset(mod->globals, 0, counts.global_count * sizeof(WasmGlobal));
 
@@ -703,7 +703,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         mod->is_table_shared = static_cast<bool*>(pool_->Allocate(counts.table_count * sizeof(bool)));
         if (!mod->tables || !mod->table_sizes || !mod->table_max_sizes || !mod->table_types || !mod->is_table_shared) {
             FreeModuleInstance(mod);
-            return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t*));
         std::memset(mod->table_sizes, 0, counts.table_count * sizeof(std::size_t));
@@ -727,7 +727,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         mod->data_segment_dropped = static_cast<bool*>(pool_->Allocate(counts.data_count * sizeof(bool)));
         if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped) {
             FreeModuleInstance(mod);
-            return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t*));
         std::memset(mod->data_segment_sizes, 0, counts.data_count * sizeof(uint32_t));
@@ -747,7 +747,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         mod->elem_segment_dropped = static_cast<bool*>(pool_->Allocate(counts.elem_count * sizeof(bool)));
         if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped) {
             FreeModuleInstance(mod);
-            return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t*));
         std::memset(mod->elem_segment_sizes, 0, counts.elem_count * sizeof(uint32_t));
@@ -763,14 +763,14 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
     WasmResult res = ParseSections(mod, binary + 8, size - 8);
     if (res != WasmResult::kOk) {
         FreeModuleInstance(mod);
-        return -static_cast<int32_t>(res);
+        return static_cast<int32_t>(res);
     }
 
     // 事前検査
     res = Validate(mod);
     if (res != WasmResult::kOk) {
         FreeModuleInstance(mod);
-        return -static_cast<int32_t>(res);
+        return static_cast<int32_t>(res);
     }
 
     // 各ロードされた関数の module メンバに mod をセット
@@ -794,7 +794,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
         uint32_t tid = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(mod->start_function_index));
         if (tid == 0) {
             FreeModuleInstance(mod);
-            return -static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         res = scheduler_.Run();
 #else
@@ -802,7 +802,7 @@ int32_t WasmEngine::Load(const char* module_name, std::size_t module_name_len, c
 #endif
         if (res != WasmResult::kOk) {
             FreeModuleInstance(mod);
-            return -static_cast<int32_t>(res);
+            return static_cast<int32_t>(res);
         }
     }
 

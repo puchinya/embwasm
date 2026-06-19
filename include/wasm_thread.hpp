@@ -134,8 +134,6 @@ public:
     }
 
 private:
-    bool EnsureThreadsAllocated() noexcept;
-
     WasmEngine& engine_;
     WasmThreadContext* threads_;
     WasmEvent events_[kMaxEvents];

@@ -14,7 +14,15 @@ WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept
 }
 
 void WasmScheduler::Init() noexcept {
-    if (!EnsureThreadsAllocated()) return;
+    WasmMemoryPool* pool = engine_.GetMemoryPool();
+    if (!pool) return;
+    void* allocated = pool->Allocate(sizeof(WasmThreadContext) * kMaxThreads);
+    if (!allocated) return;
+    threads_ = static_cast<WasmThreadContext*>(allocated);
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        threads_[i].Reset();
+        threads_[i].id = static_cast<uint32_t>(i + 1);
+    }
 }
 
 void WasmScheduler::Deinit() noexcept {
@@ -26,24 +34,8 @@ void WasmScheduler::Deinit() noexcept {
     }
 }
 
-bool WasmScheduler::EnsureThreadsAllocated() noexcept {
-    if (threads_) return true;
-    WasmMemoryPool* pool = engine_.GetMemoryPool();
-    if (!pool) return false;
-
-    void* allocated = pool->Allocate(sizeof(WasmThreadContext) * kMaxThreads);
-    if (!allocated) return false;
-
-    threads_ = static_cast<WasmThreadContext*>(allocated);
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        threads_[i].Reset();
-        threads_[i].id = static_cast<uint32_t>(i + 1);
-    }
-    return true;
-}
-
 uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept {
-    if (!EnsureThreadsAllocated()) return 0;
+    if (!threads_) return 0;
     // メインスレッド（slot 0）を設定して返す
     WasmThreadContext& main = threads_[kMainThreadIndex];
     main.Reset();
@@ -58,7 +50,7 @@ uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_i
 }
 
 uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
-    if (!EnsureThreadsAllocated()) return 0;
+    if (!threads_) return 0;
     // ワーカースレッド: slot 1 以降を使用（slot 0 はメインスレッド専用）
     for (std::size_t i = kMainThreadIndex + 1; i < kMaxThreads; ++i) {
         if (threads_[i].state == ThreadState::kTerminated) {
@@ -94,7 +86,7 @@ uint32_t WasmScheduler::CreateEvent() noexcept {
 }
 
 void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
-    if (!EnsureThreadsAllocated() || event_id == 0 || event_id > kMaxEvents) return;
+    if (!threads_ || event_id == 0 || event_id > kMaxEvents) return;
     events_[event_id - 1].signaled = true;
 
     // このイベントを待っているスレッドをReadyにする
@@ -106,7 +98,7 @@ void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
 }
 
 void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
-    if (!EnsureThreadsAllocated() || thread_id == 0 || thread_id > kMaxThreads) return;
+    if (!threads_ || thread_id == 0 || thread_id > kMaxThreads) return;
     if (event_id == 0 || event_id > kMaxEvents) return;
 
     WasmThreadContext& ctx = threads_[thread_id - 1];
@@ -121,7 +113,7 @@ void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
 }
 
 WasmResult WasmScheduler::Run() noexcept {
-    if (!EnsureThreadsAllocated()) return WasmResult::kErrorOutOfMemory;
+    if (!threads_) return WasmResult::kErrorOutOfMemory;
     while (true) {
         bool any_active = false;
         for (std::size_t i = 0; i < kMaxThreads; ++i) {
@@ -139,7 +131,7 @@ WasmResult WasmScheduler::Run() noexcept {
 }
 
 WasmResult WasmScheduler::Step() noexcept {
-    if (!EnsureThreadsAllocated()) return WasmResult::kErrorOutOfMemory;
+    if (!threads_) return WasmResult::kErrorOutOfMemory;
     // Round-robin で Ready なスレッドを探す
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         std::size_t idx = (current_thread_index_ + i) % kMaxThreads;

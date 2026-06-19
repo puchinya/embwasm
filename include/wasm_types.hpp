@@ -36,17 +36,17 @@ struct WasmValue {
 };
 
 // WASMエンジン実行結果のステータスコード
-enum class WasmResult : uint8_t {
-    kOk,
-    kYield, // 実行を一時中断（スケジューラへ戻る）
-    kErrorInvalidMagic,
-    kErrorInvalidVersion,
-    kErrorUnknownSection,
-    kErrorOutOfMemory,
-    kErrorValidationFailed, // 事前検査失敗（型不整合・制限超過）
-    kErrorFunctionNotFound,
-    kErrorStackOverflow,
-    kErrorRuntimeError
+enum class WasmResult : int32_t {
+    kOk = 0,
+    kYield = 1, // 実行を一時中断（スケジューラへ戻る）
+    kErrorInvalidMagic = -1,
+    kErrorInvalidVersion = -2,
+    kErrorUnknownSection = -3,
+    kErrorOutOfMemory = -4,
+    kErrorValidationFailed = -5, // 事前検査失敗（型不整合・制限超過）
+    kErrorFunctionNotFound = -6,
+    kErrorStackOverflow = -7,
+    kErrorRuntimeError = -8
 };
 
 // ホスト関数のシグネチャ定義
