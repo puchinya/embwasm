@@ -73,7 +73,9 @@ struct WasmExportEntry {
 /// @brief ロード済み WASM モジュールのインスタンス情報。
 struct WasmModuleInstance {
     bool is_active;         ///< スロットが使用中かどうか。
-    bool imports_resolved;  ///< インポート解決済みフラグ（`Execute()` 時に一度だけ解決）。
+    bool imports_resolved;  ///< 関数インポート解決済みフラグ。
+    bool is_instantiated;   ///< InstantiateModules() 完了後 true。
+    bool has_memory;        ///< Memory/MemoryImport 宣言あり（バリデーション・インスタンス化用）。
     char name[64];          ///< モジュール名。
     std::size_t name_len;   ///< モジュール名の長さ。
 
@@ -89,29 +91,44 @@ struct WasmModuleInstance {
     WasmGlobal* globals;             ///< グローバル変数配列（プールから確保）。
     std::size_t global_count;
 
-    uint8_t* linear_memory_ptr;             ///< 線形メモリの先頭ポインタ（プールから確保）。
+    uint8_t* linear_memory_ptr;             ///< 線形メモリの先頭ポインタ（インスタンス化後に確保）。
     std::size_t linear_memory_size;         ///< 現在のサイズ（min_pages * 65536）。
     std::size_t linear_memory_capacity;     ///< プールから確保した実際のバイト数。
     uint32_t max_linear_memory_pages;       ///< メモリセクションで指定された最大ページ数（0 = 制限なし）。
+    uint32_t memory_min_pages;              ///< メモリ初期ページ数（インスタンス化前に有効）。
     bool is_memory_shared;
+    bool memory_is_imported;               ///< メモリがインポート由来の場合 true。
+    const char* memory_import_module;      ///< メモリインポートのモジュール名（バイナリを指す）。
+    std::size_t memory_import_module_len;
+    const char* memory_import_field;       ///< メモリインポートのフィールド名（バイナリを指す）。
+    std::size_t memory_import_field_len;
 
     uint32_t** tables;
     std::size_t* table_sizes;
     uint32_t* table_max_sizes;
     WasmType* table_types;
     bool* is_table_shared;
+    const char** table_import_modules;      ///< テーブルインポートのモジュール名（バイナリを指す）。own テーブルは nullptr。
+    std::size_t* table_import_module_lens;
+    const char** table_import_fields;       ///< テーブルインポートのフィールド名（バイナリを指す）。own テーブルは nullptr。
+    std::size_t* table_import_field_lens;
     std::size_t table_count;
     std::size_t table_capacity;
 
     const uint8_t** data_segments;
     uint32_t* data_segment_sizes;
     bool* data_segment_dropped;
+    uint32_t* data_segment_offsets;   ///< アクティブセグメントのメモリオフセット。
+    bool* data_segment_is_active;     ///< true=アクティブ、false=パッシブ。
     std::size_t data_segment_count;
     std::size_t data_segment_capacity;
 
     uint32_t** elem_segments;
     uint32_t* elem_segment_sizes;
     bool* elem_segment_dropped;
+    uint32_t* elem_segment_table_indices; ///< アクティブセグメントのターゲットテーブル。
+    uint32_t* elem_segment_offsets;       ///< アクティブセグメントのテーブルオフセット。
+    bool* elem_segment_is_active;         ///< true=アクティブ、false=パッシブ/宣言的。
     std::size_t elem_segment_count;
     std::size_t elem_segment_capacity;
 
@@ -309,6 +326,9 @@ public:
         return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id] && modules_[id]->is_active) ? modules_[id] : nullptr;
     }
 
+    /// @brief 指定名のモジュールをアンロードします。
+    /// @param name      モジュール名。
+    /// @param name_len  モジュール名の長さ（バイト数）。
     /// @brief 指定名のモジュールをアンロードします。
     /// @param name      モジュール名。
     /// @param name_len  モジュール名の長さ（バイト数）。

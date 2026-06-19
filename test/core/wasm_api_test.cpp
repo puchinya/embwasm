@@ -75,6 +75,7 @@ TEST(WasmApiStaticTest, StdioPrintfAndPuts) {
 
     // WASMロードして線形メモリを有効化
     ASSERT_EQ(engine.LoadModule(kWasmMemBinaryForStdio, sizeof(kWasmMemBinaryForStdio)), embwasm::WasmResult::kOk);
+    ASSERT_EQ(engine.InstantiateModules(), embwasm::WasmResult::kOk);
 
     uint8_t* mem = engine.GetLinearMemory();
     ASSERT_NE(mem, nullptr);
