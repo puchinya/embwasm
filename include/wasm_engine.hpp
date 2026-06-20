@@ -57,9 +57,10 @@ struct WasmFunction {
 
 /// @brief WASM グローバル変数。
 struct WasmGlobal {
-    WasmType type;    ///< 値の型。
-    bool is_mutable;  ///< ミュータブルフラグ。
-    WasmValue value;  ///< 現在値。
+    WasmType type;             ///< 値の型。
+    bool is_mutable;           ///< ミュータブルフラグ。
+    WasmValue value;           ///< 現在値。
+    uint32_t init_global_ref;  ///< global.get 初期化の参照先インデックス。UINT32_MAX なら定数初期化。
 };
 
 /// @brief WASM エクスポートエントリ。
