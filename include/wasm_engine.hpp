@@ -143,6 +143,8 @@ struct WasmModuleInstance {
     std::size_t GetLinearMemorySize() const noexcept {
         return linear_memory_size;
     }
+
+    int32_t GetExportFunctionIndex(const char* func_name, std::size_t func_name_len) const noexcept;
 };
 
 /// @brief ベアメタル環境向け極小 WASM 実行エンジン。
@@ -190,14 +192,14 @@ public:
     /// @brief 指定モジュールのエクスポート関数を実行します。
     /// @param module_name      モジュール名。
     /// @param module_name_len  モジュール名の長さ（バイト数）。
-    /// @param name             エクスポート関数名。
-    /// @param name_len         関数名の長さ（バイト数）。
+    /// @param func_name             エクスポート関数名。
+    /// @param func_name_len         関数名の長さ（バイト数）。
     /// @param args             引数配列（引数なしの場合は `nullptr`）。
     /// @param arg_count        引数の個数。
     /// @param results          結果格納配列（戻り値なしの場合は `nullptr`）。
     /// @param result_count     戻り値の個数。
     /// @return 実行結果を示す WasmResult。
-    WasmResult Execute(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+    WasmResult Execute(const char* module_name, std::size_t module_name_len, const char* func_name, std::size_t func_name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
     /// @brief 指定モジュールのエクスポート関数インデックスを返します。
     /// @param module_name      モジュール名。

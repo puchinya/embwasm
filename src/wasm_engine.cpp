@@ -346,6 +346,17 @@ static inline bool StrEq(const char* a, std::size_t a_len, const char* b, std::s
     return a_len == b_len && std::memcmp(a, b, a_len) == 0;
 }
 
+int32_t WasmModuleInstance::GetExportFunctionIndex(const char* func_name, std::size_t func_name_len) const noexcept {
+    if (!is_active) return -1;
+    for (std::size_t i = 0; i < export_count; ++i) {
+        auto& exp = exports[i];
+        if (exp.kind == 0 && StrEq(exp.name, exp.name_len, func_name, func_name_len)) {
+            return static_cast<int32_t>(exp.index);
+        }
+    }
+    return -1;
+}
+
 WasmEngine::WasmEngine() noexcept
     : name_alias_count_(0),
       pool_(nullptr),
@@ -2054,7 +2065,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
     return WasmResult::kOk;
 }
 
-WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
+WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_len, const char* func_name, std::size_t func_name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
     WasmModuleInstance* mod = GetModuleInstance(module_name, module_name_len);
     if (!mod || !mod->is_active) {
         return WasmResult::kErrorModuleNotFound;
@@ -2062,8 +2073,8 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
 
     InstantiateModules();
 
-    int32_t func_idx = GetExportFunctionIndex(module_name, module_name_len, name, name_len);
-    if (func_idx == -1) {
+    int32_t func_idx = mod->GetExportFunctionIndex(func_name, func_name_len);
+    if (func_idx < 0) {
         return WasmResult::kErrorFunctionNotFound;
     }
 
@@ -2753,7 +2764,9 @@ WasmResult WasmEngine::
 
                 case 0x10: { // call <func_index>
                     uint32_t target_idx = DecodeVarUint32(ip, limit);
-                    if (target_idx >= function_count_) return WasmResult::kErrorFunctionNotFound;
+                    if (target_idx >= function_count_) {
+                        return WasmResult::kErrorFunctionNotFound;
+                    }
 
                     // kImportのときはチェーンを辿って実際の関数を得る
                     WasmModuleInstance* call_mod = current_mod;
