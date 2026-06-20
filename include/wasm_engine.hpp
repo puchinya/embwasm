@@ -328,14 +328,6 @@ public:
         return (id >= 0 && id < static_cast<int32_t>(kMaxModules) && modules_[id] && modules_[id]->is_active) ? modules_[id] : nullptr;
     }
 
-    /// @brief 指定名のモジュールをアンロードします。
-    /// @param name      モジュール名。
-    /// @param name_len  モジュール名の長さ（バイト数）。
-    /// @brief 指定名のモジュールをアンロードします。
-    /// @param name      モジュール名。
-    /// @param name_len  モジュール名の長さ（バイト数）。
-    void UnloadModule(const char* name, std::size_t name_len) noexcept;
-
     /// @brief モジュールに別名を登録します（インポート解決で使用）。
     /// @param real_name      実モジュール名。
     /// @param real_name_len  実モジュール名の長さ（バイト数）。

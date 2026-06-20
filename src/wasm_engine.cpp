@@ -701,9 +701,6 @@ void WasmEngine::UnloadAllModules() noexcept {
     last_loaded_id_ = -1;
 }
 
-void WasmEngine::UnloadModule(const char* /*name*/, std::size_t /*name_len*/) noexcept {
-}
-
 void WasmEngine::RegisterAlias(const char* real_name, std::size_t real_name_len, const char* alias_name, std::size_t alias_name_len) noexcept {
     if (!alias_name) return;
 
