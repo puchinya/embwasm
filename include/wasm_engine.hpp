@@ -356,6 +356,7 @@ private:
 
     void ResolveImports(WasmModuleInstance* mod) noexcept;
     void FreeModuleInstance(WasmModuleInstance* mod) noexcept;
+    WasmResult OnRuntimeError() noexcept;
 
     struct NameAlias {
         char alias[64];

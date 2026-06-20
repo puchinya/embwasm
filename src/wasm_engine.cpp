@@ -1389,10 +1389,34 @@ WasmResult WasmEngine::Validate(WasmModuleInstance* mod) noexcept {
         }
     }
 
-    // 4. エクスポートセクション: 各関数インデックスが function_count_ 未満であること
+    // 4. エクスポートセクション: 各インデックスが有効範囲内であること
     for (std::size_t i = 0; i < export_count; ++i) {
         if (exports[i].kind == 0 && exports[i].index >= function_count) {
             return WasmResult::kErrorValidationFailed;
+        }
+        if (exports[i].kind == 1 && exports[i].index >= mod->table_count) {
+            return WasmResult::kErrorValidationFailed;
+        }
+        if (exports[i].kind == 2 && (!mod->has_memory || exports[i].index != 0)) {
+            return WasmResult::kErrorValidationFailed;
+        }
+        if (exports[i].kind == 3 && exports[i].index >= mod->global_count) {
+            return WasmResult::kErrorValidationFailed;
+        }
+    }
+
+    // 4b. エレメントセグメント: テーブルインデックス・関数インデックスの検証
+    for (std::size_t i = 0; i < mod->elem_segment_count; ++i) {
+        if (mod->elem_segment_is_active[i] &&
+            mod->elem_segment_table_indices[i] >= mod->table_count) {
+            return WasmResult::kErrorValidationFailed;
+        }
+        uint32_t* elems = mod->elem_segments[i];
+        uint32_t seg_size = mod->elem_segment_sizes[i];
+        for (uint32_t f = 0; f < seg_size; ++f) {
+            if (elems && elems[f] != 0xFFFFFFFF && elems[f] >= function_count) {
+                return WasmResult::kErrorValidationFailed;
+            }
         }
     }
 
@@ -2236,6 +2260,10 @@ int32_t WasmEngine::GetFunctionIndexByExportIndex(int32_t instance_id, uint32_t 
     return -1;
 }
 
+WasmResult WasmEngine::OnRuntimeError() noexcept {
+    return WasmResult::kErrorRuntimeError;
+}
+
 WasmResult WasmEngine::
     ExecuteInternal(WasmModuleInstance* module, uint32_t func_index) noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
@@ -2244,7 +2272,7 @@ WasmResult WasmEngine::
     WasmThreadContext* ctx = ctx_;
 #endif
     if (!ctx || !module) {
-        return WasmResult::kErrorRuntimeError;
+        return OnRuntimeError();
     }
 
     // 既存のコードとの互換性のためのエイリアス
@@ -2282,7 +2310,7 @@ WasmResult WasmEngine::
         if (initial_func->kind == WasmFunctionKind::kHost) {
             // ホストAPI (C++関数) の呼び出し（シグネチャに応じた完全なポップ・プッシュ実装）
             if (initial_func->type_index >= signature_count) {
-                return WasmResult::kErrorRuntimeError;
+                return OnRuntimeError();
             }
             const WasmTypeSignature& sig = signatures[initial_func->type_index];
 
@@ -2322,7 +2350,7 @@ WasmResult WasmEngine::
         // 内部関数の最初のフレームをコールスタックに積む
         {
             if (initial_func->type_index >= signature_count) {
-                return WasmResult::kErrorRuntimeError;
+                return OnRuntimeError();
             }
             const WasmTypeSignature& sig = signatures[initial_func->type_index];
             uint32_t total_locals = sig.param_count + initial_func->local.local_count;
@@ -2360,7 +2388,7 @@ WasmResult WasmEngine::
 
             // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
             if (ctx->stack_top < sig.param_count) {
-                return WasmResult::kErrorRuntimeError;
+                return OnRuntimeError();
             }
             for (uint32_t i = 0; i < sig.param_count; ++i) {
                 frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
@@ -2407,7 +2435,7 @@ WasmResult WasmEngine::
             uint8_t op = *ip++;
             switch (op) {
                 case 0x00: // unreachable
-                    return WasmResult::kErrorRuntimeError;
+                    return OnRuntimeError();
 
                 case 0x01: // nop
                     break;
@@ -2520,7 +2548,7 @@ WasmResult WasmEngine::
                         result_count = 1;
                     }
 
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int32_t cond = stack_[--stack_top_].value.i32;
 
                     if (frame.label_stack_top >= kMaxLabels) return WasmResult::kErrorStackOverflow;
@@ -2607,7 +2635,7 @@ WasmResult WasmEngine::
 
                 case 0x05: { // else
                     // if ブロックの実行が終わって else に到達した場合は end までジャンプ
-                    if (frame.label_stack_top == 0) return WasmResult::kErrorRuntimeError;
+                    if (frame.label_stack_top == 0) return OnRuntimeError();
                     ip = frame.labels[frame.label_stack_top - 1].pc;
                     frame.label_stack_top--; // if ブロックのラベルをポップする
                     break;
@@ -2618,12 +2646,12 @@ WasmResult WasmEngine::
                     uint32_t label_idx = DecodeVarUint32(ip, limit);
                     bool jump = true;
                     if (op == 0x0D) {
-                        if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                        if (stack_top_ < 1) return OnRuntimeError();
                         jump = (stack_[--stack_top_].value.i32 != 0);
                     }
 
                     if (jump) {
-                        if (label_idx >= frame.label_stack_top) return WasmResult::kErrorRuntimeError;
+                        if (label_idx >= frame.label_stack_top) return OnRuntimeError();
                         WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - label_idx];
 
                         // データスタックの巻き戻し (Unwind)
@@ -2669,7 +2697,7 @@ WasmResult WasmEngine::
 
                 case 0x0E: { // br_table
                     uint32_t target_count = DecodeVarUint32(ip, limit);
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     uint32_t idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
 
                     uint32_t chosen_label_idx = 0;
@@ -2686,7 +2714,7 @@ WasmResult WasmEngine::
                         chosen_label_idx = default_target;
                     }
 
-                    if (chosen_label_idx >= frame.label_stack_top) return WasmResult::kErrorRuntimeError;
+                    if (chosen_label_idx >= frame.label_stack_top) return OnRuntimeError();
                     WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - chosen_label_idx];
 
                     // データスタックの巻き戻し (Unwind)
@@ -2731,7 +2759,7 @@ WasmResult WasmEngine::
                         // 結果の値を退避 (LIFOのため逆順)
                         WasmValue saved_vals[128] = {};
                         if (arity > 128) arity = 128;
-                        if (stack_top_ < arity) return WasmResult::kErrorRuntimeError;
+                        if (stack_top_ < arity) return OnRuntimeError();
 
                         for (uint32_t i = 0; i < arity; ++i) {
                             saved_vals[arity - 1 - i] = stack_[--stack_top_];
@@ -2781,7 +2809,7 @@ WasmResult WasmEngine::
                     if (target_func->kind == WasmFunctionKind::kHost) {
                         // ホスト関数の呼び出し
                         if (target_func->type_index >= call_mod->signature_count) {
-                            return WasmResult::kErrorRuntimeError;
+                            return OnRuntimeError();
                         }
                         const WasmTypeSignature& sig = call_mod->signatures[target_func->type_index];
 
@@ -2821,7 +2849,7 @@ WasmResult WasmEngine::
                             return WasmResult::kErrorStackOverflow;
                         }
                         if (target_func->type_index >= call_mod->signature_count) {
-                            return WasmResult::kErrorRuntimeError;
+                            return OnRuntimeError();
                         }
                         const WasmTypeSignature& sig = call_mod->signatures[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
@@ -2851,7 +2879,7 @@ WasmResult WasmEngine::
                         }
 
                         if (ctx->stack_top < sig.param_count) {
-                            return WasmResult::kErrorRuntimeError;
+                            return OnRuntimeError();
                         }
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
                             new_frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
@@ -2875,24 +2903,24 @@ WasmResult WasmEngine::
                     uint32_t type_idx = DecodeVarUint32(ip, limit);
                     uint32_t table_idx = *ip++;
 
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
 
                     if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     uint32_t ref_val = tables[table_idx][elem_idx];
-                    if (ref_val == 0xFFFFFFFF) return WasmResult::kErrorRuntimeError;
+                    if (ref_val == 0xFFFFFFFF) return OnRuntimeError();
                     WasmModuleInstance* target_module = nullptr;
                     uint32_t target_idx = 0xFFFFFFFF;
                     DecodeFuncRef(ref_val, this, current_mod, target_module, target_idx);
-                    if (!target_module || target_idx >= target_module->function_count) return WasmResult::kErrorRuntimeError;
+                    if (!target_module || target_idx >= target_module->function_count) return OnRuntimeError();
 
                     const WasmFunction* target_func = &target_module->functions[target_idx];
                     // 型シグネチャ検証: インデックスが異なっても同等のシグネチャなら許可
                     if (target_func->type_index != type_idx) {
                         if (target_func->type_index >= target_module->signature_count || type_idx >= signature_count) {
-                            return WasmResult::kErrorRuntimeError;
+                            return OnRuntimeError();
                         }
                         const WasmTypeSignature& sa = target_module->signatures[target_func->type_index];
                         const WasmTypeSignature& sb = signatures[type_idx];
@@ -2905,7 +2933,7 @@ WasmResult WasmEngine::
                                 if (sa.results[ri] != sb.results[ri]) same = false;
                             }
                         }
-                        if (!same) return WasmResult::kErrorRuntimeError;
+                        if (!same) return OnRuntimeError();
                     }
 
                     // kImportのときはチェーンを辿って実際の関数を得る
@@ -2920,7 +2948,7 @@ WasmResult WasmEngine::
                     }
 
                     if (target_func->kind == WasmFunctionKind::kHost) {
-                        if (target_func->type_index >= target_module->signature_count) return WasmResult::kErrorRuntimeError;
+                        if (target_func->type_index >= target_module->signature_count) return OnRuntimeError();
                         const WasmTypeSignature& sig = target_module->signatures[target_func->type_index];
                         if (ctx->stack_top < sig.param_count) {
                             while (ctx->stack_top < sig.param_count) {
@@ -2945,7 +2973,7 @@ WasmResult WasmEngine::
                         }
                     } else {
                         if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorCallStackOverflow;
-                        if (target_func->type_index >= target_module->signature_count) return WasmResult::kErrorRuntimeError;
+                        if (target_func->type_index >= target_module->signature_count) return OnRuntimeError();
                         const WasmTypeSignature& sig = target_module->signatures[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
 
@@ -2970,7 +2998,7 @@ WasmResult WasmEngine::
                             new_frame.locals[i] = WasmValue{};
                         }
 
-                        if (ctx->stack_top < sig.param_count) return WasmResult::kErrorRuntimeError;
+                        if (ctx->stack_top < sig.param_count) return OnRuntimeError();
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
                             new_frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
                         }
@@ -2999,7 +3027,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x1B: { // select
-                    if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 3) return OnRuntimeError();
                     int32_t cond = stack_[--stack_top_].value.i32;
                     WasmValue val2 = stack_[--stack_top_];
                     WasmValue val1 = stack_[--stack_top_];
@@ -3008,13 +3036,13 @@ WasmResult WasmEngine::
                 }
 
                 case 0x1C: { // select (t*)
-                    if (ip >= limit) return WasmResult::kErrorRuntimeError;
+                    if (ip >= limit) return OnRuntimeError();
                     uint32_t type_count = DecodeVarUint32(ip, limit);
                     if (type_count > static_cast<std::size_t>(limit - ip)) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     ip += type_count;
-                    if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 3) return OnRuntimeError();
                     int32_t cond = stack_[--stack_top_].value.i32;
                     WasmValue val2 = stack_[--stack_top_];
                     WasmValue val1 = stack_[--stack_top_];
@@ -3025,7 +3053,7 @@ WasmResult WasmEngine::
                 case 0x20: { // local.get <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
                     if (local_idx >= total_locals) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = locals[local_idx];
@@ -3038,10 +3066,10 @@ WasmResult WasmEngine::
                 case 0x21: { // local.set <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
                     if (local_idx >= total_locals) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     if (stack_top_ < 1) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     locals[local_idx] = stack_[--stack_top_];
                     break;
@@ -3050,10 +3078,10 @@ WasmResult WasmEngine::
                 case 0x22: { // local.tee <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
                     if (local_idx >= total_locals) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     if (stack_top_ < 1) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     locals[local_idx] = stack_[stack_top_ - 1]; // ポップせずにコピー
                     break;
@@ -3061,7 +3089,7 @@ WasmResult WasmEngine::
 
                 case 0x23: { // global.get <global_idx>
                     uint32_t idx = DecodeVarUint32(ip, limit);
-                    if (idx >= global_count) return WasmResult::kErrorRuntimeError;
+                    if (idx >= global_count) return OnRuntimeError();
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = globals[idx].value;
                     break;
@@ -3069,18 +3097,18 @@ WasmResult WasmEngine::
 
                 case 0x24: { // global.set <global_idx>
                     uint32_t idx = DecodeVarUint32(ip, limit);
-                    if (idx >= global_count || !globals[idx].is_mutable) return WasmResult::kErrorRuntimeError;
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (idx >= global_count || !globals[idx].is_mutable) return OnRuntimeError();
+                    if (stack_top_ < 1) return OnRuntimeError();
                     globals[idx].value = stack_[--stack_top_];
                     break;
                 }
 
                 case 0x25: { // table.get
                     uint32_t table_idx = DecodeVarUint32(ip, limit);
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
                     if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     uint32_t target_idx = tables[table_idx][elem_idx];
                     
@@ -3097,11 +3125,11 @@ WasmResult WasmEngine::
 
                 case 0x26: { // table.set
                     uint32_t table_idx = DecodeVarUint32(ip, limit);
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue val = stack_[--stack_top_];
                     uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
                     if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                        return WasmResult::kErrorRuntimeError;
+                        return OnRuntimeError();
                     }
                     uint32_t target_idx = 0xFFFFFFFF;
                     if (val.value.i64 != -1) {
@@ -3128,7 +3156,7 @@ WasmResult WasmEngine::
                 case 0x35: { // i64.load32_u
                     /* uint32_t align = */ DecodeVarUint32(ip, limit);
                     uint32_t offset = DecodeVarUint32(ip, limit);
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
                     uint64_t addr = static_cast<uint64_t>(base) + offset;
 
@@ -3141,7 +3169,7 @@ WasmResult WasmEngine::
                     }
                     if (op == 0x2E || op == 0x2F || op == 0x32 || op == 0x33) size = 2;
 
-                    if (!linear_memory_ptr || addr + size > linear_memory_size) return WasmResult::kErrorRuntimeError;
+                    if (!linear_memory_ptr || addr + size > linear_memory_size) return OnRuntimeError();
 
                     WasmValue result_val;
                     result_val.value.i64 = 0;
@@ -3195,7 +3223,7 @@ WasmResult WasmEngine::
                 case 0x3E: { // i64.store32
                     /* uint32_t align = */ DecodeVarUint32(ip, limit);
                     uint32_t offset = DecodeVarUint32(ip, limit);
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue val = stack_[--stack_top_];
                     uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
                     uint64_t addr = static_cast<uint64_t>(base) + offset;
@@ -3207,8 +3235,9 @@ WasmResult WasmEngine::
                         case 0x3A: case 0x3C: size = 1; break;
                         case 0x3B: case 0x3D: size = 2; break;
                     }
-                    if (!linear_memory_ptr || addr + size > linear_memory_size) return WasmResult::kErrorRuntimeError;
-
+                    if (!linear_memory_ptr || addr + size > linear_memory_size) {
+                        return OnRuntimeError();
+                    }
                     if (op == 0x36) {
                         std::memcpy(&linear_memory_ptr[addr], &val.value.i32, 4);
                     } else if (op == 0x37) {
@@ -3275,7 +3304,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x45: { // i32.eqz
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     stack_[stack_top_ - 1].value.i32 = (stack_[stack_top_ - 1].value.i32 == 0) ? 1 : 0;
                     break;
                 }
@@ -3291,7 +3320,7 @@ WasmResult WasmEngine::
                 case 0x4D:   // i32.le_u
                 case 0x4E:   // i32.ge_s
                 case 0x4F: { // i32.ge_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
 
@@ -3313,7 +3342,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x50: { // i64.eqz
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.i32 = (val.value.i64 == 0) ? 1 : 0;
                     break;
@@ -3329,7 +3358,7 @@ WasmResult WasmEngine::
                 case 0x58:   // i64.le_u
                 case 0x59:   // i64.ge_s
                 case 0x5A: { // i64.ge_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
 
@@ -3356,7 +3385,7 @@ WasmResult WasmEngine::
                 case 0x5E:   // f32.gt
                 case 0x5F:   // f32.le
                 case 0x60: { // f32.ge
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
 
@@ -3379,7 +3408,7 @@ WasmResult WasmEngine::
                 case 0x64:   // f64.gt
                 case 0x65:   // f64.le
                 case 0x66: { // f64.ge
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
 
@@ -3397,7 +3426,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x67: { // i32.clz
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
 
                     stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountLeadingZeros(static_cast<uint32_t>(val.value.i32)));
@@ -3416,7 +3445,7 @@ WasmResult WasmEngine::
                 case 0x74:   // i32.shl
                 case 0x75:   // i32.shr_s
                 case 0x76: { // i32.shr_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
 
@@ -3426,12 +3455,12 @@ WasmResult WasmEngine::
                         case 0x6B: res = a.value.i32 - b.value.i32; break;
                         case 0x6C: res = a.value.i32 * b.value.i32; break;
                         case 0x6D:
-                            if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
-                            if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) return WasmResult::kErrorRuntimeError;
+                            if (b.value.i32 == 0) return OnRuntimeError();
+                            if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) return OnRuntimeError();
                             res = a.value.i32 / b.value.i32;
                             break;
                         case 0x6E:
-                            if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
+                            if (b.value.i32 == 0) return OnRuntimeError();
                             res = static_cast<int32_t>(static_cast<uint32_t>(a.value.i32) / static_cast<uint32_t>(b.value.i32));
                             break;
                         case 0x71: res = a.value.i32 & b.value.i32; break;
@@ -3455,7 +3484,7 @@ WasmResult WasmEngine::
                 case 0x86:   // i64.shl
                 case 0x87:   // i64.shr_s
                 case 0x88: { // i64.shr_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
 
@@ -3480,7 +3509,7 @@ WasmResult WasmEngine::
                 case 0x93:   // f32.sub
                 case 0x94:   // f32.mul
                 case 0x95: { // f32.div
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     float res = 0;
@@ -3500,7 +3529,7 @@ WasmResult WasmEngine::
                 case 0xA1:   // f64.sub
                 case 0xA2:   // f64.mul
                 case 0xA3: { // f64.div
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     double res = 0;
@@ -3517,7 +3546,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xA7: { // i32.wrap_i64
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(val.value.i64 & 0xFFFFFFFFULL);
                     break;
@@ -3527,7 +3556,7 @@ WasmResult WasmEngine::
                 case 0xA9:   // i32.trunc_f32_u
                 case 0xAA:   // i32.trunc_f64_s
                 case 0xAB: { // i32.trunc_f64_u
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     WasmValue res_val;
                     if (op == 0xA8 || op == 0xA9) {
@@ -3540,7 +3569,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xAC: { // i64.extend_i32_s
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.i64 = 0;
                     stack_[stack_top_ - 1].value.i64 = static_cast<int64_t>(val.value.i32);
@@ -3548,7 +3577,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xAD: { // i64.extend_i32_u
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.i64 = 0;
                     stack_[stack_top_ - 1].value.i64 = static_cast<uint64_t>(static_cast<uint32_t>(val.value.i32));
@@ -3559,7 +3588,7 @@ WasmResult WasmEngine::
                 case 0xAF:   // i64.trunc_f32_u
                 case 0xB0:   // i64.trunc_f64_s
                 case 0xB1: { // i64.trunc_f64_u
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     WasmValue res_val;
                     if (op == 0xAE || op == 0xAF) {
@@ -3575,7 +3604,7 @@ WasmResult WasmEngine::
                 case 0xB3:   // f32.convert_i32_u
                 case 0xB4:   // f32.convert_i64_s
                 case 0xB5: { // f32.convert_i64_u
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     WasmValue res_val;
                     if (op == 0xB2) {
@@ -3592,7 +3621,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xB6: { // f32.demote_f64
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.f32 = 0;
                     stack_[stack_top_ - 1].value.f32 = static_cast<float>(val.value.f64);
@@ -3603,7 +3632,7 @@ WasmResult WasmEngine::
                 case 0xB8:   // f64.convert_i32_u
                 case 0xB9:   // f64.convert_i64_s
                 case 0xBA: { // f64.convert_i64_u
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     WasmValue res_val;
                     if (op == 0xB7) {
@@ -3620,7 +3649,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xBB: { // f64.promote_f32
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.f64 = 0;
                     stack_[stack_top_ - 1].value.f64 = static_cast<double>(val.value.f32);
@@ -3642,7 +3671,7 @@ WasmResult WasmEngine::
                 case 0x40: { // memory.grow
                     uint8_t reserved = *ip++;
                     (void)reserved;
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     uint32_t delta_pages = static_cast<uint32_t>(stack_[stack_top_ - 1].value.i32);
                     int32_t prev_pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
                     if (delta_pages == 0) {
@@ -3708,24 +3737,24 @@ WasmResult WasmEngine::
                 }
 
                 case 0x68: { // i32.ctz
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountTrailingZeros32(static_cast<uint32_t>(val.value.i32)));
                     break;
                 }
 
                 case 0x69: { // i32.popcnt
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(PopCount32(static_cast<uint32_t>(val.value.i32)));
                     break;
                 }
 
                 case 0x6F: { // i32.rem_s
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
-                    if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
+                    if (b.value.i32 == 0) return OnRuntimeError();
                     int32_t res = 0;
                     if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) {
                         res = 0;
@@ -3737,10 +3766,10 @@ WasmResult WasmEngine::
                 }
 
                 case 0x70: { // i32.rem_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
-                    if (b.value.i32 == 0) return WasmResult::kErrorRuntimeError;
+                    if (b.value.i32 == 0) return OnRuntimeError();
                     uint32_t ua = static_cast<uint32_t>(a.value.i32);
                     uint32_t ub = static_cast<uint32_t>(b.value.i32);
                     int32_t res = static_cast<int32_t>(ua % ub);
@@ -3749,7 +3778,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x77: { // i32.rotl
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     int32_t res = static_cast<int32_t>(Rotl32(static_cast<uint32_t>(a.value.i32), static_cast<uint32_t>(b.value.i32)));
@@ -3758,7 +3787,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x78: { // i32.rotr
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     int32_t res = static_cast<int32_t>(Rotr32(static_cast<uint32_t>(a.value.i32), static_cast<uint32_t>(b.value.i32)));
@@ -3767,7 +3796,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x79: { // i64.clz
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     int64_t res = static_cast<int64_t>(CountLeadingZeros64(static_cast<uint64_t>(val.value.i64)));
                     stack_[stack_top_ - 1].value.i64 = res;
@@ -3775,7 +3804,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x7A: { // i64.ctz
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     int64_t res = static_cast<int64_t>(CountTrailingZeros64(static_cast<uint64_t>(val.value.i64)));
                     stack_[stack_top_ - 1].value.i64 = res;
@@ -3783,7 +3812,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x7B: { // i64.popcnt
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     int64_t res = static_cast<int64_t>(PopCount64(static_cast<uint64_t>(val.value.i64)));
                     stack_[stack_top_ - 1].value.i64 = res;
@@ -3791,21 +3820,21 @@ WasmResult WasmEngine::
                 }
 
                 case 0x7F: { // i64.div_s
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
-                    if (b.value.i64 == 0) return WasmResult::kErrorRuntimeError;
-                    if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) return WasmResult::kErrorRuntimeError;
+                    if (b.value.i64 == 0) return OnRuntimeError();
+                    if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) return OnRuntimeError();
                     int64_t res = a.value.i64 / b.value.i64;
                     stack_[stack_top_++].value.i64 = res;
                     break;
                 }
 
                 case 0x80: { // i64.div_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
-                    if (b.value.i64 == 0) return WasmResult::kErrorRuntimeError;
+                    if (b.value.i64 == 0) return OnRuntimeError();
                     uint64_t ua = static_cast<uint64_t>(a.value.i64);
                     uint64_t ub = static_cast<uint64_t>(b.value.i64);
                     int64_t res = static_cast<int64_t>(ua / ub);
@@ -3814,10 +3843,10 @@ WasmResult WasmEngine::
                 }
 
                 case 0x81: { // i64.rem_s
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
-                    if (b.value.i64 == 0) return WasmResult::kErrorRuntimeError;
+                    if (b.value.i64 == 0) return OnRuntimeError();
                     int64_t res = 0;
                     if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) {
                         res = 0;
@@ -3829,10 +3858,10 @@ WasmResult WasmEngine::
                 }
 
                 case 0x82: { // i64.rem_u
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
-                    if (b.value.i64 == 0) return WasmResult::kErrorRuntimeError;
+                    if (b.value.i64 == 0) return OnRuntimeError();
                     uint64_t ua = static_cast<uint64_t>(a.value.i64);
                     uint64_t ub = static_cast<uint64_t>(b.value.i64);
                     int64_t res = static_cast<int64_t>(ua % ub);
@@ -3841,7 +3870,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x89: { // i64.rotl
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     int64_t res = static_cast<int64_t>(Rotl64(static_cast<uint64_t>(a.value.i64), static_cast<uint64_t>(b.value.i64)));
@@ -3850,7 +3879,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0x8A: { // i64.rotr
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     int64_t res = static_cast<int64_t>(Rotr64(static_cast<uint64_t>(a.value.i64), static_cast<uint64_t>(b.value.i64)));
@@ -3865,7 +3894,7 @@ WasmResult WasmEngine::
                 case 0x8F:   // f32.trunc
                 case 0x90:   // f32.nearest
                 case 0x91: { // f32.sqrt
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     float res = 0.0f;
                     switch (op) {
@@ -3885,7 +3914,7 @@ WasmResult WasmEngine::
                 case 0x96:   // f32.min
                 case 0x97:   // f32.max
                 case 0x98: { // f32.copysign
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     float res = 0.0f;
@@ -3921,7 +3950,7 @@ WasmResult WasmEngine::
                 case 0x9D:   // f64.trunc
                 case 0x9E:   // f64.nearest
                 case 0x9F: { // f64.sqrt
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     double res = 0.0;
                     switch (op) {
@@ -3941,7 +3970,7 @@ WasmResult WasmEngine::
                 case 0xA4:   // f64.min
                 case 0xA5:   // f64.max
                 case 0xA6: { // f64.copysign
-                    if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 2) return OnRuntimeError();
                     WasmValue b = stack_[--stack_top_];
                     WasmValue a = stack_[--stack_top_];
                     double res = 0.0;
@@ -3971,7 +4000,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xBC: { // i32.reinterpret_f32
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     int32_t bits;
                     std::memcpy(&bits, &val.value.f32, 4);
@@ -3980,7 +4009,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xBD: { // i64.reinterpret_f64
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     int64_t bits;
                     std::memcpy(&bits, &val.value.f64, 8);
@@ -3989,7 +4018,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xBE: { // f32.reinterpret_i32
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     float bits;
                     std::memcpy(&bits, &val.value.i32, 4);
@@ -3999,7 +4028,7 @@ WasmResult WasmEngine::
                 }
 
                 case 0xBF: { // f64.reinterpret_i64
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     WasmValue val = stack_[stack_top_ - 1];
                     double bits;
                     std::memcpy(&bits, &val.value.i64, 8);
@@ -4010,33 +4039,33 @@ WasmResult WasmEngine::
 
                 // Sign extension opcodes (sign extension proposal)
                 case 0xC0: { // i32.extend8_s
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int32_t v = stack_[stack_top_ - 1].value.i32;
                     stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int8_t>(v & 0xFF));
                     break;
                 }
                 case 0xC1: { // i32.extend16_s
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int32_t v = stack_[stack_top_ - 1].value.i32;
                     stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int16_t>(v & 0xFFFF));
                     break;
                 }
                 case 0xC2: { // i64.extend8_s
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int64_t v = stack_[stack_top_ - 1].value.i64;
                     int64_t res = static_cast<int64_t>(static_cast<int8_t>(v & 0xFF));
                     stack_[stack_top_ - 1].value.i64 = res;
                     break;
                 }
                 case 0xC3: { // i64.extend16_s
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int64_t v = stack_[stack_top_ - 1].value.i64;
                     int64_t res = static_cast<int64_t>(static_cast<int16_t>(v & 0xFFFF));
                     stack_[stack_top_ - 1].value.i64 = res;
                     break;
                 }
                 case 0xC4: { // i64.extend32_s
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int64_t v = stack_[stack_top_ - 1].value.i64;
                     int64_t res = static_cast<int64_t>(static_cast<int32_t>(v & 0xFFFFFFFFULL));
                     stack_[stack_top_ - 1].value.i64 = res;
@@ -4056,7 +4085,7 @@ WasmResult WasmEngine::
 
                 // ref.is_null (0xD1)
                 case 0xD1: {
-                    if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                    if (stack_top_ < 1) return OnRuntimeError();
                     int64_t ptr_val = stack_[--stack_top_].value.i64;
                     stack_[stack_top_++].value.i32 = ptr_val == -1 ? 1 : 0;
                     break;
@@ -4076,7 +4105,7 @@ WasmResult WasmEngine::
                     uint32_t sub_op = DecodeVarUint32(ip, limit);
                     switch (sub_op) {
                         case 0: { // i32.trunc_sat_f32_s
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             float fv = stack_[stack_top_ - 1].value.f32;
                             int32_t res;
                             if (std::isnan(fv)) { res = 0; }
@@ -4087,7 +4116,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 1: { // i32.trunc_sat_f32_u
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             float fv = stack_[stack_top_ - 1].value.f32;
                             uint32_t res;
                             if (std::isnan(fv) || fv < 0.0f) { res = 0; }
@@ -4097,7 +4126,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 2: { // i32.trunc_sat_f64_s
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             double dv = stack_[stack_top_ - 1].value.f64;
                             int32_t res;
                             if (std::isnan(dv)) { res = 0; }
@@ -4108,7 +4137,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 3: { // i32.trunc_sat_f64_u
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             double dv = stack_[stack_top_ - 1].value.f64;
                             uint32_t res;
                             if (std::isnan(dv) || dv < 0.0) { res = 0; }
@@ -4118,7 +4147,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 4: { // i64.trunc_sat_f32_s
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             float fv = stack_[stack_top_ - 1].value.f32;
                             int64_t res;
                             if (std::isnan(fv)) { res = 0; }
@@ -4129,7 +4158,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 5: { // i64.trunc_sat_f32_u
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             float fv = stack_[stack_top_ - 1].value.f32;
                             int64_t res;
                             if (std::isnan(fv) || fv < 0.0f) { res = 0; }
@@ -4139,7 +4168,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 6: { // i64.trunc_sat_f64_s
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             double dv = stack_[stack_top_ - 1].value.f64;
                             int64_t res;
                             if (std::isnan(dv)) { res = 0; }
@@ -4150,7 +4179,7 @@ WasmResult WasmEngine::
                             break;
                         }
                         case 7: { // i64.trunc_sat_f64_u
-                            if (stack_top_ < 1) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 1) return OnRuntimeError();
                             double dv = stack_[stack_top_ - 1].value.f64;
                             int64_t res;
                             if (std::isnan(dv) || dv < 0.0) { res = 0; }
@@ -4162,24 +4191,24 @@ WasmResult WasmEngine::
                         case 8: { // memory.init
                             uint32_t data_idx = DecodeVarUint32(ip, limit);
                             ip++; // memory index (0)
-                            if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 3) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             int32_t s = stack_[--stack_top_].value.i32;
                             int32_t d = stack_[--stack_top_].value.i32;
 
-                            if (n < 0 || s < 0 || d < 0) return WasmResult::kErrorRuntimeError;
+                            if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                             if (n == 0) {
-                                if (data_idx >= data_segment_count) return WasmResult::kErrorRuntimeError;
+                                if (data_idx >= data_segment_count) return OnRuntimeError();
                                 break;
                             }
                             if (data_idx >= data_segment_count || data_segment_dropped[data_idx]) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (static_cast<uint64_t>(s) + n > data_segment_sizes[data_idx]) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (linear_memory_ptr && data_segments[data_idx]) {
                                 std::memcpy(linear_memory_ptr + d, data_segments[data_idx] + s, n);
@@ -4188,7 +4217,7 @@ WasmResult WasmEngine::
                         }
                         case 9: { // data.drop
                             uint32_t data_idx = DecodeVarUint32(ip, limit);
-                            if (data_idx >= data_segment_count) return WasmResult::kErrorRuntimeError;
+                            if (data_idx >= data_segment_count) return OnRuntimeError();
                             data_segment_dropped[data_idx] = true;
                             data_segments[data_idx] = nullptr;
                             data_segment_sizes[data_idx] = 0;
@@ -4197,16 +4226,16 @@ WasmResult WasmEngine::
                         case 10: { // memory.copy
                             ip++; // dst memory (0)
                             ip++; // src memory (0)
-                            if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 3) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             int32_t s = stack_[--stack_top_].value.i32;
                             int32_t d = stack_[--stack_top_].value.i32;
 
-                            if (n < 0 || s < 0 || d < 0) return WasmResult::kErrorRuntimeError;
+                            if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                             if (n == 0) break;
                             if (static_cast<uint64_t>(s) + n > linear_memory_size ||
                                 static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (linear_memory_ptr) {
                                 std::memmove(linear_memory_ptr + d, linear_memory_ptr + s, n);
@@ -4215,15 +4244,15 @@ WasmResult WasmEngine::
                         }
                         case 11: { // memory.fill
                             ip++; // memory (0)
-                            if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 3) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             int32_t val = stack_[--stack_top_].value.i32;
                             int32_t d = stack_[--stack_top_].value.i32;
 
-                            if (n < 0 || d < 0) return WasmResult::kErrorRuntimeError;
+                            if (n < 0 || d < 0) return OnRuntimeError();
                             if (n == 0) break;
                             if (static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (linear_memory_ptr) {
                                 std::memset(linear_memory_ptr + d, val, n);
@@ -4233,26 +4262,26 @@ WasmResult WasmEngine::
                         case 12: { // table.init
                             uint32_t elem_idx = DecodeVarUint32(ip, limit);
                             uint32_t table_idx = DecodeVarUint32(ip, limit);
-                            if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 3) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             int32_t s = stack_[--stack_top_].value.i32;
                             int32_t d = stack_[--stack_top_].value.i32;
 
-                            if (n < 0 || s < 0 || d < 0) return WasmResult::kErrorRuntimeError;
+                            if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                             if (n == 0) {
                                 if (elem_idx >= elem_segment_count || table_idx >= table_count) {
-                                    return WasmResult::kErrorRuntimeError;
+                                    return OnRuntimeError();
                                 }
                                 break;
                             }
                             if (elem_idx >= elem_segment_count || elem_segment_dropped[elem_idx] || table_idx >= table_count) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (static_cast<uint64_t>(s) + n > elem_segment_sizes[elem_idx]) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (static_cast<uint64_t>(d) + n > table_sizes[table_idx]) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             uint32_t* tbl = tables[table_idx];
                             uint32_t* elms = elem_segments[elem_idx];
@@ -4266,7 +4295,7 @@ WasmResult WasmEngine::
                         }
                         case 13: { // elem.drop
                             uint32_t elem_idx = DecodeVarUint32(ip, limit);
-                            if (elem_idx >= elem_segment_count) return WasmResult::kErrorRuntimeError;
+                            if (elem_idx >= elem_segment_count) return OnRuntimeError();
                             elem_segment_dropped[elem_idx] = true;
                             if (elem_segments[elem_idx]) {
                                 pool_->Free(elem_segments[elem_idx]);
@@ -4278,24 +4307,24 @@ WasmResult WasmEngine::
                         case 14: { // table.copy
                             uint32_t dst_table = DecodeVarUint32(ip, limit);
                             uint32_t src_table = DecodeVarUint32(ip, limit);
-                            if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 3) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             int32_t s = stack_[--stack_top_].value.i32;
                             int32_t d = stack_[--stack_top_].value.i32;
 
-                            if (n < 0 || s < 0 || d < 0) return WasmResult::kErrorRuntimeError;
+                            if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                             if (n == 0) {
                                 if (dst_table >= table_count || src_table >= table_count) {
-                                    return WasmResult::kErrorRuntimeError;
+                                    return OnRuntimeError();
                                 }
                                 break;
                             }
                             if (dst_table >= table_count || src_table >= table_count) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             if (static_cast<uint64_t>(s) + n > table_sizes[src_table] ||
                                 static_cast<uint64_t>(d) + n > table_sizes[dst_table]) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             uint32_t* tbl_dst = tables[dst_table];
                             uint32_t* tbl_src = tables[src_table];
@@ -4306,11 +4335,11 @@ WasmResult WasmEngine::
                         }
                         case 15: { // table.grow
                             uint32_t table_idx = DecodeVarUint32(ip, limit);
-                            if (stack_top_ < 2) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 2) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             WasmValue init_val = stack_[--stack_top_];
 
-                            if (table_idx >= table_count) return WasmResult::kErrorRuntimeError;
+                            if (table_idx >= table_count) return OnRuntimeError();
                             if (n < 0) {
                                 if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                                 stack_[stack_top_++].value.i32 = -1;
@@ -4336,9 +4365,10 @@ WasmResult WasmEngine::
                                 break;
                             }
 
-                            if (tables[table_idx]) {
-                                std::memcpy(new_tbl, tables[table_idx], old_size * sizeof(uint32_t));
-                                pool_->Free(tables[table_idx]);
+                            uint32_t* old_tbl_ptr = tables[table_idx];
+                            if (old_tbl_ptr) {
+                                std::memcpy(new_tbl, old_tbl_ptr, old_size * sizeof(uint32_t));
+                                pool_->Free(old_tbl_ptr);
                             }
                             bool is_funcref = (table_types[table_idx] == WasmType::kFuncRef);
                             uint32_t fill_val = (init_val.value.i64 < 0) ? 0xFFFFFFFF : (is_funcref ? EncodeFuncRef(this, current_mod, static_cast<uint32_t>(init_val.value.i64)) : static_cast<uint32_t>(init_val.value.i64));
@@ -4348,6 +4378,17 @@ WasmResult WasmEngine::
 
                             tables[table_idx] = new_tbl;
                             table_sizes[table_idx] = static_cast<uint32_t>(new_size);
+                            if (old_tbl_ptr) {
+                                for (std::size_t _m = 0; _m < kMaxModules; ++_m) {
+                                    if (!modules_[_m] || !modules_[_m]->is_active) continue;
+                                    for (std::size_t _t = 0; _t < modules_[_m]->table_count; ++_t) {
+                                        if (modules_[_m]->tables[_t] == old_tbl_ptr) {
+                                            modules_[_m]->tables[_t] = new_tbl;
+                                            modules_[_m]->table_sizes[_t] = static_cast<uint32_t>(new_size);
+                                        }
+                                    }
+                                }
+                            }
 
                             if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                             stack_[stack_top_++].value.i32 = static_cast<int32_t>(old_size);
@@ -4355,25 +4396,25 @@ WasmResult WasmEngine::
                         }
                         case 16: { // table.size
                             uint32_t table_idx = DecodeVarUint32(ip, limit);
-                            if (table_idx >= table_count) return WasmResult::kErrorRuntimeError;
+                            if (table_idx >= table_count) return OnRuntimeError();
                             if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                             stack_[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                             break;
                         }
                         case 17: { // table.fill
                             uint32_t table_idx = DecodeVarUint32(ip, limit);
-                            if (stack_top_ < 3) return WasmResult::kErrorRuntimeError;
+                            if (stack_top_ < 3) return OnRuntimeError();
                             int32_t n = stack_[--stack_top_].value.i32;
                             WasmValue val = stack_[--stack_top_];
                             int32_t idx = stack_[--stack_top_].value.i32;
 
-                            if (n < 0 || idx < 0) return WasmResult::kErrorRuntimeError;
+                            if (n < 0 || idx < 0) return OnRuntimeError();
                             if (n == 0) {
-                                if (table_idx >= table_count) return WasmResult::kErrorRuntimeError;
+                                if (table_idx >= table_count) return OnRuntimeError();
                                 break;
                             }
                             if (table_idx >= table_count || static_cast<uint64_t>(idx) + n > table_sizes[table_idx]) {
-                                return WasmResult::kErrorRuntimeError;
+                                return OnRuntimeError();
                             }
                             uint32_t* tbl = tables[table_idx];
                             if (tbl) {
@@ -4386,14 +4427,14 @@ WasmResult WasmEngine::
                             break;
                         }
                         default:
-                            return WasmResult::kErrorRuntimeError;
+                            return OnRuntimeError();
                     }
                     break;
                 }
 
                 default:
                     // 未対応のオペコード
-                    return WasmResult::kErrorRuntimeError;
+                    return OnRuntimeError();
             }
         }
 
