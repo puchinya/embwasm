@@ -60,7 +60,8 @@ enum class WasmResult : int32_t {
     kErrorTooManyModules = -11,   ///< ロード済みモジュール数が kMaxModules を超過。
     kErrorLinearMemoryLimitExceeded = -12,    ///< エンジン設定の線形メモリサイズ制限値を超過。
     kErrorInvalidArgument = -13, //< 引数えラー
-    kErrorParse = -14 //< WASM ファイルのパースエラー。
+    kErrorParse = -14, //< WASM ファイルのパースエラー
+    kErrorLinking = -15 //< Importsのリンクエラー。
 };
 
 /// @brief ホスト関数のシグネチャ型。
@@ -91,6 +92,16 @@ struct WasmTypeSignature {
     uint32_t result_count;         ///< 実際の戻り値数。
     WasmType params[kMaxParams];   ///< 引数の型リスト。
     WasmType results[kMaxResults]; ///< 戻り値の型リスト。
+};
+
+/// @brief WASM インポートエントリ。
+struct WasmImportEntry {
+    const char* module_name;     ///< インポートモジュール名（ROM を指す）。
+    std::size_t module_name_len; ///< モジュール名の長さ（バイト数）。
+    const char* field_name;      ///< インポートフィールド名（ROM を指す）。
+    std::size_t field_name_len;  ///< フィールド名の長さ（バイト数）。
+    uint8_t kind;                ///< インポート種別（0=Func, 1=Table, 2=Mem, 3=Global）。
+    uint32_t index;              ///< インポート対象のインデックス（関数/テーブル/グローバル）。
 };
 
 } // namespace embwasm

@@ -88,6 +88,9 @@ struct WasmModuleInstance {
     WasmExportEntry* exports;        ///< エクスポートエントリ配列（プールから確保）。
     std::size_t export_count;
 
+    WasmImportEntry* imports;        ///< インポートエントリ配列（プールから確保）。
+    std::size_t import_count;
+
     WasmGlobal* globals;             ///< グローバル変数配列（プールから確保）。
     std::size_t global_count;
 
@@ -342,6 +345,7 @@ private:
         std::size_t type_count;
         std::size_t func_count;
         std::size_t export_count;
+        std::size_t import_count;
         std::size_t global_count;
         std::size_t table_count;
         std::size_t data_count;
@@ -354,7 +358,7 @@ private:
     WasmResult Validate(WasmModuleInstance* mod) noexcept;
     WasmResult ValidateFunctionBody(WasmModuleInstance* mod, uint32_t func_idx) noexcept;
 
-    void ResolveImports(WasmModuleInstance* mod) noexcept;
+    WasmResult ResolveImports(WasmModuleInstance* mod) noexcept;
     void FreeModuleInstance(WasmModuleInstance* mod) noexcept;
     WasmResult OnRuntimeError() noexcept;
 

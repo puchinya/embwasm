@@ -426,30 +426,122 @@ namespace embwasm {
 #endif
     }
 
-    void WasmEngine::ResolveImports(WasmModuleInstance *mod) noexcept {
-        if (!mod || mod->imports_resolved) return;
+    WasmResult WasmEngine::ResolveImports(WasmModuleInstance *mod) noexcept {
+        if (mod->imports_resolved) return WasmResult::kOk;
 
-        for (std::size_t i = 0; i < mod->function_count; ++i) {
-            WasmFunction &func = mod->functions[i];
-            if (func.kind != WasmFunctionKind::kImport) continue;
-            if (func.import.resolved_func != nullptr) continue;
-            if (!func.import.module_name || !func.import.field_name) continue;
+        WasmResult result = WasmResult::kOk;
 
-            std::size_t field_len = func.import.field_name_len;
-            WasmModuleInstance *src_mod = GetModuleInstance(func.import.module_name, func.import.module_name_len);
-            if (src_mod) {
-                for (std::size_t e = 0; e < src_mod->export_count; ++e) {
-                    if (src_mod->exports[e].kind == 0 &&
-                        StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len, func.import.field_name,
-                              field_len)) {
-                        func.import.resolved_func = &src_mod->functions[src_mod->exports[e].index];
-                        break;
+        for (std::size_t i = 0; i < mod->import_count; ++i) {
+            const WasmImportEntry &entry = mod->imports[i];
+            if (!entry.module_name || !entry.field_name) {
+                result = WasmResult::kErrorLinking;
+                continue;
+            }
+
+            WasmModuleInstance *src_mod = GetModuleInstance(entry.module_name, entry.module_name_len);
+
+            switch (entry.kind) {
+                case 0: {
+                    // Function import
+                    WasmFunction &func = mod->functions[entry.index];
+                    if (func.kind != WasmFunctionKind::kImport) break; // kHost は既解決
+                    if (func.import.resolved_func != nullptr) break;
+                    if (src_mod) {
+                        for (std::size_t e = 0; e < src_mod->export_count; ++e) {
+                            if (src_mod->exports[e].kind == 0 &&
+                                StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len,
+                                      entry.field_name, entry.field_name_len)) {
+                                func.import.resolved_func = &src_mod->functions[src_mod->exports[e].index];
+                                break;
+                            }
+                        }
                     }
+                    if (func.import.resolved_func == nullptr) {
+                        result = WasmResult::kErrorLinking;
+                    }
+                    break;
                 }
+                case 1: {
+                    // Table import
+                    uint32_t tidx = entry.index;
+                    if (tidx >= mod->table_count || mod->is_table_shared[tidx]) break;
+                    if (src_mod) {
+                        for (std::size_t e = 0; e < src_mod->export_count; ++e) {
+                            if (src_mod->exports[e].kind == 1 &&
+                                StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len,
+                                      entry.field_name, entry.field_name_len)) {
+                                uint32_t sidx = src_mod->exports[e].index;
+                                if (sidx < src_mod->table_count && src_mod->tables[sidx] != nullptr) {
+                                    mod->tables[tidx] = src_mod->tables[sidx];
+                                    mod->table_sizes[tidx] = src_mod->table_sizes[sidx];
+                                    mod->table_max_sizes[tidx] = src_mod->table_max_sizes[sidx];
+                                    mod->is_table_shared[tidx] = true;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (!mod->is_table_shared[tidx]) {
+                        result = WasmResult::kErrorLinking;
+                    }
+                    break;
+                }
+                case 2: {
+                    // Memory import
+                    if (mod->is_memory_shared || mod->linear_memory_ptr != nullptr) break;
+                    if (src_mod) {
+                        for (std::size_t e = 0; e < src_mod->export_count; ++e) {
+                            if (src_mod->exports[e].kind == 2 &&
+                                StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len,
+                                      entry.field_name, entry.field_name_len)) {
+                                if (src_mod->linear_memory_ptr != nullptr) {
+                                    mod->linear_memory_ptr = src_mod->linear_memory_ptr;
+                                    mod->linear_memory_size = src_mod->linear_memory_size;
+                                    mod->linear_memory_capacity = src_mod->linear_memory_capacity;
+                                    mod->max_linear_memory_pages = src_mod->max_linear_memory_pages;
+                                    mod->is_memory_shared = true;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (!mod->is_memory_shared && mod->linear_memory_ptr == nullptr) {
+                        result = WasmResult::kErrorLinking;
+                    }
+                    break;
+                }
+                case 3: {
+                    // Global import
+                    uint32_t gidx = entry.index;
+                    if (gidx >= mod->global_count) { result = WasmResult::kErrorLinking; break; }
+                    if (src_mod) {
+                        for (std::size_t e = 0; e < src_mod->export_count; ++e) {
+                            if (src_mod->exports[e].kind == 3 &&
+                                StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len,
+                                      entry.field_name, entry.field_name_len)) {
+                                uint32_t sgidx = src_mod->exports[e].index;
+                                if (sgidx < src_mod->global_count) {
+                                    mod->globals[gidx].value = src_mod->globals[sgidx].value;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    // src_mod 未発見の場合はパース時に設定した初期値を使用（spectest 等の仮想モジュール向け）
+                    break;
+                }
+                default:
+                    break;
             }
         }
 
+        if (result != WasmResult::kOk) {
+            return result;
+        }
+
         mod->imports_resolved = true;
+
+        return WasmResult::kOk;
     }
 
     WasmResult WasmEngine::InstantiateModules() noexcept {
@@ -458,91 +550,39 @@ namespace embwasm {
             if (!mod || !mod->is_active) continue;
 
             if (mod->is_instantiated) {
-                // 新モジュールロード後の再リンクのみ行う
-                if (!mod->imports_resolved) {
-                    ResolveImports(mod);
-                }
+                // すでにインスタンス化済みなら、スキップ
                 continue;
             }
 
-            // --- 1. 線形メモリのインスタンス化 ---
-            if (mod->has_memory && !mod->is_memory_shared && mod->linear_memory_ptr == nullptr) {
-                if (mod->memory_is_imported) {
-                    // 他モジュールからエクスポートされたメモリを探す
-                    WasmModuleInstance *found = nullptr;
-                    WasmModuleInstance *src_mod = GetModuleInstance(mod->memory_import_module,
-                                                                    mod->memory_import_module_len);
-                    if (src_mod) {
-                        for (std::size_t e = 0; e < src_mod->export_count; ++e) {
-                            if (src_mod->exports[e].kind == 2 &&
-                                StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len,
-                                      mod->memory_import_field, mod->memory_import_field_len)) {
-                                found = src_mod;
-                                break;
-                            }
-                        }
-                    }
-                    if (found) {
-                        mod->linear_memory_ptr = found->linear_memory_ptr;
-                        mod->linear_memory_size = found->linear_memory_size;
-                        mod->linear_memory_capacity = found->linear_memory_capacity;
-                        mod->max_linear_memory_pages = found->max_linear_memory_pages;
-                        mod->is_memory_shared = true;
-                    } else {
-                        // 依存モジュールが見つからなければ自前で確保（初期サイズのみ）
-                        uint64_t initial_size = static_cast<uint64_t>(mod->memory_min_pages) * 65536;
-                        if (initial_size > kMaxLinearMemorySize) return WasmResult::kErrorLinearMemoryLimitExceeded;
-                        std::size_t sentinel = (initial_size > 0) ? static_cast<std::size_t>(initial_size) : 1;
-                        mod->linear_memory_ptr = static_cast<uint8_t *>(pool_->Allocate(sentinel));
-                        if (!mod->linear_memory_ptr) return WasmResult::kErrorOutOfMemory;
-                        std::memset(mod->linear_memory_ptr, 0, sentinel);
-                        mod->linear_memory_size = static_cast<std::size_t>(initial_size);
-                        mod->linear_memory_capacity = sentinel;
-                    }
-                } else {
-                    // 自前のメモリを確保（初期サイズのみ、必要に応じて memory.grow で拡張）
-                    uint64_t initial_size = static_cast<uint64_t>(mod->memory_min_pages) * 65536;
-                    if (initial_size > kMaxLinearMemorySize) return WasmResult::kErrorOutOfMemory;
-                    std::size_t sentinel = (initial_size > 0) ? static_cast<std::size_t>(initial_size) : 1;
-                    mod->linear_memory_ptr = static_cast<uint8_t *>(pool_->Allocate(sentinel));
-                    if (!mod->linear_memory_ptr) return WasmResult::kErrorOutOfMemory;
-                    std::memset(mod->linear_memory_ptr, 0, sentinel);
-                    mod->linear_memory_size = static_cast<std::size_t>(initial_size);
-                    mod->linear_memory_capacity = sentinel;
-                }
+            // --- 1. 関数インポートの解決 ---
+            if (ResolveImports(mod) != WasmResult::kOk) {
+                continue;
             }
 
-            // --- 2. テーブルのインスタンス化 ---
+            // --- 2. 線形メモリのインスタンス化 ---
+            // インポートメモリは ResolveImports() で解決済み。ここでは own メモリのみ確保する。
+            if (mod->has_memory && !mod->is_memory_shared && mod->linear_memory_ptr == nullptr) {
+                if (mod->memory_is_imported) {
+                    // ResolveImports() で解決されなかった場合はリンクエラー
+                    continue;
+                }
+                uint64_t initial_size = static_cast<uint64_t>(mod->memory_min_pages) * 65536;
+                if (initial_size > kMaxLinearMemorySize) return WasmResult::kErrorLinearMemoryLimitExceeded;
+                std::size_t sentinel = (initial_size > 0) ? static_cast<std::size_t>(initial_size) : 1;
+                mod->linear_memory_ptr = static_cast<uint8_t *>(pool_->Allocate(sentinel));
+                if (!mod->linear_memory_ptr) return WasmResult::kErrorOutOfMemory;
+                std::memset(mod->linear_memory_ptr, 0, sentinel);
+                mod->linear_memory_size = static_cast<std::size_t>(initial_size);
+                mod->linear_memory_capacity = sentinel;
+            }
+
+            // --- 3. テーブルのインスタンス化 ---
+            // インポートテーブルは ResolveImports() で解決済み。ここでは own テーブルのみ確保する。
             for (std::size_t t = 0; t < mod->table_count; ++t) {
                 if (mod->tables[t] != nullptr || mod->is_table_shared[t]) continue;
+                // インポートテーブルが未解決の場合はスキップ（ResolveImports() でエラー済み）
+                if (mod->table_import_modules && mod->table_import_modules[t] != nullptr) continue;
 
-                if (mod->table_import_modules && mod->table_import_modules[t] != nullptr) {
-                    // インポートテーブル: 他モジュールのエクスポートを探す
-                    WasmModuleInstance *found = nullptr;
-                    uint32_t found_idx = 0;
-                    WasmModuleInstance *src_mod = GetModuleInstance(mod->table_import_modules[t],
-                                                                    mod->table_import_module_lens[t]);
-                    if (src_mod) {
-                        for (std::size_t e = 0; e < src_mod->export_count; ++e) {
-                            if (src_mod->exports[e].kind == 1 &&
-                                StrEq(src_mod->exports[e].name, src_mod->exports[e].name_len,
-                                      mod->table_import_fields[t], mod->table_import_field_lens[t])) {
-                                found = src_mod;
-                                found_idx = src_mod->exports[e].index;
-                                break;
-                            }
-                        }
-                    }
-                    if (found && found_idx < found->table_count && found->tables[found_idx] != nullptr) {
-                        mod->tables[t] = found->tables[found_idx];
-                        mod->table_sizes[t] = found->table_sizes[found_idx];
-                        mod->table_max_sizes[t] = found->table_max_sizes[found_idx];
-                        mod->is_table_shared[t] = true;
-                        continue;
-                    }
-                }
-
-                // own テーブルまたはインポート先未解決: サイズ分確保
                 uint32_t min_size = static_cast<uint32_t>(mod->table_sizes[t]);
                 if (min_size > 0) {
                     uint32_t *t_ptr = static_cast<uint32_t *>(pool_->Allocate(min_size * sizeof(uint32_t)));
@@ -552,21 +592,7 @@ namespace embwasm {
                 }
             }
 
-            // --- 3. 関数インポートの解決 ---
-            ResolveImports(mod);
-
-            // --- 4. Data セグメントの適用 ---
-            for (std::size_t d = 0; d < mod->data_segment_count; ++d) {
-                if (!mod->data_segment_is_active[d] || mod->data_segment_dropped[d]) continue;
-                uint32_t offset = mod->data_segment_offsets[d];
-                uint32_t dsize = mod->data_segment_sizes[d];
-                uint64_t end_off = static_cast<uint64_t>(offset) + dsize;
-                if (mod->linear_memory_ptr && end_off <= mod->linear_memory_size) {
-                    std::memcpy(mod->linear_memory_ptr + offset, mod->data_segments[d], dsize);
-                }
-            }
-
-            // --- 5. Element セグメントの適用 ---
+            // --- 4. Element セグメントの適用 ---
             for (std::size_t e = 0; e < mod->elem_segment_count; ++e) {
                 if (!mod->elem_segment_is_active[e] || mod->elem_segment_dropped[e]) continue;
                 uint32_t tidx = mod->elem_segment_table_indices[e];
@@ -578,6 +604,17 @@ namespace embwasm {
                     if (offset + f >= mod->table_sizes[tidx]) break;
                     uint32_t val = mod->elem_segments[e] ? mod->elem_segments[e][f] : 0xFFFFFFFF;
                     mod->tables[tidx][offset + f] = is_funcref ? EncodeFuncRef(this, mod, val) : val;
+                }
+            }
+
+            // --- 5. Data セグメントの適用 ---
+            for (std::size_t d = 0; d < mod->data_segment_count; ++d) {
+                if (!mod->data_segment_is_active[d] || mod->data_segment_dropped[d]) continue;
+                uint32_t offset = mod->data_segment_offsets[d];
+                uint32_t dsize = mod->data_segment_sizes[d];
+                uint64_t end_off = static_cast<uint64_t>(offset) + dsize;
+                if (mod->linear_memory_ptr && end_off <= mod->linear_memory_size) {
+                    std::memcpy(mod->linear_memory_ptr + offset, mod->data_segments[d], dsize);
                 }
             }
 
@@ -748,6 +785,11 @@ namespace embwasm {
             mod->exports = nullptr;
         }
         mod->export_count = 0;
+        if (mod->imports) {
+            pool_->Free(mod->imports);
+            mod->imports = nullptr;
+        }
+        mod->import_count = 0;
         if (mod->globals) {
             pool_->Free(mod->globals);
             mod->globals = nullptr;
@@ -924,6 +966,19 @@ namespace embwasm {
             return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
         }
         if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
+
+        // imports
+        mod->import_count = counts.import_count;
+        mod->imports = (counts.import_count > 0)
+                           ? static_cast<WasmImportEntry *>(pool_->Allocate(
+                               counts.import_count * sizeof(WasmImportEntry)))
+                           : nullptr;
+        if (counts.import_count > 0 && !mod->imports) {
+            FreeModuleInstance(mod);
+            modules_[slot_idx] = nullptr;
+            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
+        }
+        if (mod->imports) std::memset(mod->imports, 0, counts.import_count * sizeof(WasmImportEntry));
 
         // globals
         mod->global_count = counts.global_count;
@@ -1773,6 +1828,7 @@ namespace embwasm {
                     break;
                 case 2: {
                     uint32_t import_count = DecodeVarUint32(ptr, section_end);
+                    counts.import_count = import_count;
                     for (uint32_t i = 0; i < import_count && ptr < section_end; ++i) {
                         uint32_t mod_len = DecodeVarUint32(ptr, section_end);
                         if (mod_len > static_cast<std::size_t>(section_end - ptr)) goto next_section;
@@ -1843,6 +1899,8 @@ namespace embwasm {
         std::size_t func_idx = 0;
         WasmExportEntry *exports = mod->exports;
         std::size_t exp_idx = 0;
+        WasmImportEntry *imports_arr = mod->imports;
+        std::size_t imp_idx = 0;
         WasmGlobal *globals = mod->globals;
         std::size_t glob_idx = 0;
         uint32_t **tables = mod->tables;
@@ -1991,6 +2049,9 @@ namespace embwasm {
                                 }
                             }
 
+                            if (imports_arr && imp_idx < mod->import_count) {
+                                imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, static_cast<uint32_t>(func_idx)};
+                            }
                             func_idx++;
                             code_index_offset++;
                         } else if (kind == 0x03) {
@@ -2000,6 +2061,7 @@ namespace embwasm {
                             }
                             WasmType gtype = static_cast<WasmType>(*ptr++);
                             bool is_mutable = (*ptr++ != 0);
+                            uint32_t global_import_idx = static_cast<uint32_t>(glob_idx);
                             if (glob_idx < mod->global_count) {
                                 WasmValue gval;
                                 gval.value.i64 = 0;
@@ -2018,6 +2080,9 @@ namespace embwasm {
                                 }
                                 globals[glob_idx++] = {gtype, is_mutable, gval};
                             }
+                            if (imports_arr && imp_idx < mod->import_count) {
+                                imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, global_import_idx};
+                            }
                         } else if (kind == 0x02) {
                             // Memory import
                             uint8_t flags = *ptr++;
@@ -2035,6 +2100,9 @@ namespace embwasm {
                             mod->memory_import_field_len = field_len;
                             mod->memory_min_pages = min_pages;
                             mod->max_linear_memory_pages = max_pages;
+                            if (imports_arr && imp_idx < mod->import_count) {
+                                imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, 0};
+                            }
                         } else if (kind == 0x01) {
                             // Table import
                             uint8_t elem_type = *ptr++;
@@ -2045,6 +2113,7 @@ namespace embwasm {
                                 max_size = DecodeVarUint32(ptr, section_end);
                             }
                             // インポート情報のみ記録。実際の確保・共有は InstantiateModules() で行う。
+                            uint32_t table_import_idx = static_cast<uint32_t>(table_count_);
                             if (table_count_ < mod->table_capacity) {
                                 table_types_[table_count_] = static_cast<WasmType>(elem_type);
                                 table_sizes[table_count_] = min_size;
@@ -2057,10 +2126,14 @@ namespace embwasm {
                                 mod->table_import_field_lens[table_count_] = field_len;
                                 table_count_++;
                             }
+                            if (imports_arr && imp_idx < mod->import_count) {
+                                imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, table_import_idx};
+                            }
                         } else {
                             // 未知のインポート種別はスキップ
                         }
                     }
+                    mod->import_count = imp_idx;
                     break;
                 }
 
