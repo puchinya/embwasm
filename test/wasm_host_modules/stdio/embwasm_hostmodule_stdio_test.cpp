@@ -32,6 +32,7 @@ protected:
         pool_.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
         engine_.Init(pool_);
         ASSERT_EQ(engine_.LoadModule(kWasmMemBinaryForStdioTest, sizeof(kWasmMemBinaryForStdioTest)), embwasm::WasmResult::kOk);
+        ASSERT_EQ(engine_.InstantiateModules(), embwasm::WasmResult::kOk);
         mem_ = engine_.GetLinearMemory();
         mem_size_ = engine_.GetLinearMemorySize();
         ASSERT_NE(mem_, nullptr);
