@@ -1527,14 +1527,14 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
     while (ptr < end) {
         uint8_t section_id = *ptr++;
         uint32_t section_size = DecodeVarUint32(ptr, end);
-        if (section_size > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorRuntimeError;
+        if (section_size > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParse;
         const uint8_t* section_end = ptr + section_size;
 
         switch (section_id) {
             case 1: { // Type Section (型定義)
                 uint32_t type_count = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < type_count; ++i) {
-                    if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                    if (ptr >= section_end) return WasmResult::kErrorParse;
                     uint8_t form = *ptr++;
                     if (form != 0x60) { // 0x60 = Function Type
                         return WasmResult::kErrorUnknownSection;
@@ -1549,7 +1549,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                     sig.param_count = param_count;
 
                     for (uint32_t p = 0; p < param_count; ++p) {
-                        if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                        if (ptr >= section_end) return WasmResult::kErrorParse;
                         sig.params[p] = static_cast<WasmType>(*ptr++);
                     }
 
@@ -1560,7 +1560,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                     sig.result_count = result_count;
 
                     for (uint32_t r = 0; r < result_count; ++r) {
-                        if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                        if (ptr >= section_end) return WasmResult::kErrorParse;
                         sig.results[r] = static_cast<WasmType>(*ptr++);
                     }
 
@@ -1576,17 +1576,17 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                 uint32_t import_count = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < import_count; ++i) {
                     uint32_t mod_len = DecodeVarUint32(ptr, section_end);
-                    if (mod_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                    if (mod_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParse;
                     const char* mod_name = reinterpret_cast<const char*>(ptr);
                     ptr += mod_len;
 
                     uint32_t field_len = DecodeVarUint32(ptr, section_end);
-                    if (field_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                    if (field_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParse;
                     const char* field_name = reinterpret_cast<const char*>(ptr);
                     ptr += field_len;
 
                     if (ptr >= section_end) {
-                        return WasmResult::kErrorRuntimeError;
+                        return WasmResult::kErrorParse;
                     }
                     uint8_t kind = *ptr++;
 
@@ -1647,7 +1647,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         code_index_offset++;
                     } else if (kind == 0x03) { // Global import
                         if (ptr + 2 > section_end) {
-                            return WasmResult::kErrorRuntimeError;
+                            return WasmResult::kErrorParse;
                         }
                         WasmType gtype = static_cast<WasmType>(*ptr++);
                         bool is_mutable = (*ptr++ != 0);
@@ -1735,11 +1735,11 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                 uint32_t num_exports = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_exports; ++i) {
                     uint32_t name_len = DecodeVarUint32(ptr, section_end);
-                    if (name_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                    if (name_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParse;
                     const char* name = reinterpret_cast<const char*>(ptr);
                     ptr += name_len;
 
-                    if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                    if (ptr >= section_end) return WasmResult::kErrorParse;
                     uint8_t kind = *ptr++;
                     uint32_t idx = DecodeVarUint32(ptr, section_end);
 
@@ -1770,16 +1770,16 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                     } else if (opcode == 0x42) { // i64.const
                         val.value.i64 = DecodeVarInt64(ptr, section_end);
                     } else if (opcode == 0x43) { // f32.const
-                        if (4 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                        if (4 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParse;
                         std::memcpy(&val.value.f32, ptr, 4);
                         ptr += 4;
                     } else if (opcode == 0x44) { // f64.const
-                        if (8 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorRuntimeError;
+                        if (8 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParse;
                         std::memcpy(&val.value.f64, ptr, 8);
                         ptr += 8;
                     } else if (opcode == 0x23) { // global.get
                         uint32_t idx = DecodeVarUint32(ptr, section_end);
-                        if (idx >= glob_idx) return WasmResult::kErrorRuntimeError;
+                        if (idx >= glob_idx) return WasmResult::kErrorParse;
                         val = globals[idx].value;
                     } else if (opcode == 0xD0) { // ref.null
                         int32_t heap_type = DecodeVarInt32(ptr, section_end);
@@ -1790,9 +1790,9 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         val.value.i64 = static_cast<int64_t>(ref_func_idx);
                     } else {
                         // 未サポートまたは無効な初期化式
-                        return WasmResult::kErrorRuntimeError;
+                        return WasmResult::kErrorParse;
                     }
-                    if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
+                    if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParse; // end
 
                     globals[glob_idx++] = {type, is_mutable, val};
                 }
@@ -1804,7 +1804,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                 uint32_t num_tables = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_tables; ++i) {
                     uint8_t elem_type = *ptr++;
-                    if (elem_type != 0x70 && elem_type != 0x6F) return WasmResult::kErrorRuntimeError;
+                    if (elem_type != 0x70 && elem_type != 0x6F) return WasmResult::kErrorParse;
 
                     uint8_t flags = *ptr++;
                     uint32_t min_size = DecodeVarUint32(ptr, section_end);
@@ -1860,7 +1860,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         if (seg_flags == 2) {
                             /* uint32_t mem_idx = */ DecodeVarUint32(ptr, section_end);
                         }
-                        if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                        if (ptr >= section_end) return WasmResult::kErrorParse;
                         uint8_t opcode = *ptr++;
                         if (opcode == 0x41) { // i32.const
                             offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
@@ -1870,14 +1870,14 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                                 offset = static_cast<uint32_t>(globals[gidx].value.value.i32);
                             }
                         } else {
-                            return WasmResult::kErrorRuntimeError;
+                            return WasmResult::kErrorParse;
                         }
-                        if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError;
+                        if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParse;
                     }
 
                     uint32_t data_size = DecodeVarUint32(ptr, section_end);
                     if (data_size > static_cast<std::size_t>(section_end - ptr)) {
-                        return WasmResult::kErrorRuntimeError;
+                        return WasmResult::kErrorParse;
                     }
 
                     if (data_segment_count_ < mod->data_segment_capacity) {
@@ -1904,7 +1904,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
             case 9: { // Element Section (テーブル初期値)
                 uint32_t num_elems = DecodeVarUint32(ptr, section_end);
                 for (uint32_t i = 0; i < num_elems; ++i) {
-                    if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                    if (ptr >= section_end) return WasmResult::kErrorParse;
                     uint32_t flags = DecodeVarUint32(ptr, section_end);
 
                     uint32_t table_idx = 0;
@@ -1937,13 +1937,13 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                                 offset = globals[global_idx].value.value.i32;
                             }
                         } else {
-                            return WasmResult::kErrorRuntimeError;
+                            return WasmResult::kErrorParse;
                         }
-                        if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorRuntimeError; // end
+                        if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParse; // end
                     }
 
                     if (has_offset && (flags & 2) == 2) {
-                        if (ptr >= section_end) return WasmResult::kErrorRuntimeError;
+                        if (ptr >= section_end) return WasmResult::kErrorParse;
                         uint8_t elemkind_or_reftype = *ptr++;
                         (void)elemkind_or_reftype;
                     }
@@ -1962,7 +1962,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                         for (uint32_t f = 0; f < num_funcs; ++f) {
                             if (ptr >= section_end) {
                                 if (elem_arr) pool_->Free(elem_arr);
-                                return WasmResult::kErrorRuntimeError;
+                                return WasmResult::kErrorParse;
                             }
                             uint8_t op = *ptr++;
                             uint32_t val = 0xFFFFFFFF;
@@ -1974,7 +1974,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                             }
                             if (ptr >= section_end || *ptr++ != 0x0B) {
                                 if (elem_arr) pool_->Free(elem_arr);
-                                return WasmResult::kErrorRuntimeError;
+                                return WasmResult::kErrorParse;
                             }
                             if (elem_arr) elem_arr[f] = val;
                         }
@@ -2006,7 +2006,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                 for (uint32_t i = 0; i < code_count; ++i) {
                     uint32_t body_size = DecodeVarUint32(ptr, section_end);
                     if (body_size > static_cast<std::size_t>(section_end - ptr)) {
-                        return WasmResult::kErrorRuntimeError;
+                        return WasmResult::kErrorParse;
                     }
                     const uint8_t* body_end = ptr + body_size;
 
@@ -2016,7 +2016,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
                     WasmType temp_types[kMaxLocalDecls];
                     for (uint32_t j = 0; j < local_decls; ++j) {
                         uint32_t count = DecodeVarUint32(ptr, body_end);
-                        if (ptr >= body_end) return WasmResult::kErrorRuntimeError;
+                        if (ptr >= body_end) return WasmResult::kErrorParse;
                         uint8_t type_val = *ptr++;
                         WasmType type = static_cast<WasmType>(type_val);
                         for (uint32_t c = 0; c < count; ++c) {
@@ -2029,7 +2029,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
 
                     uint32_t code_func_idx = code_index_offset + i;
                     if (code_func_idx >= mod->function_count) {
-                        return WasmResult::kErrorRuntimeError;
+                        return WasmResult::kErrorParse;
                     }
 
                     WasmType* local_types = nullptr;

@@ -59,7 +59,8 @@ enum class WasmResult : int32_t {
     kErrorRuntimeError = -10,     ///< その他の実行時エラー。
     kErrorTooManyModules = -11,   ///< ロード済みモジュール数が kMaxModules を超過。
     kErrorLinearMemoryLimitExceeded = -12,    ///< エンジン設定の線形メモリサイズ制限値を超過。
-    kErrorInvalidArgument = -13 //< 引数えラー
+    kErrorInvalidArgument = -13, //< 引数えラー
+    kErrorParse = -14 //< WASM ファイルのパースエラー。
 };
 
 /// @brief ホスト関数のシグネチャ型。
