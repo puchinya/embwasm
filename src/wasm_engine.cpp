@@ -2057,7 +2057,7 @@ WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* bin
 WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_len, const char* name, std::size_t name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept {
     WasmModuleInstance* mod = GetModuleInstance(module_name, module_name_len);
     if (!mod || !mod->is_active) {
-        return WasmResult::kErrorFunctionNotFound;
+        return WasmResult::kErrorModuleNotFound;
     }
 
     InstantiateModules();
@@ -2934,7 +2934,7 @@ WasmResult WasmEngine::
                             if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         }
                     } else {
-                        if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorStackOverflow;
+                        if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorCallStackOverflow;
                         if (target_func->type_index >= target_module->signature_count) return WasmResult::kErrorRuntimeError;
                         const WasmTypeSignature& sig = target_module->signatures[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
