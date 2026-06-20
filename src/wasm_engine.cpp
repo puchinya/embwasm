@@ -2526,7 +2526,23 @@ WasmResult WasmEngine::
                                     search_ptr = limit;
                                 }
                             } else if (s_op == 0xFC) {
-                                DecodeVarUint32(search_ptr, limit); // 0xFC secondary opcode
+                                uint32_t fc_sub = DecodeVarUint32(search_ptr, limit);
+                                if (fc_sub == 8) {
+                                    DecodeVarUint32(search_ptr, limit);
+                                    if (search_ptr < limit) search_ptr++;
+                                } else if (fc_sub == 9 || fc_sub == 13) {
+                                    DecodeVarUint32(search_ptr, limit);
+                                } else if (fc_sub == 10) {
+                                    if (search_ptr < limit) search_ptr++;
+                                    if (search_ptr < limit) search_ptr++;
+                                } else if (fc_sub == 11) {
+                                    if (search_ptr < limit) search_ptr++;
+                                } else if (fc_sub == 12 || fc_sub == 14) {
+                                    DecodeVarUint32(search_ptr, limit);
+                                    DecodeVarUint32(search_ptr, limit);
+                                } else if (fc_sub >= 15 && fc_sub <= 17) {
+                                    DecodeVarUint32(search_ptr, limit);
+                                }
                             }
                         }
                     } else { // loop
@@ -2617,7 +2633,23 @@ WasmResult WasmEngine::
                                 search_ptr = limit;
                             }
                         } else if (s_op == 0xFC) {
-                            DecodeVarUint32(search_ptr, limit);
+                            uint32_t fc_sub = DecodeVarUint32(search_ptr, limit);
+                            if (fc_sub == 8) {
+                                DecodeVarUint32(search_ptr, limit);
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (fc_sub == 9 || fc_sub == 13) {
+                                DecodeVarUint32(search_ptr, limit);
+                            } else if (fc_sub == 10) {
+                                if (search_ptr < limit) search_ptr++;
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (fc_sub == 11) {
+                                if (search_ptr < limit) search_ptr++;
+                            } else if (fc_sub == 12 || fc_sub == 14) {
+                                DecodeVarUint32(search_ptr, limit);
+                                DecodeVarUint32(search_ptr, limit);
+                            } else if (fc_sub >= 15 && fc_sub <= 17) {
+                                DecodeVarUint32(search_ptr, limit);
+                            }
                         }
                     }
 
@@ -2917,8 +2949,8 @@ WasmResult WasmEngine::
                     if (!target_module || target_idx >= target_module->function_count) return OnRuntimeError();
 
                     const WasmFunction* target_func = &target_module->functions[target_idx];
-                    // 型シグネチャ検証: インデックスが異なっても同等のシグネチャなら許可
-                    if (target_func->type_index != type_idx) {
+                    // 型シグネチャ検証: モジュールが異なる場合は同一インデックスでも構造比較が必要
+                    if (target_func->type_index != type_idx || target_module != current_mod) {
                         if (target_func->type_index >= target_module->signature_count || type_idx >= signature_count) {
                             return OnRuntimeError();
                         }
