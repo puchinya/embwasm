@@ -530,6 +530,7 @@ namespace embwasm {
                     if (gidx >= mod->global_count) { result = WasmResult::kErrorLinking; break; }
                     mod->globals[gidx].type = static_cast<WasmType>(entry.desc.global.value_type);
                     mod->globals[gidx].is_mutable = entry.desc.global.is_mutable;
+                    bool global_resolved = false;
                     if (src_mod) {
                         for (std::size_t e = 0; e < src_mod->export_count; ++e) {
                             if (src_mod->exports[e].kind == 3 &&
@@ -538,10 +539,14 @@ namespace embwasm {
                                 uint32_t sgidx = src_mod->exports[e].index;
                                 if (sgidx < src_mod->global_count) {
                                     mod->globals[gidx].value = src_mod->globals[sgidx].value;
+                                    global_resolved = true;
                                 }
                                 break;
                             }
                         }
+                    }
+                    if (!global_resolved) {
+                        result = WasmResult::kErrorLinking;
                     }
                     break;
                 }
@@ -560,6 +565,7 @@ namespace embwasm {
     }
 
     WasmResult WasmEngine::InstantiateModules() noexcept {
+        WasmResult last_error = WasmResult::kOk;
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             WasmModuleInstance *mod = modules_[i];
             if (!mod || !mod->is_active) continue;
@@ -570,13 +576,15 @@ namespace embwasm {
             }
 
             // --- 1. インポートの解決（メタデータ設定 + リンク） ---
-            if (ResolveImports(mod) != WasmResult::kOk) {
-                continue;
+            {
+                WasmResult res = ResolveImports(mod);
+                if (res != WasmResult::kOk) { last_error = res; continue; }
             }
 
             // --- 1a. バリデーション（ResolveImports でメタデータが揃った後に実施） ---
-            if (Validate(mod) != WasmResult::kOk) {
-                continue;
+            {
+                WasmResult res = Validate(mod);
+                if (res != WasmResult::kOk) { last_error = res; continue; }
             }
 
             // --- 1b. global.get で初期化された own グローバルを再評価 ---
@@ -637,7 +645,7 @@ namespace embwasm {
                 if (tidx >= mod->table_count || mod->tables[tidx] == nullptr) continue;
                 bool is_funcref = (mod->table_types[tidx] == WasmType::kFuncRef);
                 for (uint32_t f = 0; f < nfuncs; ++f) {
-                    if (offset + f >= mod->table_sizes[tidx]) break;
+                    if (offset + f >= mod->table_sizes[tidx]) return WasmResult::kErrorRuntimeError;
                     uint32_t val = mod->elem_segments[e] ? mod->elem_segments[e][f] : 0xFFFFFFFF;
                     mod->tables[tidx][offset + f] = is_funcref ? EncodeFuncRef(this, mod, val) : val;
                 }
@@ -649,9 +657,10 @@ namespace embwasm {
                 uint32_t offset = mod->data_segment_offsets[d];
                 uint32_t dsize = mod->data_segment_sizes[d];
                 uint64_t end_off = static_cast<uint64_t>(offset) + dsize;
-                if (mod->linear_memory_ptr && end_off <= mod->linear_memory_size) {
-                    std::memcpy(mod->linear_memory_ptr + offset, mod->data_segments[d], dsize);
+                if (!mod->linear_memory_ptr || end_off > mod->linear_memory_size) {
+                    return WasmResult::kErrorRuntimeError;
                 }
+                std::memcpy(mod->linear_memory_ptr + offset, mod->data_segments[d], dsize);
             }
 
             // --- 6. スタート関数の実行 ---
@@ -676,7 +685,7 @@ namespace embwasm {
 
             mod->is_instantiated = true;
         }
-        return WasmResult::kOk;
+        return last_error;
     }
 
     void WasmEngine::FreeModuleInstance(WasmModuleInstance *mod) noexcept {
