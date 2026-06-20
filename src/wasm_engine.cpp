@@ -741,7 +741,7 @@ int32_t WasmEngine::LoadModule(const char* module_name, std::size_t module_name_
     if (!pool_) return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
     if (size < 8) return static_cast<int32_t>(WasmResult::kErrorInvalidMagic);
     if (module_name != nullptr && module_name_len >= 64) {
-        return static_cast<int32_t>(WasmResult::kErrorRuntimeError);
+        return static_cast<int32_t>(WasmResult::kErrorInvalidArgument);
     }
 
     // マジックナンバー "\0asm" の検証
@@ -994,7 +994,7 @@ int32_t WasmEngine::LoadModule(const char* module_name, std::size_t module_name_
 // =============================================================================
 
 WasmResult WasmEngine::ValidateFunctionBody(WasmModuleInstance* mod, uint32_t func_idx) noexcept {
-    if (!mod) return WasmResult::kErrorRuntimeError;
+    if (!mod) return WasmResult::kErrorInvalidArgument;
     WasmTypeSignature* signatures = mod->signatures;
     std::size_t signature_count = mod->signature_count;
     WasmFunction* functions = mod->functions;
@@ -1365,7 +1365,7 @@ WasmResult WasmEngine::ValidateFunctionBody(WasmModuleInstance* mod, uint32_t fu
 }
 
 WasmResult WasmEngine::Validate(WasmModuleInstance* mod) noexcept {
-    if (!mod) return WasmResult::kErrorRuntimeError;
+    if (!mod) return WasmResult::kErrorInvalidArgument;
     WasmTypeSignature* signatures = mod->signatures;
     std::size_t signature_count = mod->signature_count;
     WasmFunction* functions = mod->functions;
@@ -1497,7 +1497,7 @@ WasmEngine::WasmModuleCounts WasmEngine::PreScanSections(const uint8_t* binary, 
 }
 
 WasmResult WasmEngine::ParseSections(WasmModuleInstance* mod, const uint8_t* binary, std::size_t size) noexcept {
-    if (!mod) return WasmResult::kErrorRuntimeError;
+    if (!mod) return WasmResult::kErrorInvalidArgument;
     WasmTypeSignature* signatures_ = mod->signatures;
     std::size_t sig_idx = 0;
     WasmFunction* functions = mod->functions;
