@@ -953,193 +953,6 @@ namespace embwasm {
             mod->name_len = 0;
         }
 
-        // バイナリを事前スキャンして必要なサイズを確定し、プールから動的確保する
-        WasmModuleCounts counts = PreScanSections(binary + 8, size - 8);
-
-        // signatures
-        mod->signature_count = counts.type_count;
-        mod->signatures = (counts.type_count > 0)
-                              ? static_cast<WasmTypeSignature *>(pool_->Allocate(
-                                  counts.type_count * sizeof(WasmTypeSignature)))
-                              : nullptr;
-        if (counts.type_count > 0 && !mod->signatures) {
-            FreeModuleInstance(mod);
-            modules_[slot_idx] = nullptr;
-            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-        }
-        if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature));
-
-        // functions
-        mod->function_count = counts.func_count;
-        mod->functions = (counts.func_count > 0)
-                             ? static_cast<WasmFunction *>(pool_->Allocate(counts.func_count * sizeof(WasmFunction)))
-                             : nullptr;
-        if (counts.func_count > 0 && !mod->functions) {
-            FreeModuleInstance(mod);
-            modules_[slot_idx] = nullptr;
-            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-        }
-        if (mod->functions) std::memset(mod->functions, 0, counts.func_count * sizeof(WasmFunction));
-
-        // exports
-        mod->export_count = counts.export_count;
-        mod->exports = (counts.export_count > 0)
-                           ? static_cast<WasmExportEntry *>(pool_->Allocate(
-                               counts.export_count * sizeof(WasmExportEntry)))
-                           : nullptr;
-        if (counts.export_count > 0 && !mod->exports) {
-            FreeModuleInstance(mod);
-            modules_[slot_idx] = nullptr;
-            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-        }
-        if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
-
-        // imports
-        mod->import_count = counts.import_count;
-        mod->imports = (counts.import_count > 0)
-                           ? static_cast<WasmImportEntry *>(pool_->Allocate(
-                               counts.import_count * sizeof(WasmImportEntry)))
-                           : nullptr;
-        if (counts.import_count > 0 && !mod->imports) {
-            FreeModuleInstance(mod);
-            modules_[slot_idx] = nullptr;
-            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-        }
-        if (mod->imports) std::memset(mod->imports, 0, counts.import_count * sizeof(WasmImportEntry));
-
-        // globals
-        mod->global_count = counts.global_count;
-        mod->globals = (counts.global_count > 0)
-                           ? static_cast<WasmGlobal *>(pool_->Allocate(counts.global_count * sizeof(WasmGlobal)))
-                           : nullptr;
-        if (counts.global_count > 0 && !mod->globals) {
-            FreeModuleInstance(mod);
-            modules_[slot_idx] = nullptr;
-            return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-        }
-        if (mod->globals) {
-            std::memset(mod->globals, 0, counts.global_count * sizeof(WasmGlobal));
-            for (std::size_t g = 0; g < counts.global_count; ++g) {
-                mod->globals[g].init_global_ref = 0xFFFFFFFFu;
-            }
-        }
-
-        // linear memory
-        mod->linear_memory_ptr = nullptr;
-        mod->linear_memory_size = 0;
-        mod->linear_memory_capacity = 0;
-        mod->max_linear_memory_pages = 0;
-        mod->is_memory_shared = false;
-
-        // table arrays
-        mod->table_capacity = counts.table_count;
-        mod->table_count = 0;
-        if (counts.table_count > 0) {
-            mod->tables = static_cast<uint32_t **>(pool_->Allocate(counts.table_count * sizeof(uint32_t *)));
-            mod->table_sizes = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
-            mod->table_max_sizes = static_cast<uint32_t *>(pool_->Allocate(counts.table_count * sizeof(uint32_t)));
-            mod->table_types = static_cast<WasmType *>(pool_->Allocate(counts.table_count * sizeof(WasmType)));
-            mod->is_table_shared = static_cast<bool *>(pool_->Allocate(counts.table_count * sizeof(bool)));
-            mod->table_import_modules = static_cast<const char **>(pool_->Allocate(
-                counts.table_count * sizeof(const char *)));
-            mod->table_import_module_lens = static_cast<std::size_t *>(pool_->Allocate(
-                counts.table_count * sizeof(std::size_t)));
-            mod->table_import_fields = static_cast<const char **>(pool_->Allocate(
-                counts.table_count * sizeof(const char *)));
-            mod->table_import_field_lens = static_cast<std::size_t *>(pool_->Allocate(
-                counts.table_count * sizeof(std::size_t)));
-            if (!mod->tables || !mod->table_sizes || !mod->table_max_sizes || !mod->table_types || !mod->is_table_shared
-                ||
-                !mod->table_import_modules || !mod->table_import_module_lens ||
-                !mod->table_import_fields || !mod->table_import_field_lens) {
-                FreeModuleInstance(mod);
-                modules_[slot_idx] = nullptr;
-                return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-            }
-            std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t *));
-            std::memset(mod->table_sizes, 0, counts.table_count * sizeof(std::size_t));
-            for (std::size_t i = 0; i < counts.table_count; ++i) mod->table_max_sizes[i] = 0xFFFFFFFF;
-            std::memset(mod->table_types, 0, counts.table_count * sizeof(WasmType));
-            std::memset(mod->is_table_shared, 0, counts.table_count * sizeof(bool));
-            std::memset(mod->table_import_modules, 0, counts.table_count * sizeof(const char *));
-            std::memset(mod->table_import_module_lens, 0, counts.table_count * sizeof(std::size_t));
-            std::memset(mod->table_import_fields, 0, counts.table_count * sizeof(const char *));
-            std::memset(mod->table_import_field_lens, 0, counts.table_count * sizeof(std::size_t));
-        } else {
-            mod->tables = nullptr;
-            mod->table_sizes = nullptr;
-            mod->table_max_sizes = nullptr;
-            mod->table_types = nullptr;
-            mod->is_table_shared = nullptr;
-            mod->table_import_modules = nullptr;
-            mod->table_import_module_lens = nullptr;
-            mod->table_import_fields = nullptr;
-            mod->table_import_field_lens = nullptr;
-        }
-
-        // data segments
-        mod->data_segment_capacity = counts.data_count;
-        mod->data_segment_count = 0;
-        if (counts.data_count > 0) {
-            mod->data_segments = static_cast<const uint8_t **>(pool_->Allocate(
-                counts.data_count * sizeof(const uint8_t *)));
-            mod->data_segment_sizes = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_dropped = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
-            mod->data_segment_offsets = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_is_active = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
-            if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped ||
-                !mod->data_segment_offsets || !mod->data_segment_is_active) {
-                FreeModuleInstance(mod);
-                modules_[slot_idx] = nullptr;
-                return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-            }
-            std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t *));
-            std::memset(mod->data_segment_sizes, 0, counts.data_count * sizeof(uint32_t));
-            std::memset(mod->data_segment_dropped, 0, counts.data_count * sizeof(bool));
-            std::memset(mod->data_segment_offsets, 0, counts.data_count * sizeof(uint32_t));
-            std::memset(mod->data_segment_is_active, 0, counts.data_count * sizeof(bool));
-        } else {
-            mod->data_segments = nullptr;
-            mod->data_segment_sizes = nullptr;
-            mod->data_segment_dropped = nullptr;
-            mod->data_segment_offsets = nullptr;
-            mod->data_segment_is_active = nullptr;
-        }
-
-        // elem segments
-        mod->elem_segment_capacity = counts.elem_count;
-        mod->elem_segment_count = 0;
-        if (counts.elem_count > 0) {
-            mod->elem_segments = static_cast<uint32_t **>(pool_->Allocate(counts.elem_count * sizeof(uint32_t *)));
-            mod->elem_segment_sizes = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_dropped = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
-            mod->elem_segment_table_indices = static_cast<uint32_t *>(pool_->Allocate(
-                counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_offsets = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_is_active = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
-            if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped ||
-                !mod->elem_segment_table_indices || !mod->elem_segment_offsets || !mod->elem_segment_is_active) {
-                FreeModuleInstance(mod);
-                modules_[slot_idx] = nullptr;
-                return static_cast<int32_t>(WasmResult::kErrorOutOfMemory);
-            }
-            std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t *));
-            std::memset(mod->elem_segment_sizes, 0, counts.elem_count * sizeof(uint32_t));
-            std::memset(mod->elem_segment_dropped, 0, counts.elem_count * sizeof(bool));
-            std::memset(mod->elem_segment_table_indices, 0, counts.elem_count * sizeof(uint32_t));
-            std::memset(mod->elem_segment_offsets, 0, counts.elem_count * sizeof(uint32_t));
-            std::memset(mod->elem_segment_is_active, 0, counts.elem_count * sizeof(bool));
-        } else {
-            mod->elem_segments = nullptr;
-            mod->elem_segment_sizes = nullptr;
-            mod->elem_segment_dropped = nullptr;
-            mod->elem_segment_table_indices = nullptr;
-            mod->elem_segment_offsets = nullptr;
-            mod->elem_segment_is_active = nullptr;
-        }
-
-        mod->start_function_index = -1;
-
         WasmResult res = ParseSections(mod, binary + 8, size - 8);
         if (res != WasmResult::kOk) {
             FreeModuleInstance(mod);
@@ -1835,88 +1648,223 @@ namespace embwasm {
         return WasmResult::kOk;
     }
 
-    WasmEngine::WasmModuleCounts WasmEngine::PreScanSections(const uint8_t *binary, std::size_t size) noexcept {
-        WasmModuleCounts counts = {};
-        const uint8_t *ptr = binary;
-        const uint8_t *end = binary + size;
-
-        while (ptr < end) {
-            uint8_t section_id = *ptr++;
-            if (ptr >= end) break;
-            uint32_t section_size = DecodeVarUint32(ptr, end);
-            if (section_size > static_cast<std::size_t>(end - ptr)) break;
-            const uint8_t *section_end = ptr + section_size;
-
-            switch (section_id) {
-                case 1: counts.type_count = DecodeVarUint32(ptr, section_end);
-                    break;
-                case 2: {
-                    uint32_t import_count = DecodeVarUint32(ptr, section_end);
-                    counts.import_count = import_count;
-                    for (uint32_t i = 0; i < import_count && ptr < section_end; ++i) {
-                        uint32_t mod_len = DecodeVarUint32(ptr, section_end);
-                        if (mod_len > static_cast<std::size_t>(section_end - ptr)) goto next_section;
-                        ptr += mod_len;
-                        uint32_t field_len = DecodeVarUint32(ptr, section_end);
-                        if (field_len > static_cast<std::size_t>(section_end - ptr)) goto next_section;
-                        ptr += field_len;
-                        if (ptr >= section_end) goto next_section;
-                        uint8_t kind = *ptr++;
-                        switch (kind) {
-                            case 0x00: DecodeVarUint32(ptr, section_end);
-                                counts.func_count++;
-                                break;
-                            case 0x01: {
-                                if (ptr >= section_end) goto next_section;
-                                ptr++; // elem_type
-                                if (ptr >= section_end) goto next_section;
-                                uint8_t f = *ptr++;
-                                DecodeVarUint32(ptr, section_end);
-                                if (f & 1) DecodeVarUint32(ptr, section_end);
-                                counts.table_count++;
-                                break;
-                            }
-                            case 0x02: {
-                                if (ptr >= section_end) goto next_section;
-                                uint8_t f = *ptr++;
-                                DecodeVarUint32(ptr, section_end);
-                                if (f & 1) DecodeVarUint32(ptr, section_end);
-                                break;
-                            }
-                            case 0x03: {
-                                if (ptr + 2 > section_end) goto next_section;
-                                ptr++; // type
-                                ptr++; // mutability
-                                counts.global_count++;
-                                break;
-                            }
-                            default: goto next_section;
-                        }
-                    }
-                    break;
-                }
-                case 3: counts.func_count += DecodeVarUint32(ptr, section_end);
-                    break;
-                case 4: counts.table_count += DecodeVarUint32(ptr, section_end);
-                    break;
-                case 6: counts.global_count += DecodeVarUint32(ptr, section_end);
-                    break;
-                case 7: counts.export_count = DecodeVarUint32(ptr, section_end);
-                    break;
-                case 9: counts.elem_count = DecodeVarUint32(ptr, section_end);
-                    break;
-                case 11: counts.data_count = DecodeVarUint32(ptr, section_end);
-                    break;
-                default: break;
-            }
-        next_section:
-            ptr = section_end;
-        }
-        return counts;
-    }
-
     WasmResult WasmEngine::ParseSections(WasmModuleInstance *mod, const uint8_t *binary, std::size_t size) noexcept {
         if (!mod) return WasmResult::kErrorInvalidArgument;
+
+        // =========================================================
+        // Pass 1: エントリ数カウント + 重複セクション検出
+        // =========================================================
+        struct Counts {
+            std::size_t type_count;
+            std::size_t func_count;
+            std::size_t export_count;
+            std::size_t import_count;
+            std::size_t global_count;
+            std::size_t table_count;
+            std::size_t data_count;
+            std::size_t elem_count;
+        };
+        Counts counts = {};
+        {
+            uint16_t seen = 0;
+            const uint8_t *p = binary;
+            const uint8_t *e = binary + size;
+            while (p < e) {
+                uint8_t sid = *p++;
+                if (p >= e) break;
+                uint32_t ssz = DecodeVarUint32(p, e);
+                if (ssz > static_cast<std::size_t>(e - p)) break;
+                const uint8_t *se = p + ssz;
+                if (sid != 0 && sid <= 15) {
+                    uint16_t bit = static_cast<uint16_t>(1u << sid);
+                    if (seen & bit) return WasmResult::kErrorParse;
+                    seen |= bit;
+                }
+                switch (sid) {
+                    case 1: counts.type_count = DecodeVarUint32(p, se); break;
+                    case 2: {
+                        uint32_t n = DecodeVarUint32(p, se);
+                        counts.import_count = n;
+                        for (uint32_t i = 0; i < n && p < se; ++i) {
+                            uint32_t mlen = DecodeVarUint32(p, se);
+                            if (mlen > static_cast<std::size_t>(se - p)) goto count_next;
+                            p += mlen;
+                            uint32_t flen = DecodeVarUint32(p, se);
+                            if (flen > static_cast<std::size_t>(se - p)) goto count_next;
+                            p += flen;
+                            if (p >= se) goto count_next;
+                            uint8_t k = *p++;
+                            switch (k) {
+                                case 0x00: DecodeVarUint32(p, se); counts.func_count++; break;
+                                case 0x01: {
+                                    if (p >= se) goto count_next;
+                                    p++;
+                                    if (p >= se) goto count_next;
+                                    { uint8_t f = *p++; DecodeVarUint32(p, se); if (f & 1) DecodeVarUint32(p, se); }
+                                    counts.table_count++;
+                                    break;
+                                }
+                                case 0x02: {
+                                    if (p >= se) goto count_next;
+                                    { uint8_t f = *p++; DecodeVarUint32(p, se); if (f & 1) DecodeVarUint32(p, se); }
+                                    break;
+                                }
+                                case 0x03: {
+                                    if (p + 2 > se) goto count_next;
+                                    p++; p++;
+                                    counts.global_count++;
+                                    break;
+                                }
+                                default: goto count_next;
+                            }
+                        }
+                        break;
+                    }
+                    case 3: counts.func_count += DecodeVarUint32(p, se); break;
+                    case 4: counts.table_count += DecodeVarUint32(p, se); break;
+                    case 6: counts.global_count += DecodeVarUint32(p, se); break;
+                    case 7: counts.export_count = DecodeVarUint32(p, se); break;
+                    case 9: counts.elem_count = DecodeVarUint32(p, se); break;
+                    case 11: counts.data_count = DecodeVarUint32(p, se); break;
+                    default: break;
+                }
+            count_next:
+                p = se;
+            }
+        }
+
+        // =========================================================
+        // 確保: カウントに基づいて正確なサイズをプールから確保する。
+        // =========================================================
+
+        mod->signature_count = counts.type_count;
+        mod->signatures = (counts.type_count > 0)
+            ? static_cast<WasmTypeSignature *>(pool_->Allocate(counts.type_count * sizeof(WasmTypeSignature)))
+            : nullptr;
+        if (counts.type_count > 0 && !mod->signatures) return WasmResult::kErrorOutOfMemory;
+        if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature));
+
+        mod->function_count = counts.func_count;
+        mod->functions = (counts.func_count > 0)
+            ? static_cast<WasmFunction *>(pool_->Allocate(counts.func_count * sizeof(WasmFunction)))
+            : nullptr;
+        if (counts.func_count > 0 && !mod->functions) return WasmResult::kErrorOutOfMemory;
+        if (mod->functions) std::memset(mod->functions, 0, counts.func_count * sizeof(WasmFunction));
+
+        mod->export_count = counts.export_count;
+        mod->exports = (counts.export_count > 0)
+            ? static_cast<WasmExportEntry *>(pool_->Allocate(counts.export_count * sizeof(WasmExportEntry)))
+            : nullptr;
+        if (counts.export_count > 0 && !mod->exports) return WasmResult::kErrorOutOfMemory;
+        if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
+
+        mod->import_count = counts.import_count;
+        mod->imports = (counts.import_count > 0)
+            ? static_cast<WasmImportEntry *>(pool_->Allocate(counts.import_count * sizeof(WasmImportEntry)))
+            : nullptr;
+        if (counts.import_count > 0 && !mod->imports) return WasmResult::kErrorOutOfMemory;
+        if (mod->imports) std::memset(mod->imports, 0, counts.import_count * sizeof(WasmImportEntry));
+
+        mod->global_count = counts.global_count;
+        mod->globals = (counts.global_count > 0)
+            ? static_cast<WasmGlobal *>(pool_->Allocate(counts.global_count * sizeof(WasmGlobal)))
+            : nullptr;
+        if (counts.global_count > 0 && !mod->globals) return WasmResult::kErrorOutOfMemory;
+        if (mod->globals) {
+            std::memset(mod->globals, 0, counts.global_count * sizeof(WasmGlobal));
+            for (std::size_t g = 0; g < counts.global_count; ++g) mod->globals[g].init_global_ref = 0xFFFFFFFFu;
+        }
+
+        mod->linear_memory_ptr = nullptr;
+        mod->linear_memory_size = 0;
+        mod->linear_memory_capacity = 0;
+        mod->max_linear_memory_pages = 0;
+        mod->is_memory_shared = false;
+
+        mod->table_capacity = counts.table_count;
+        mod->table_count = 0;
+        if (counts.table_count > 0) {
+            mod->tables              = static_cast<uint32_t **>(pool_->Allocate(counts.table_count * sizeof(uint32_t *)));
+            mod->table_sizes         = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_max_sizes     = static_cast<uint32_t *>(pool_->Allocate(counts.table_count * sizeof(uint32_t)));
+            mod->table_types         = static_cast<WasmType *>(pool_->Allocate(counts.table_count * sizeof(WasmType)));
+            mod->is_table_shared     = static_cast<bool *>(pool_->Allocate(counts.table_count * sizeof(bool)));
+            mod->table_import_modules     = static_cast<const char **>(pool_->Allocate(counts.table_count * sizeof(const char *)));
+            mod->table_import_module_lens = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_import_fields      = static_cast<const char **>(pool_->Allocate(counts.table_count * sizeof(const char *)));
+            mod->table_import_field_lens  = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
+            if (!mod->tables || !mod->table_sizes || !mod->table_max_sizes || !mod->table_types ||
+                !mod->is_table_shared || !mod->table_import_modules || !mod->table_import_module_lens ||
+                !mod->table_import_fields || !mod->table_import_field_lens) {
+                return WasmResult::kErrorOutOfMemory;
+            }
+            std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t *));
+            std::memset(mod->table_sizes, 0, counts.table_count * sizeof(std::size_t));
+            for (std::size_t i = 0; i < counts.table_count; ++i) mod->table_max_sizes[i] = 0xFFFFFFFF;
+            std::memset(mod->table_types, 0, counts.table_count * sizeof(WasmType));
+            std::memset(mod->is_table_shared, 0, counts.table_count * sizeof(bool));
+            std::memset(mod->table_import_modules, 0, counts.table_count * sizeof(const char *));
+            std::memset(mod->table_import_module_lens, 0, counts.table_count * sizeof(std::size_t));
+            std::memset(mod->table_import_fields, 0, counts.table_count * sizeof(const char *));
+            std::memset(mod->table_import_field_lens, 0, counts.table_count * sizeof(std::size_t));
+        } else {
+            mod->tables = nullptr; mod->table_sizes = nullptr; mod->table_max_sizes = nullptr;
+            mod->table_types = nullptr; mod->is_table_shared = nullptr;
+            mod->table_import_modules = nullptr; mod->table_import_module_lens = nullptr;
+            mod->table_import_fields = nullptr; mod->table_import_field_lens = nullptr;
+        }
+
+        mod->data_segment_capacity = counts.data_count;
+        mod->data_segment_count = 0;
+        if (counts.data_count > 0) {
+            mod->data_segments          = static_cast<const uint8_t **>(pool_->Allocate(counts.data_count * sizeof(const uint8_t *)));
+            mod->data_segment_sizes     = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_dropped   = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
+            mod->data_segment_offsets   = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_is_active = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
+            if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped ||
+                !mod->data_segment_offsets || !mod->data_segment_is_active) {
+                return WasmResult::kErrorOutOfMemory;
+            }
+            std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t *));
+            std::memset(mod->data_segment_sizes, 0, counts.data_count * sizeof(uint32_t));
+            std::memset(mod->data_segment_dropped, 0, counts.data_count * sizeof(bool));
+            std::memset(mod->data_segment_offsets, 0, counts.data_count * sizeof(uint32_t));
+            std::memset(mod->data_segment_is_active, 0, counts.data_count * sizeof(bool));
+        } else {
+            mod->data_segments = nullptr; mod->data_segment_sizes = nullptr;
+            mod->data_segment_dropped = nullptr; mod->data_segment_offsets = nullptr;
+            mod->data_segment_is_active = nullptr;
+        }
+
+        mod->elem_segment_capacity = counts.elem_count;
+        mod->elem_segment_count = 0;
+        if (counts.elem_count > 0) {
+            mod->elem_segments              = static_cast<uint32_t **>(pool_->Allocate(counts.elem_count * sizeof(uint32_t *)));
+            mod->elem_segment_sizes         = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_dropped       = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
+            mod->elem_segment_table_indices = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_offsets       = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_is_active     = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
+            if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped ||
+                !mod->elem_segment_table_indices || !mod->elem_segment_offsets || !mod->elem_segment_is_active) {
+                return WasmResult::kErrorOutOfMemory;
+            }
+            std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t *));
+            std::memset(mod->elem_segment_sizes, 0, counts.elem_count * sizeof(uint32_t));
+            std::memset(mod->elem_segment_dropped, 0, counts.elem_count * sizeof(bool));
+            std::memset(mod->elem_segment_table_indices, 0, counts.elem_count * sizeof(uint32_t));
+            std::memset(mod->elem_segment_offsets, 0, counts.elem_count * sizeof(uint32_t));
+            std::memset(mod->elem_segment_is_active, 0, counts.elem_count * sizeof(bool));
+        } else {
+            mod->elem_segments = nullptr; mod->elem_segment_sizes = nullptr;
+            mod->elem_segment_dropped = nullptr; mod->elem_segment_table_indices = nullptr;
+            mod->elem_segment_offsets = nullptr; mod->elem_segment_is_active = nullptr;
+        }
+
+        // =========================================================
+        // Pass 2: セクションを充填する。
+        // =========================================================
         WasmTypeSignature *signatures_ = mod->signatures;
         std::size_t sig_idx = 0;
         WasmFunction *functions = mod->functions;
@@ -2078,7 +2026,6 @@ namespace embwasm {
                             imports_arr[imp_idx++] = entry;
                         }
                     }
-                    mod->import_count = imp_idx;
                     break;
                 }
 

@@ -342,18 +342,6 @@ public:
 private:
     friend class WasmScheduler;
 
-    struct WasmModuleCounts {
-        std::size_t type_count;
-        std::size_t func_count;
-        std::size_t export_count;
-        std::size_t import_count;
-        std::size_t global_count;
-        std::size_t table_count;
-        std::size_t data_count;
-        std::size_t elem_count;
-    };
-    static WasmModuleCounts PreScanSections(const uint8_t* binary, std::size_t size) noexcept;
-
     WasmResult ParseSections(WasmModuleInstance* mod, const uint8_t* binary, std::size_t size) noexcept;
 
     WasmResult Validate(WasmModuleInstance* mod) noexcept;
