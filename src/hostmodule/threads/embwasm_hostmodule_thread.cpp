@@ -18,7 +18,7 @@ WasmResult ThreadSpawn(
     uint32_t result_count) noexcept 
 {
     if (arg_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorInvalidArgument;
     }
 
     uint32_t val = static_cast<uint32_t>(args[0].value.i32);
@@ -137,7 +137,7 @@ WasmResult EventSignal(
 {
     (void)results; (void)result_count;
     if (arg_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorInvalidArgument;
     }
 
     uint32_t event_id = static_cast<uint32_t>(args[0].value.i32);
