@@ -2123,10 +2123,7 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
 
     if (res == WasmResult::kOk) {
         const WasmFunction& func = mod->functions[func_idx];
-        uint32_t actual_result_count = 0;
-        if (func.type_index < mod->signature_count) {
-            actual_result_count = mod->signatures[func.type_index].result_count;
-        }
+        uint32_t actual_result_count = mod->signatures[func.type_index].result_count;
 
         if (result_count > actual_result_count) return WasmResult::kErrorRuntimeError;
         if (exec_ctx->stack_top < actual_result_count) return WasmResult::kErrorRuntimeError;
@@ -2166,10 +2163,7 @@ WasmResult WasmEngine::Execute(const char* module_name, std::size_t module_name_
 
     if (res == WasmResult::kOk) {
         const WasmFunction& func = mod->functions[func_idx];
-        uint32_t actual_result_count = 0;
-        if (func.type_index < mod->signature_count) {
-            actual_result_count = mod->signatures[func.type_index].result_count;
-        }
+        uint32_t actual_result_count = mod->signatures[func.type_index].result_count;
 
         if (result_count > actual_result_count) {
             ctx_ = nullptr;
@@ -2309,9 +2303,6 @@ WasmResult WasmEngine::
 
         if (initial_func->kind == WasmFunctionKind::kHost) {
             // ホストAPI (C++関数) の呼び出し（シグネチャに応じた完全なポップ・プッシュ実装）
-            if (initial_func->type_index >= signature_count) {
-                return OnRuntimeError();
-            }
             const WasmTypeSignature& sig = signatures[initial_func->type_index];
 
             // 引数の数だけスタックからポップ
@@ -2349,9 +2340,6 @@ WasmResult WasmEngine::
 
         // 内部関数の最初のフレームをコールスタックに積む
         {
-            if (initial_func->type_index >= signature_count) {
-                return OnRuntimeError();
-            }
             const WasmTypeSignature& sig = signatures[initial_func->type_index];
             uint32_t total_locals = sig.param_count + initial_func->local.local_count;
 
@@ -2406,7 +2394,6 @@ WasmResult WasmEngine::
         functions = current_mod->functions;
         function_count = current_mod->function_count;
         WasmGlobal* globals = current_mod->globals;
-        std::size_t global_count = current_mod->global_count;
         uint8_t* linear_memory_ptr = current_mod->linear_memory_ptr;
         std::size_t linear_memory_size = current_mod->linear_memory_size;
         std::size_t linear_memory_capacity = current_mod->linear_memory_capacity;
@@ -2429,7 +2416,6 @@ WasmResult WasmEngine::
         const uint8_t* ip = frame.ip;
         const uint8_t* limit = frame.limit;
         WasmValue* locals = frame.locals;
-        uint32_t total_locals = frame.total_locals;
 
         while (ip < limit) {
             uint8_t op = *ip++;
@@ -2683,7 +2669,6 @@ WasmResult WasmEngine::
                     }
 
                     if (jump) {
-                        if (label_idx >= frame.label_stack_top) return OnRuntimeError();
                         WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - label_idx];
 
                         // データスタックの巻き戻し (Unwind)
@@ -2746,7 +2731,6 @@ WasmResult WasmEngine::
                         chosen_label_idx = default_target;
                     }
 
-                    if (chosen_label_idx >= frame.label_stack_top) return OnRuntimeError();
                     WasmLabel& target_label = frame.labels[frame.label_stack_top - 1 - chosen_label_idx];
 
                     // データスタックの巻き戻し (Unwind)
@@ -2821,9 +2805,6 @@ WasmResult WasmEngine::
 
                 case 0x10: { // call <func_index>
                     uint32_t target_idx = DecodeVarUint32(ip, limit);
-                    if (target_idx >= function_count) {
-                        return WasmResult::kErrorFunctionNotFound;
-                    }
 
                     // kImportのときはチェーンを辿って実際の関数を得る
                     WasmModuleInstance* call_mod = current_mod;
@@ -2840,9 +2821,6 @@ WasmResult WasmEngine::
 
                     if (target_func->kind == WasmFunctionKind::kHost) {
                         // ホスト関数の呼び出し
-                        if (target_func->type_index >= call_mod->signature_count) {
-                            return OnRuntimeError();
-                        }
                         const WasmTypeSignature& sig = call_mod->signatures[target_func->type_index];
 
                         if (ctx->stack_top < sig.param_count) {
@@ -2879,9 +2857,6 @@ WasmResult WasmEngine::
                         // 内部関数の実行（他モジュールの内部関数も含む）
                         if (ctx->call_stack_top >= kWasmCallStackSize) {
                             return WasmResult::kErrorStackOverflow;
-                        }
-                        if (target_func->type_index >= call_mod->signature_count) {
-                            return OnRuntimeError();
                         }
                         const WasmTypeSignature& sig = call_mod->signatures[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
@@ -2951,9 +2926,6 @@ WasmResult WasmEngine::
                     const WasmFunction* target_func = &target_module->functions[target_idx];
                     // 型シグネチャ検証: モジュールが異なる場合は同一インデックスでも構造比較が必要
                     if (target_func->type_index != type_idx || target_module != current_mod) {
-                        if (target_func->type_index >= target_module->signature_count || type_idx >= signature_count) {
-                            return OnRuntimeError();
-                        }
                         const WasmTypeSignature& sa = target_module->signatures[target_func->type_index];
                         const WasmTypeSignature& sb = signatures[type_idx];
                         bool same = (sa.param_count == sb.param_count) && (sa.result_count == sb.result_count);
@@ -2980,7 +2952,6 @@ WasmResult WasmEngine::
                     }
 
                     if (target_func->kind == WasmFunctionKind::kHost) {
-                        if (target_func->type_index >= target_module->signature_count) return OnRuntimeError();
                         const WasmTypeSignature& sig = target_module->signatures[target_func->type_index];
                         if (ctx->stack_top < sig.param_count) {
                             while (ctx->stack_top < sig.param_count) {
@@ -3005,7 +2976,6 @@ WasmResult WasmEngine::
                         }
                     } else {
                         if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorCallStackOverflow;
-                        if (target_func->type_index >= target_module->signature_count) return OnRuntimeError();
                         const WasmTypeSignature& sig = target_module->signatures[target_func->type_index];
                         uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
 
@@ -3084,9 +3054,6 @@ WasmResult WasmEngine::
 
                 case 0x20: { // local.get <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (local_idx >= total_locals) {
-                        return OnRuntimeError();
-                    }
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = locals[local_idx];
                     if (stack_top_ > max_stack_depth_) {
@@ -3097,9 +3064,6 @@ WasmResult WasmEngine::
 
                 case 0x21: { // local.set <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (local_idx >= total_locals) {
-                        return OnRuntimeError();
-                    }
                     if (stack_top_ < 1) {
                         return OnRuntimeError();
                     }
@@ -3109,9 +3073,6 @@ WasmResult WasmEngine::
 
                 case 0x22: { // local.tee <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (local_idx >= total_locals) {
-                        return OnRuntimeError();
-                    }
                     if (stack_top_ < 1) {
                         return OnRuntimeError();
                     }
@@ -3121,7 +3082,6 @@ WasmResult WasmEngine::
 
                 case 0x23: { // global.get <global_idx>
                     uint32_t idx = DecodeVarUint32(ip, limit);
-                    if (idx >= global_count) return OnRuntimeError();
                     if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = globals[idx].value;
                     break;
@@ -3129,7 +3089,7 @@ WasmResult WasmEngine::
 
                 case 0x24: { // global.set <global_idx>
                     uint32_t idx = DecodeVarUint32(ip, limit);
-                    if (idx >= global_count || !globals[idx].is_mutable) return OnRuntimeError();
+                    if (!globals[idx].is_mutable) return OnRuntimeError();
                     if (stack_top_ < 1) return OnRuntimeError();
                     globals[idx].value = stack_[--stack_top_];
                     break;

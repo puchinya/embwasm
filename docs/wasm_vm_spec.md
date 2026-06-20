@@ -192,6 +192,29 @@ Load()
 検査に失敗した場合 `WasmResult::kErrorValidationFailed` を返す。
 `Load()` はこれを呼び出し元に伝播させ、以降の Start 関数実行は行わない。
 
+### 5.5 ExecuteInternal での省略チェック
+
+`Validate()` が成功した後にのみ `ExecuteInternal()` が呼ばれる設計のため、
+以下のチェックは `ExecuteInternal()` のディスパッチループ内で **重複実施しない**。
+
+| 省略しているチェック | Validate での保証箇所 |
+|---|---|
+| 関数の `type_index < signature_count` | `Validate()` 全関数ループ、`ValidateFunctionBody()` `call` 命令 |
+| `call` 命令の呼び出し先インデックス `< function_count` | `ValidateFunctionBody()` `call` 命令 |
+| `call_indirect` の `type_idx < signature_count` | `ValidateFunctionBody()` `call_indirect` 命令 |
+| `local.get/set/tee` のインデックス `< total_locals` | `ValidateFunctionBody()` 各命令 |
+| `global.get/set` のインデックス `< global_count` | `ValidateFunctionBody()` 各命令 |
+| `br/br_if` のラベルインデックス `< label_stack_top` | `ValidateFunctionBody()` `br/br_if` 命令 |
+| `br_table` の各ターゲット `< label_stack_top` | `ValidateFunctionBody()` `br_table` 命令 |
+
+一方、以下は**実行時にのみ確定する値**であり、`ExecuteInternal()` 内で引き続き確認する。
+
+- `call_indirect` でテーブルから取得した関数参照の存在・型一致（テーブルは実行時に書き換わりうる）
+- `global.set` 対象が mutable であること（値の可変性はバイトコード外の構成情報）
+- メモリアクセスのアドレス境界（アドレスはスタックから取得される実行時値）
+- コールスタック・データスタック・ラベルスタックのオーバーフロー（実行経路に依存する動的状態）
+- データセグメント・エレメントセグメントの drop 済みフラグ
+
 ---
 
 ## 6. マルチスレッドと Yield (協調的マルチタスク)
