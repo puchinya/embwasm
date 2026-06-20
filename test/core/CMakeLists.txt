@@ -63,5 +63,6 @@ if(BUILD_TESTING)
 
     # テストの登録
     include(GoogleTest)
-    gtest_discover_tests(wasm_tests)
+
+    gtest_discover_tests(wasm_tests DISCOVERY_MODE PRE_TEST)
 endif()

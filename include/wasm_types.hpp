@@ -54,7 +54,9 @@ enum class WasmResult : int32_t {
     kErrorValidationFailed = -5, ///< 事前検査失敗（型不整合・制限超過）。
     kErrorFunctionNotFound = -6, ///< 指定した関数が見つからない。
     kErrorStackOverflow = -7,    ///< スタックオーバーフロー。
-    kErrorRuntimeError = -8      ///< その他の実行時エラー。
+    kErrorRuntimeError = -8,     ///< その他の実行時エラー。
+    kErrorTooManyModules = -9,   ///< ロード済みモジュール数が kMaxModules を超過。
+    kErrorLinearMemoryLimitExceeded = -10    ///< エンジン設定の線形メモリサイズ制限値を超過。
 };
 
 /// @brief ホスト関数のシグネチャ型。

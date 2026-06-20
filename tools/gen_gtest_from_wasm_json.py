@@ -248,7 +248,7 @@ def process_combined_assets(input_dir, output_dir):
                             else:
                                 name_arg = "nullptr"
                             test_lines.append(f'    {{ // Line {line_num} (Load module {wasm_filename})')
-                            test_lines.append(f'        ASSERT_TRUE(interpreter.LoadModule({name_arg}, {var_name}, {size_name}));')
+                            test_lines.append(f'        ASSERT_LE(0, interpreter.LoadModule({name_arg}, {var_name}, {size_name}));')
                             test_lines.append(f'    }}')
 
                     elif cmd_type == "register":

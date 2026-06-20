@@ -3,19 +3,19 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <sys/types.h>
+
 #include "embwasm.hpp"
 
 using WasmValue = embwasm::WasmValue;
+constexpr size_t kPoolBufSize = 256 << 20;
 
 class WasmInterpreter {
 private:
     embwasm::WasmMemoryPool pool_;
     embwasm::WasmEngine engine_;
 
-    char active_module_name_[64];
-    char current_anonymous_name_[64];
-    size_t load_count_;
-    alignas(16) uint8_t pool_buf_[embwasm::kMemoryPoolSize];
+    uint8_t *pool_buf_;
 
     void ReloadSpectest() {
         static const uint8_t kSpectestWasm[] = {
@@ -91,64 +91,38 @@ private:
     }
 
 public:
-    WasmInterpreter() : load_count_(0) {
-        pool_.Init(pool_buf_, sizeof(pool_buf_));
+    WasmInterpreter()  {
+        pool_buf_ = new uint8_t[kPoolBufSize];
+        pool_.Init(pool_buf_, kPoolBufSize);
         engine_.Init(pool_);
-        active_module_name_[0] = '\0';
-        current_anonymous_name_[0] = '\0';
         ReloadSpectest();
     }
     ~WasmInterpreter() {
         engine_.Deinit();
         pool_.Deinit();
+        if (pool_buf_ != nullptr) {
+            delete[] pool_buf_;
+            pool_buf_ = nullptr;
+        }
     }
 
-    bool LoadModule(const char* module_name, const uint8_t* bytes, size_t size) {
-        if (bytes == nullptr || size < 8) return false;
-
-        char name[64];
-        if (module_name != nullptr) {
-            std::strncpy(name, module_name, sizeof(name) - 1);
-            name[sizeof(name) - 1] = '\0';
-            engine_.UnloadModule(name, std::strlen(name));
-        } else {
-            std::snprintf(name, sizeof(name), "mod%zu", load_count_++);
-            if (current_anonymous_name_[0] != '\0') {
-                engine_.UnloadModule(current_anonymous_name_, std::strlen(current_anonymous_name_));
-            }
-            std::strncpy(current_anonymous_name_, name, sizeof(current_anonymous_name_) - 1);
-            current_anonymous_name_[sizeof(current_anonymous_name_) - 1] = '\0';
-        }
-        int32_t id = engine_.LoadModule(name, std::strlen(name), bytes, size);
+    int32_t LoadModule(const char* module_name, const uint8_t* bytes, size_t size) {
+        size_t name_len = (module_name != nullptr) ? std::strlen(module_name) : 0;
+        int32_t id = engine_.LoadModule(module_name, name_len, bytes, size);
         if (id < 0) {
             std::printf("LoadModule failed with error code: %d\n", -id);
-            return false;
         }
-        std::strncpy(active_module_name_, name, sizeof(active_module_name_) - 1);
-        active_module_name_[sizeof(active_module_name_) - 1] = '\0';
-        return true;
+        return id;
     }
 
     void RegisterModule(const char* alias_name) {
-        if (alias_name == nullptr || active_module_name_[0] == '\0') return;
-        size_t active_len = std::strlen(active_module_name_);
-        engine_.RegisterAlias(active_module_name_, active_len, alias_name, std::strlen(alias_name));
-        size_t anon_len = std::strlen(current_anonymous_name_);
-        if (anon_len == active_len &&
-            std::memcmp(current_anonymous_name_, active_module_name_, active_len) == 0) {
-            current_anonymous_name_[0] = '\0';
-        }
+        engine_.RegisterAlias(nullptr, 0, alias_name, std::strlen(alias_name));
     }
 
     void RegisterModule(const char* real_name, const char* alias_name) {
         if (real_name == nullptr || alias_name == nullptr) return;
         size_t real_len = std::strlen(real_name);
         engine_.RegisterAlias(real_name, real_len, alias_name, std::strlen(alias_name));
-        size_t anon_len = std::strlen(current_anonymous_name_);
-        if (anon_len == real_len &&
-            std::memcmp(current_anonymous_name_, real_name, real_len) == 0) {
-            current_anonymous_name_[0] = '\0';
-        }
     }
 
     WasmValue CreateI32(int32_t val) {
@@ -209,27 +183,21 @@ public:
                            const char* func_name, size_t func_name_len,
                            const WasmValue* args, size_t args_count,
                            WasmValue* out_result) {
-        const char* target_module = module_name;
-        size_t target_module_len = module_name_len;
-        if (target_module == nullptr) {
-            target_module = active_module_name_;
-            target_module_len = std::strlen(active_module_name_);
-        }
-
-        if (target_module == nullptr || target_module_len == 0) {
-            return -1;
-        }
 
         WasmValue res = {};
+
         uint32_t result_count = engine_.GetExportFunctionResultCount(
-            target_module, target_module_len, func_name, func_name_len);
+            module_name, module_name_len, func_name, func_name_len);
+
         if (result_count > 1) result_count = 1;
+
         embwasm::WasmResult run_res = engine_.Execute(
-            target_module, target_module_len, func_name, func_name_len, args,
+            module_name, module_name_len, func_name, func_name_len, args,
             static_cast<uint32_t>(args_count), &res, result_count);
         if (run_res != embwasm::WasmResult::kOk) {
             std::printf("Invoke failed with error code: %d\n", static_cast<int>(run_res));
         }
+
         if (out_result != nullptr) *out_result = res;
         return static_cast<int32_t>(run_res);
     }
@@ -248,8 +216,6 @@ public:
 
     void UnloadAll() {
         engine_.UnloadAllModules();
-        active_module_name_[0] = '\0';
-        current_anonymous_name_[0] = '\0';
         ReloadSpectest();
     }
 

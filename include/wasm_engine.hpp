@@ -366,14 +366,11 @@ private:
     struct NameAlias {
         char alias[64];
         std::size_t alias_len;
-        char real[64];
-        std::size_t real_len;
+        WasmModuleInstance* module;
     };
     static constexpr std::size_t kMaxAliases = 32;
     NameAlias name_aliases_[kMaxAliases];
     std::size_t name_alias_count_;
-
-    const char* ResolveAlias(const char* name, std::size_t name_len, std::size_t& out_len) const noexcept;
 
     WasmMemoryPool* pool_;
     WasmModuleInstance* modules_[kMaxModules];
@@ -384,6 +381,7 @@ private:
     WasmThreadContext* ctx_;
 #endif
 
+    int32_t last_loaded_id_;
     std::size_t max_call_stack_depth_;
     std::size_t max_stack_depth_;
     void* user_data_;
