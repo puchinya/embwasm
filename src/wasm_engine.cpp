@@ -442,10 +442,9 @@ namespace embwasm {
 
             switch (entry.kind) {
                 case 0: {
-                    // Function import: ホスト API → kHost に昇格。それ以外はモジュールエクスポートから解決。
+                    // Function import: type_index と kind を設定し、ホスト API またはモジュールエクスポートへ解決。
                     WasmFunction &func = mod->functions[entry.index];
-                    if (func.kind == WasmFunctionKind::kHost) break; // 既解決
-                    if (func.import.resolved_func != nullptr) break;  // 既解決
+                    func.type_index = entry.desc.func.type_index;
                     {
                         HostFunctionId host_id = LookupStaticHostFunctionId(
                             entry.module_name, entry.module_name_len,
@@ -456,6 +455,7 @@ namespace embwasm {
                             break;
                         }
                     }
+                    func.kind = WasmFunctionKind::kImport;
                     if (src_mod) {
                         for (std::size_t e = 0; e < src_mod->export_count; ++e) {
                             if (src_mod->exports[e].kind == 0 &&
@@ -472,9 +472,10 @@ namespace embwasm {
                     break;
                 }
                 case 1: {
-                    // Table import
+                    // Table import: テーブル型を desc から設定し、ソースモジュールから共有。
                     uint32_t tidx = entry.index;
                     if (tidx >= mod->table_count || mod->is_table_shared[tidx]) break;
+                    mod->table_types[tidx] = static_cast<WasmType>(entry.desc.table.elem_type);
                     if (src_mod) {
                         for (std::size_t e = 0; e < src_mod->export_count; ++e) {
                             if (src_mod->exports[e].kind == 1 &&
@@ -483,6 +484,7 @@ namespace embwasm {
                                 uint32_t sidx = src_mod->exports[e].index;
                                 if (sidx < src_mod->table_count && src_mod->tables[sidx] != nullptr) {
                                     mod->tables[tidx] = src_mod->tables[sidx];
+                                    mod->table_types[tidx] = src_mod->table_types[sidx];
                                     mod->table_sizes[tidx] = src_mod->table_sizes[sidx];
                                     mod->table_max_sizes[tidx] = src_mod->table_max_sizes[sidx];
                                     mod->is_table_shared[tidx] = true;
@@ -497,7 +499,9 @@ namespace embwasm {
                     break;
                 }
                 case 2: {
-                    // Memory import
+                    // Memory import: メモリメタデータを設定し、ソースモジュールから共有。
+                    mod->has_memory = true;
+                    mod->memory_is_imported = true;
                     if (mod->is_memory_shared || mod->linear_memory_ptr != nullptr) break;
                     if (src_mod) {
                         for (std::size_t e = 0; e < src_mod->export_count; ++e) {
@@ -521,9 +525,11 @@ namespace embwasm {
                     break;
                 }
                 case 3: {
-                    // Global import
+                    // Global import: desc から型・可変性を設定し、ソースモジュールから値をコピー。
                     uint32_t gidx = entry.index;
                     if (gidx >= mod->global_count) { result = WasmResult::kErrorLinking; break; }
+                    mod->globals[gidx].type = static_cast<WasmType>(entry.desc.global.value_type);
+                    mod->globals[gidx].is_mutable = entry.desc.global.is_mutable;
                     if (src_mod) {
                         for (std::size_t e = 0; e < src_mod->export_count; ++e) {
                             if (src_mod->exports[e].kind == 3 &&
@@ -563,8 +569,13 @@ namespace embwasm {
                 continue;
             }
 
-            // --- 1. 関数インポートの解決 ---
+            // --- 1. インポートの解決（メタデータ設定 + リンク） ---
             if (ResolveImports(mod) != WasmResult::kOk) {
+                continue;
+            }
+
+            // --- 1a. バリデーション（ResolveImports でメタデータが揃った後に実施） ---
+            if (Validate(mod) != WasmResult::kOk) {
                 continue;
             }
 
@@ -599,7 +610,14 @@ namespace embwasm {
             for (std::size_t t = 0; t < mod->table_count; ++t) {
                 if (mod->tables[t] != nullptr || mod->is_table_shared[t]) continue;
                 // インポートテーブルが未解決の場合はスキップ（ResolveImports() でエラー済み）
-                if (mod->table_import_modules && mod->table_import_modules[t] != nullptr) continue;
+                bool table_is_import = false;
+                for (std::size_t ii = 0; ii < mod->import_count; ++ii) {
+                    if (mod->imports[ii].kind == 1 && mod->imports[ii].index == static_cast<uint32_t>(t)) {
+                        table_is_import = true;
+                        break;
+                    }
+                }
+                if (table_is_import) continue;
 
                 uint32_t min_size = static_cast<uint32_t>(mod->table_sizes[t]);
                 if (min_size > 0) {
@@ -1123,14 +1141,6 @@ namespace embwasm {
         mod->start_function_index = -1;
 
         WasmResult res = ParseSections(mod, binary + 8, size - 8);
-        if (res != WasmResult::kOk) {
-            FreeModuleInstance(mod);
-            modules_[slot_idx] = nullptr;
-            return static_cast<int32_t>(res);
-        }
-
-        // 事前検査
-        res = Validate(mod);
         if (res != WasmResult::kOk) {
             FreeModuleInstance(mod);
             modules_[slot_idx] = nullptr;
@@ -1989,8 +1999,8 @@ namespace embwasm {
                 }
 
                 case 2: {
-                    // Import Section: WasmImportEntry の生成と最小限のメタデータ記録のみ。
-                    // リンク処理（ホスト API 照合・モジュール間解決）は ResolveImports() で行う。
+                    // Import Section: WasmImportEntry の生成のみ。
+                    // 各要素へのメタデータ設定・リンク処理はすべて ResolveImports() で行う。
                     uint32_t import_count = DecodeVarUint32(ptr, section_end);
                     for (uint32_t i = 0; i < import_count; ++i) {
                         uint32_t mod_len = DecodeVarUint32(ptr, section_end);
@@ -2006,88 +2016,66 @@ namespace embwasm {
                         if (ptr >= section_end) return WasmResult::kErrorParse;
                         uint8_t kind = *ptr++;
 
+                        WasmImportEntry entry = {};
+                        entry.module_name = mod_name;
+                        entry.module_name_len = mod_len;
+                        entry.field_name = field_name;
+                        entry.field_name_len = field_len;
+                        entry.kind = kind;
+
                         switch (kind) {
                             case 0x00: {
-                                // Function import: 型インデックスのみ記録。解決は ResolveImports()。
                                 uint32_t type_idx = DecodeVarUint32(ptr, section_end);
                                 if (func_idx >= mod->function_count) return WasmResult::kErrorOutOfMemory;
-                                functions[func_idx].kind = WasmFunctionKind::kImport;
-                                functions[func_idx].type_index = type_idx;
-                                functions[func_idx].import.module_name = nullptr;
-                                functions[func_idx].import.module_name_len = 0;
-                                functions[func_idx].import.field_name = nullptr;
-                                functions[func_idx].import.field_name_len = 0;
-                                functions[func_idx].import.resolved_func = nullptr;
-                                if (imports_arr && imp_idx < mod->import_count) {
-                                    imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind,
-                                                              static_cast<uint32_t>(func_idx)};
-                                }
+                                entry.index = static_cast<uint32_t>(func_idx);
+                                entry.desc.func.type_index = type_idx;
                                 func_idx++;
                                 code_index_offset++;
                                 break;
                             }
                             case 0x01: {
-                                // Table import: サイズメタデータのみ記録。共有は ResolveImports()。
                                 uint8_t elem_type = *ptr++;
                                 uint8_t flags = *ptr++;
                                 uint32_t min_size = DecodeVarUint32(ptr, section_end);
                                 uint32_t max_size = 0xFFFFFFFF;
                                 if (flags & 0x01) max_size = DecodeVarUint32(ptr, section_end);
-                                uint32_t table_import_idx = static_cast<uint32_t>(table_count_);
+                                entry.index = static_cast<uint32_t>(table_count_);
+                                entry.desc.table.elem_type = elem_type;
+                                entry.desc.table.min_size = min_size;
+                                entry.desc.table.max_size = max_size;
                                 if (table_count_ < mod->table_capacity) {
-                                    table_types_[table_count_] = static_cast<WasmType>(elem_type);
-                                    table_sizes[table_count_] = min_size;
-                                    table_max_sizes[table_count_] = max_size;
-                                    tables[table_count_] = nullptr;
-                                    is_table_shared_[table_count_] = false;
-                                    mod->table_import_modules[table_count_] = mod_name;
-                                    mod->table_import_module_lens[table_count_] = mod_len;
-                                    mod->table_import_fields[table_count_] = field_name;
-                                    mod->table_import_field_lens[table_count_] = field_len;
                                     table_count_++;
-                                }
-                                if (imports_arr && imp_idx < mod->import_count) {
-                                    imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, table_import_idx};
                                 }
                                 break;
                             }
                             case 0x02: {
-                                // Memory import: ページ数メタデータのみ記録。共有は ResolveImports()。
                                 uint8_t flags = *ptr++;
                                 uint32_t min_pages = DecodeVarUint32(ptr, section_end);
                                 uint32_t max_pages = 0;
                                 if (flags & 0x01) max_pages = DecodeVarUint32(ptr, section_end);
-                                mod->has_memory = true;
-                                mod->memory_is_imported = true;
-                                mod->memory_import_module = mod_name;
-                                mod->memory_import_module_len = mod_len;
-                                mod->memory_import_field = field_name;
-                                mod->memory_import_field_len = field_len;
-                                mod->memory_min_pages = min_pages;
-                                mod->max_linear_memory_pages = max_pages;
-                                if (imports_arr && imp_idx < mod->import_count) {
-                                    imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, 0};
-                                }
+                                entry.index = 0;
+                                entry.desc.mem.min_pages = min_pages;
+                                entry.desc.mem.max_pages = max_pages;
                                 break;
                             }
                             case 0x03: {
-                                // Global import: 型と可変性のみ記録。値は ResolveImports() で設定。
                                 if (ptr + 2 > section_end) return WasmResult::kErrorParse;
-                                WasmType gtype = static_cast<WasmType>(*ptr++);
+                                uint8_t value_type = *ptr++;
                                 bool is_mutable = (*ptr++ != 0);
-                                uint32_t global_import_idx = static_cast<uint32_t>(glob_idx);
+                                entry.index = static_cast<uint32_t>(glob_idx);
+                                entry.desc.global.value_type = value_type;
+                                entry.desc.global.is_mutable = is_mutable;
                                 if (glob_idx < mod->global_count) {
-                                    WasmValue gval = {};
-                                    globals[glob_idx++] = {gtype, is_mutable, gval, 0xFFFFFFFFu};
-                                }
-                                if (imports_arr && imp_idx < mod->import_count) {
-                                    imports_arr[imp_idx++] = {mod_name, mod_len, field_name, field_len, kind, global_import_idx};
+                                    glob_idx++;
                                 }
                                 break;
                             }
                             default:
-                                // 未知のインポート種別はスキップ（バイト列はセクション終端まで読み飛ばせない）
                                 break;
+                        }
+
+                        if (imports_arr && imp_idx < mod->import_count) {
+                            imports_arr[imp_idx++] = entry;
                         }
                     }
                     mod->import_count = imp_idx;

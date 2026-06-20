@@ -102,6 +102,13 @@ struct WasmImportEntry {
     std::size_t field_name_len;  ///< フィールド名の長さ（バイト数）。
     uint8_t kind;                ///< インポート種別（0=Func, 1=Table, 2=Mem, 3=Global）。
     uint32_t index;              ///< インポート対象のインデックス（関数/テーブル/グローバル）。
+    /// WASM バイナリから得られる種別固有のデータ（リンク処理で参照）。
+    union {
+        struct { uint32_t type_index; } func;
+        struct { uint8_t elem_type; uint32_t min_size; uint32_t max_size; } table;
+        struct { uint32_t min_pages; uint32_t max_pages; } mem;
+        struct { uint8_t value_type; bool is_mutable; } global;
+    } desc;
 };
 
 } // namespace embwasm
