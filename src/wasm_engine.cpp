@@ -2327,9 +2327,6 @@ WasmResult WasmEngine::
 
             // 実行結果をスタックにプッシュ
             for (uint32_t i = 0; i < sig.result_count; ++i) {
-                if (ctx->stack_top >= kWasmStackSize) {
-                    return WasmResult::kErrorStackOverflow;
-                }
                 ctx->stack[ctx->stack_top++] = call_results[i];
                 if (ctx->stack_top > max_stack_depth_) {
                     max_stack_depth_ = ctx->stack_top;
@@ -2688,9 +2685,7 @@ WasmResult WasmEngine::
 
                         // 退避した値を再びプッシュする
                         for (uint32_t i = 0; i < arity; ++i) {
-                            if (stack_top_ < kWasmStackSize) {
-                                stack_[stack_top_++] = saved_vals[i];
-                            }
+                            stack_[stack_top_++] = saved_vals[i];
                         }
 
                         // label.pc は:
@@ -2750,9 +2745,7 @@ WasmResult WasmEngine::
 
                     // 退避した値を再びプッシュする
                     for (uint32_t i = 0; i < arity; ++i) {
-                        if (stack_top_ < kWasmStackSize) {
-                            stack_[stack_top_++] = saved_vals[i];
-                        }
+                        stack_[stack_top_++] = saved_vals[i];
                     }
 
                     ip = target_label.pc;
@@ -2786,9 +2779,7 @@ WasmResult WasmEngine::
 
                         // 退避した結果の値を再びプッシュする
                         for (uint32_t i = 0; i < arity; ++i) {
-                            if (stack_top_ < kWasmStackSize) {
-                                stack_[stack_top_++] = saved_vals[i];
-                            }
+                            stack_[stack_top_++] = saved_vals[i];
                         }
 
                         frame.label_stack_top--;
@@ -2845,9 +2836,6 @@ WasmResult WasmEngine::
                         if (res != WasmResult::kOk) return res;
 
                         for (uint32_t i = 0; i < sig.result_count; ++i) {
-                            if (ctx->stack_top >= kWasmStackSize) {
-                                return WasmResult::kErrorStackOverflow;
-                            }
                             ctx->stack[ctx->stack_top++] = call_results[i];
                             if (ctx->stack_top > max_stack_depth_) {
                                 max_stack_depth_ = ctx->stack_top;
@@ -2890,6 +2878,11 @@ WasmResult WasmEngine::
                         }
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
                             new_frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
+                        }
+                        if (ctx->stack_top + target_func->local.max_stack_depth > kWasmStackSize) {
+                            ctx->locals_pool_top -= target_total_locals;
+                            --ctx->call_stack_top;
+                            return WasmResult::kErrorStackOverflow;
                         }
 
                         // 引数ポップ後のstack_topを関数ベースとして設定
@@ -2970,7 +2963,6 @@ WasmResult WasmEngine::
                         }
                         if (res != WasmResult::kOk) return res;
                         for (uint32_t i = 0; i < sig.result_count; ++i) {
-                            if (ctx->stack_top >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                             ctx->stack[ctx->stack_top++] = call_results[i];
                             if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         }
@@ -3003,6 +2995,11 @@ WasmResult WasmEngine::
                         if (ctx->stack_top < sig.param_count) return OnRuntimeError();
                         for (uint32_t i = 0; i < sig.param_count; ++i) {
                             new_frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
+                        }
+                        if (ctx->stack_top + target_func->local.max_stack_depth > kWasmStackSize) {
+                            ctx->locals_pool_top -= target_total_locals;
+                            --ctx->call_stack_top;
+                            return WasmResult::kErrorStackOverflow;
                         }
 
                         // 引数ポップ後のstack_topを関数ベースとして設定
@@ -3054,7 +3051,6 @@ WasmResult WasmEngine::
 
                 case 0x20: { // local.get <local_idx>
                     uint32_t local_idx = DecodeVarUint32(ip, limit);
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = locals[local_idx];
                     if (stack_top_ > max_stack_depth_) {
                         max_stack_depth_ = stack_top_;
@@ -3082,7 +3078,6 @@ WasmResult WasmEngine::
 
                 case 0x23: { // global.get <global_idx>
                     uint32_t idx = DecodeVarUint32(ip, limit);
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++] = globals[idx].value;
                     break;
                 }
@@ -3103,8 +3098,7 @@ WasmResult WasmEngine::
                         return OnRuntimeError();
                     }
                     uint32_t target_idx = tables[table_idx][elem_idx];
-                    
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
+
                     WasmValue ref_val = {};
                     if (target_idx == 0xFFFFFFFF) {
                         ref_val.value.i64 = -1; // null
@@ -3257,7 +3251,6 @@ WasmResult WasmEngine::
 
                 case 0x41: { // i32.const <value>
                     int32_t val = DecodeVarInt32(ip, limit);
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++].value.i32 = val;
                     if (stack_top_ > max_stack_depth_) {
                         max_stack_depth_ = stack_top_;
@@ -3267,7 +3260,6 @@ WasmResult WasmEngine::
 
                 case 0x42: { // i64.const <value>
                     int64_t val = DecodeVarInt64(ip, limit);
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     stack_[stack_top_++].value.i64 = val;
                     if (stack_top_ > max_stack_depth_) {
                         max_stack_depth_ = stack_top_;
@@ -3276,7 +3268,6 @@ WasmResult WasmEngine::
                 }
 
                 case 0x43: { // f32.const <value>
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     std::memcpy(&stack_[stack_top_++].value.f32, ip, 4);
                     ip += 4;
                     if (stack_top_ > max_stack_depth_) {
@@ -3286,7 +3277,6 @@ WasmResult WasmEngine::
                 }
 
                 case 0x44: { // f64.const <value>
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     std::memcpy(&stack_[stack_top_++].value.f64, ip, 8);
                     ip += 8;
                     if (stack_top_ > max_stack_depth_) {
@@ -3651,7 +3641,6 @@ WasmResult WasmEngine::
                 case 0x3F: { // memory.size
                     uint8_t reserved = *ip++;
                     (void)reserved;
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     int32_t pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
                     stack_[stack_top_++].value.i32 = pages;
                     if (stack_top_ > max_stack_depth_) {
@@ -4068,7 +4057,6 @@ WasmResult WasmEngine::
                 case 0xD0: {
                     int32_t heap_type = DecodeVarInt32(ip, limit);
                     (void)heap_type;
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     WasmValue ref_val = {};
                     ref_val.value.i64 = -1;
                     stack_[stack_top_++] = ref_val;
@@ -4086,7 +4074,6 @@ WasmResult WasmEngine::
                 // ref.func (0xD2): push funcref
                 case 0xD2: {
                     uint32_t func_idx = DecodeVarUint32(ip, limit);
-                    if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                     WasmValue ref_val = {};
                     ref_val.value.i64 = static_cast<int64_t>(func_idx);
                     stack_[stack_top_++] = ref_val;
@@ -4333,12 +4320,10 @@ WasmResult WasmEngine::
 
                             if (table_idx >= table_count) return OnRuntimeError();
                             if (n < 0) {
-                                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                                 stack_[stack_top_++].value.i32 = -1;
                                 break;
                             }
                             if (n == 0) {
-                                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                                 stack_[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                                 break;
                             }
@@ -4346,13 +4331,11 @@ WasmResult WasmEngine::
                             uint32_t old_size = table_sizes[table_idx];
                             uint64_t new_size = static_cast<uint64_t>(old_size) + n;
                             if (new_size > table_max_sizes[table_idx]) {
-                                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                                 stack_[stack_top_++].value.i32 = -1;
                                 break;
                             }
                             uint32_t* new_tbl = static_cast<uint32_t*>(pool_->Allocate(new_size * sizeof(uint32_t)));
                             if (!new_tbl) {
-                                if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                                 stack_[stack_top_++].value.i32 = -1;
                                 break;
                             }
@@ -4382,14 +4365,12 @@ WasmResult WasmEngine::
                                 }
                             }
 
-                            if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                             stack_[stack_top_++].value.i32 = static_cast<int32_t>(old_size);
                             break;
                         }
                         case 16: { // table.size
                             uint32_t table_idx = DecodeVarUint32(ip, limit);
                             if (table_idx >= table_count) return OnRuntimeError();
-                            if (stack_top_ >= kWasmStackSize) return WasmResult::kErrorStackOverflow;
                             stack_[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                             break;
                         }
