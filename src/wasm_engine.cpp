@@ -2629,7 +2629,7 @@ namespace embwasm {
 
         // 既存のコードとの互換性のためのエイリアス
         std::size_t &stack_top_ = ctx->stack_top;
-        WasmValue *stack_ = ctx->stack;
+        WasmValue *stack = ctx->stack;
 
         // module のエイリアス
         WasmTypeSignature *signatures = module->signatures;
@@ -2910,7 +2910,7 @@ namespace embwasm {
                             result_count = 1;
                         }
 
-                        int32_t cond = stack_[--stack_top_].value.i32;
+                        int32_t cond = stack[--stack_top_].value.i32;
 
                         if (frame.label_stack_top >= kMaxLabels) return WasmResult::kErrorStackOverflow;
                         WasmLabel &label = frame.labels[frame.label_stack_top++];
@@ -3026,7 +3026,7 @@ namespace embwasm {
                         uint32_t label_idx = DecodeVarUint32(ip, limit);
                         bool jump = true;
                         if (op == 0x0D) {
-                            jump = (stack_[--stack_top_].value.i32 != 0);
+                            jump = (stack[--stack_top_].value.i32 != 0);
                         }
 
                         if (jump) {
@@ -3043,7 +3043,7 @@ namespace embwasm {
 
                             for (uint32_t i = 0; i < arity; ++i) {
                                 if (stack_top_ > 0) {
-                                    saved_vals[arity - 1 - i] = stack_[--stack_top_];
+                                    saved_vals[arity - 1 - i] = stack[--stack_top_];
                                 }
                             }
 
@@ -3051,7 +3051,7 @@ namespace embwasm {
 
                             // 退避した値を再びプッシュする
                             for (uint32_t i = 0; i < arity; ++i) {
-                                stack_[stack_top_++] = saved_vals[i];
+                                stack[stack_top_++] = saved_vals[i];
                             }
 
                             // label.pc は:
@@ -3076,7 +3076,7 @@ namespace embwasm {
                     case 0x0E: {
                         // br_table
                         uint32_t target_count = DecodeVarUint32(ip, limit);
-                        uint32_t idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                        uint32_t idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
 
                         uint32_t chosen_label_idx = 0;
                         bool found = false;
@@ -3105,7 +3105,7 @@ namespace embwasm {
 
                         for (uint32_t i = 0; i < arity; ++i) {
                             if (stack_top_ > 0) {
-                                saved_vals[arity - 1 - i] = stack_[--stack_top_];
+                                saved_vals[arity - 1 - i] = stack[--stack_top_];
                             }
                         }
 
@@ -3113,7 +3113,7 @@ namespace embwasm {
 
                         // 退避した値を再びプッシュする
                         for (uint32_t i = 0; i < arity; ++i) {
-                            stack_[stack_top_++] = saved_vals[i];
+                            stack[stack_top_++] = saved_vals[i];
                         }
 
                         ip = target_label.pc;
@@ -3137,7 +3137,7 @@ namespace embwasm {
                             WasmValue saved_vals[128] = {};
                             if (arity > 128) arity = 128;
                             for (uint32_t i = 0; i < arity; ++i) {
-                                saved_vals[arity - 1 - i] = stack_[--stack_top_];
+                                saved_vals[arity - 1 - i] = stack[--stack_top_];
                             }
 
                             // スタックポインタをブロック開始時の位置に戻す
@@ -3145,7 +3145,7 @@ namespace embwasm {
 
                             // 退避した結果の値を再びプッシュする
                             for (uint32_t i = 0; i < arity; ++i) {
-                                stack_[stack_top_++] = saved_vals[i];
+                                stack[stack_top_++] = saved_vals[i];
                             }
 
                             frame.label_stack_top--;
@@ -3263,7 +3263,7 @@ namespace embwasm {
                         uint32_t type_idx = DecodeVarUint32(ip, limit);
                         uint32_t table_idx = *ip++;
 
-                        uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                        uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
 
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
                             return OnRuntimeError();
@@ -3380,10 +3380,10 @@ namespace embwasm {
 
                     case 0x1B: {
                         // select
-                        int32_t cond = stack_[--stack_top_].value.i32;
-                        WasmValue val2 = stack_[--stack_top_];
-                        WasmValue val1 = stack_[--stack_top_];
-                        stack_[stack_top_++] = (cond != 0) ? val1 : val2;
+                        int32_t cond = stack[--stack_top_].value.i32;
+                        WasmValue val2 = stack[--stack_top_];
+                        WasmValue val1 = stack[--stack_top_];
+                        stack[stack_top_++] = (cond != 0) ? val1 : val2;
                         break;
                     }
 
@@ -3395,17 +3395,17 @@ namespace embwasm {
                             return OnRuntimeError();
                         }
                         ip += type_count;
-                        int32_t cond = stack_[--stack_top_].value.i32;
-                        WasmValue val2 = stack_[--stack_top_];
-                        WasmValue val1 = stack_[--stack_top_];
-                        stack_[stack_top_++] = (cond != 0) ? val1 : val2;
+                        int32_t cond = stack[--stack_top_].value.i32;
+                        WasmValue val2 = stack[--stack_top_];
+                        WasmValue val1 = stack[--stack_top_];
+                        stack[stack_top_++] = (cond != 0) ? val1 : val2;
                         break;
                     }
 
                     case 0x20: {
                         // local.get <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
-                        stack_[stack_top_++] = locals[local_idx];
+                        stack[stack_top_++] = locals[local_idx];
                         if (stack_top_ > max_stack_depth_) {
                             max_stack_depth_ = stack_top_;
                         }
@@ -3415,21 +3415,21 @@ namespace embwasm {
                     case 0x21: {
                         // local.set <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
-                        locals[local_idx] = stack_[--stack_top_];
+                        locals[local_idx] = stack[--stack_top_];
                         break;
                     }
 
                     case 0x22: {
                         // local.tee <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
-                        locals[local_idx] = stack_[stack_top_ - 1]; // ポップせずにコピー
+                        locals[local_idx] = stack[stack_top_ - 1]; // ポップせずにコピー
                         break;
                     }
 
                     case 0x23: {
                         // global.get <global_idx>
                         uint32_t idx = DecodeVarUint32(ip, limit);
-                        stack_[stack_top_++] = globals[idx].value;
+                        stack[stack_top_++] = globals[idx].value;
                         break;
                     }
 
@@ -3437,14 +3437,14 @@ namespace embwasm {
                         // global.set <global_idx>
                         uint32_t idx = DecodeVarUint32(ip, limit);
                         if (!globals[idx].is_mutable) return OnRuntimeError();
-                        globals[idx].value = stack_[--stack_top_];
+                        globals[idx].value = stack[--stack_top_];
                         break;
                     }
 
                     case 0x25: {
                         // table.get
                         uint32_t table_idx = DecodeVarUint32(ip, limit);
-                        uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                        uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
                             return OnRuntimeError();
                         }
@@ -3456,15 +3456,15 @@ namespace embwasm {
                         } else {
                             ref_val.value.i64 = static_cast<int64_t>(target_idx);
                         }
-                        stack_[stack_top_++] = ref_val;
+                        stack[stack_top_++] = ref_val;
                         break;
                     }
 
                     case 0x26: {
                         // table.set
                         uint32_t table_idx = DecodeVarUint32(ip, limit);
-                        WasmValue val = stack_[--stack_top_];
-                        uint32_t elem_idx = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                        WasmValue val = stack[--stack_top_];
+                        uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
                             return OnRuntimeError();
                         }
@@ -3497,7 +3497,7 @@ namespace embwasm {
                         /* uint32_t align = */
                         DecodeVarUint32(ip, limit);
                         uint32_t offset = DecodeVarUint32(ip, limit);
-                        uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                        uint32_t base = static_cast<uint32_t>(stack[--stack_top_].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
                         std::size_t size = 0;
@@ -3568,7 +3568,7 @@ namespace embwasm {
                             std::memcpy(&v, &linear_memory_ptr[addr], 4);
                             result_val.value.i64 = static_cast<int64_t>(v);
                         }
-                        stack_[stack_top_++] = result_val;
+                        stack[stack_top_++] = result_val;
                         break;
                     }
 
@@ -3585,8 +3585,8 @@ namespace embwasm {
                         /* uint32_t align = */
                         DecodeVarUint32(ip, limit);
                         uint32_t offset = DecodeVarUint32(ip, limit);
-                        WasmValue val = stack_[--stack_top_];
-                        uint32_t base = static_cast<uint32_t>(stack_[--stack_top_].value.i32);
+                        WasmValue val = stack[--stack_top_];
+                        uint32_t base = static_cast<uint32_t>(stack[--stack_top_].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
                         std::size_t size = 0;
@@ -3636,7 +3636,7 @@ namespace embwasm {
                     case 0x41: {
                         // i32.const <value>
                         int32_t val = DecodeVarInt32(ip, limit);
-                        stack_[stack_top_++].value.i32 = val;
+                        stack[stack_top_++].value.i32 = val;
                         if (stack_top_ > max_stack_depth_) {
                             max_stack_depth_ = stack_top_;
                         }
@@ -3646,7 +3646,7 @@ namespace embwasm {
                     case 0x42: {
                         // i64.const <value>
                         int64_t val = DecodeVarInt64(ip, limit);
-                        stack_[stack_top_++].value.i64 = val;
+                        stack[stack_top_++].value.i64 = val;
                         if (stack_top_ > max_stack_depth_) {
                             max_stack_depth_ = stack_top_;
                         }
@@ -3655,7 +3655,7 @@ namespace embwasm {
 
                     case 0x43: {
                         // f32.const <value>
-                        std::memcpy(&stack_[stack_top_++].value.f32, ip, 4);
+                        std::memcpy(&stack[stack_top_++].value.f32, ip, 4);
                         ip += 4;
                         if (stack_top_ > max_stack_depth_) {
                             max_stack_depth_ = stack_top_;
@@ -3665,7 +3665,7 @@ namespace embwasm {
 
                     case 0x44: {
                         // f64.const <value>
-                        std::memcpy(&stack_[stack_top_++].value.f64, ip, 8);
+                        std::memcpy(&stack[stack_top_++].value.f64, ip, 8);
                         ip += 8;
                         if (stack_top_ > max_stack_depth_) {
                             max_stack_depth_ = stack_top_;
@@ -3675,7 +3675,7 @@ namespace embwasm {
 
                     case 0x45: {
                         // i32.eqz
-                        stack_[stack_top_ - 1].value.i32 = (stack_[stack_top_ - 1].value.i32 == 0) ? 1 : 0;
+                        stack[stack_top_ - 1].value.i32 = (stack[stack_top_ - 1].value.i32 == 0) ? 1 : 0;
                         break;
                     }
 
@@ -3691,8 +3691,8 @@ namespace embwasm {
                     case 0x4E: // i32.ge_s
                     case 0x4F: {
                         // i32.ge_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3725,14 +3725,14 @@ namespace embwasm {
                                                  : 0;
                                 break;
                         }
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
                     case 0x50: {
                         // i64.eqz
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.i32 = (val.value.i64 == 0) ? 1 : 0;
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.i32 = (val.value.i64 == 0) ? 1 : 0;
                         break;
                     }
 
@@ -3747,8 +3747,8 @@ namespace embwasm {
                     case 0x59: // i64.ge_s
                     case 0x5A: {
                         // i64.ge_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3781,7 +3781,7 @@ namespace embwasm {
                                                  : 0;
                                 break;
                         }
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
@@ -3792,8 +3792,8 @@ namespace embwasm {
                     case 0x5F: // f32.le
                     case 0x60: {
                         // f32.ge
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3810,7 +3810,7 @@ namespace embwasm {
                             case 0x60: res = (a.value.f32 >= b.value.f32) ? 1 : 0;
                                 break;
                         }
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
@@ -3821,8 +3821,8 @@ namespace embwasm {
                     case 0x65: // f64.le
                     case 0x66: {
                         // f64.ge
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3839,15 +3839,15 @@ namespace embwasm {
                             case 0x66: res = (a.value.f64 >= b.value.f64) ? 1 : 0;
                                 break;
                         }
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
                     case 0x67: {
                         // i32.clz
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
 
-                        stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountLeadingZeros(
+                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountLeadingZeros(
                             static_cast<uint32_t>(val.value.i32)));
                         break;
                     }
@@ -3865,8 +3865,8 @@ namespace embwasm {
                     case 0x75: // i32.shr_s
                     case 0x76: {
                         // i32.shr_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3901,7 +3901,7 @@ namespace embwasm {
                                            static_cast<uint32_t>(a.value.i32) >> (b.value.i32 & 31));
                                 break;
                         }
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
@@ -3916,8 +3916,8 @@ namespace embwasm {
                     case 0x87: // i64.shr_s
                     case 0x88: {
                         // i64.shr_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
 
                         int64_t res = 0;
                         switch (op) {
@@ -3941,7 +3941,7 @@ namespace embwasm {
                                            static_cast<uint64_t>(a.value.i64) >> (b.value.i64 & 63));
                                 break;
                         }
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
@@ -3951,8 +3951,8 @@ namespace embwasm {
                     case 0x94: // f32.mul
                     case 0x95: {
                         // f32.div
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         float res = 0;
                         switch (op) {
                             case 0x92: res = a.value.f32 + b.value.f32;
@@ -3966,7 +3966,7 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f32 = res;
-                        stack_[stack_top_++] = result_val;
+                        stack[stack_top_++] = result_val;
                         break;
                     }
 
@@ -3975,8 +3975,8 @@ namespace embwasm {
                     case 0xA2: // f64.mul
                     case 0xA3: {
                         // f64.div
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         double res = 0;
                         switch (op) {
                             case 0xA0: res = a.value.f64 + b.value.f64;
@@ -3990,14 +3990,14 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f64 = res;
-                        stack_[stack_top_++] = result_val;
+                        stack[stack_top_++] = result_val;
                         break;
                     }
 
                     case 0xA7: {
                         // i32.wrap_i64
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(val.value.i64 & 0xFFFFFFFFULL);
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(val.value.i64 & 0xFFFFFFFFULL);
                         break;
                     }
 
@@ -4006,7 +4006,7 @@ namespace embwasm {
                     case 0xAA: // i32.trunc_f64_s
                     case 0xAB: {
                         // i32.trunc_f64_u
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         WasmValue res_val;
                         if (op == 0xA8 || op == 0xA9) {
                             res_val.value.i32 = (op == 0xA8)
@@ -4017,23 +4017,23 @@ namespace embwasm {
                                                     ? static_cast<int32_t>(val.value.f64)
                                                     : static_cast<int32_t>(static_cast<uint32_t>(val.value.f64));
                         }
-                        stack_[stack_top_ - 1] = res_val;
+                        stack[stack_top_ - 1] = res_val;
                         break;
                     }
 
                     case 0xAC: {
                         // i64.extend_i32_s
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.i64 = 0;
-                        stack_[stack_top_ - 1].value.i64 = static_cast<int64_t>(val.value.i32);
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.i64 = 0;
+                        stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(val.value.i32);
                         break;
                     }
 
                     case 0xAD: {
                         // i64.extend_i32_u
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.i64 = 0;
-                        stack_[stack_top_ - 1].value.i64 = static_cast<uint64_t>(static_cast<uint32_t>(val.value.i32));
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.i64 = 0;
+                        stack[stack_top_ - 1].value.i64 = static_cast<uint64_t>(static_cast<uint32_t>(val.value.i32));
                         break;
                     }
 
@@ -4042,7 +4042,7 @@ namespace embwasm {
                     case 0xB0: // i64.trunc_f64_s
                     case 0xB1: {
                         // i64.trunc_f64_u
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         WasmValue res_val;
                         if (op == 0xAE || op == 0xAF) {
                             res_val.value.i64 = (op == 0xAE)
@@ -4053,7 +4053,7 @@ namespace embwasm {
                                                     ? static_cast<int64_t>(val.value.f64)
                                                     : static_cast<int64_t>(static_cast<uint64_t>(val.value.f64));
                         }
-                        stack_[stack_top_ - 1] = res_val;
+                        stack[stack_top_ - 1] = res_val;
                         break;
                     }
 
@@ -4062,7 +4062,7 @@ namespace embwasm {
                     case 0xB4: // f32.convert_i64_s
                     case 0xB5: {
                         // f32.convert_i64_u
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         WasmValue res_val;
                         if (op == 0xB2) {
                             res_val.value.f32 = static_cast<float>(val.value.i32);
@@ -4073,15 +4073,15 @@ namespace embwasm {
                         } else {
                             res_val.value.f32 = static_cast<float>(static_cast<uint64_t>(val.value.i64));
                         }
-                        stack_[stack_top_ - 1] = res_val;
+                        stack[stack_top_ - 1] = res_val;
                         break;
                     }
 
                     case 0xB6: {
                         // f32.demote_f64
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.f32 = 0;
-                        stack_[stack_top_ - 1].value.f32 = static_cast<float>(val.value.f64);
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.f32 = 0;
+                        stack[stack_top_ - 1].value.f32 = static_cast<float>(val.value.f64);
                         break;
                     }
 
@@ -4090,7 +4090,7 @@ namespace embwasm {
                     case 0xB9: // f64.convert_i64_s
                     case 0xBA: {
                         // f64.convert_i64_u
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         WasmValue res_val;
                         if (op == 0xB7) {
                             res_val.value.f64 = static_cast<double>(val.value.i32);
@@ -4101,15 +4101,15 @@ namespace embwasm {
                         } else {
                             res_val.value.f64 = static_cast<double>(static_cast<uint64_t>(val.value.i64));
                         }
-                        stack_[stack_top_ - 1] = res_val;
+                        stack[stack_top_ - 1] = res_val;
                         break;
                     }
 
                     case 0xBB: {
                         // f64.promote_f32
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.f64 = 0;
-                        stack_[stack_top_ - 1].value.f64 = static_cast<double>(val.value.f32);
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.f64 = 0;
+                        stack[stack_top_ - 1].value.f64 = static_cast<double>(val.value.f32);
                         break;
                     }
 
@@ -4118,7 +4118,7 @@ namespace embwasm {
                         uint8_t reserved = *ip++;
                         (void) reserved;
                         int32_t pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
-                        stack_[stack_top_++].value.i32 = pages;
+                        stack[stack_top_++].value.i32 = pages;
                         if (stack_top_ > max_stack_depth_) {
                             max_stack_depth_ = stack_top_;
                         }
@@ -4129,10 +4129,10 @@ namespace embwasm {
                         // memory.grow
                         uint8_t reserved = *ip++;
                         (void) reserved;
-                        uint32_t delta_pages = static_cast<uint32_t>(stack_[stack_top_ - 1].value.i32);
+                        uint32_t delta_pages = static_cast<uint32_t>(stack[stack_top_ - 1].value.i32);
                         int32_t prev_pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
                         if (delta_pages == 0) {
-                            stack_[stack_top_ - 1].value.i32 = prev_pages;
+                            stack[stack_top_ - 1].value.i32 = prev_pages;
                             break;
                         }
                         uint64_t new_pages = static_cast<uint64_t>(prev_pages) + delta_pages;
@@ -4140,7 +4140,7 @@ namespace embwasm {
                                                   (new_pages > max_linear_memory_pages);
                         uint64_t new_size_bytes = new_pages * 65536;
                         if (new_pages > 65536 || exceeds_module_max || new_size_bytes > kMaxLinearMemorySize) {
-                            stack_[stack_top_ - 1].value.i32 = -1;
+                            stack[stack_top_ - 1].value.i32 = -1;
                         } else if (new_size_bytes <= linear_memory_capacity) {
                             // 既存バッファ内に収まる場合
                             std::memset(linear_memory_ptr + linear_memory_size, 0,
@@ -4153,7 +4153,7 @@ namespace embwasm {
                                     modules_[_m]->linear_memory_size = static_cast<std::size_t>(new_size_bytes);
                                 }
                             }
-                            stack_[stack_top_ - 1].value.i32 = prev_pages;
+                            stack[stack_top_ - 1].value.i32 = prev_pages;
                         } else {
                             // 容量不足: ダブリング戦略で再確保してデータをコピー
                             std::size_t new_cap = (linear_memory_capacity > 0)
@@ -4164,7 +4164,7 @@ namespace embwasm {
                             if (new_cap > kMaxLinearMemorySize) new_cap = kMaxLinearMemorySize;
                             uint8_t *new_mem = static_cast<uint8_t *>(pool_->Allocate(new_cap));
                             if (!new_mem) {
-                                stack_[stack_top_ - 1].value.i32 = -1;
+                                stack[stack_top_ - 1].value.i32 = -1;
                             } else {
                                 if (linear_memory_ptr && linear_memory_size > 0) {
                                     std::memcpy(new_mem, linear_memory_ptr, linear_memory_size);
@@ -4190,7 +4190,7 @@ namespace embwasm {
                                 if (old_mem) {
                                     pool_->Free(old_mem);
                                 }
-                                stack_[stack_top_ - 1].value.i32 = prev_pages;
+                                stack[stack_top_ - 1].value.i32 = prev_pages;
                             }
                         }
                         break;
@@ -4198,24 +4198,24 @@ namespace embwasm {
 
                     case 0x68: {
                         // i32.ctz
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountTrailingZeros32(
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountTrailingZeros32(
                             static_cast<uint32_t>(val.value.i32)));
                         break;
                     }
 
                     case 0x69: {
                         // i32.popcnt
-                        WasmValue val = stack_[stack_top_ - 1];
-                        stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(PopCount32(
+                        WasmValue val = stack[stack_top_ - 1];
+                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(PopCount32(
                             static_cast<uint32_t>(val.value.i32)));
                         break;
                     }
 
                     case 0x6F: {
                         // i32.rem_s
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         if (b.value.i32 == 0) return OnRuntimeError();
                         int32_t res = 0;
                         if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) {
@@ -4223,94 +4223,94 @@ namespace embwasm {
                         } else {
                             res = a.value.i32 % b.value.i32;
                         }
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
                     case 0x70: {
                         // i32.rem_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         if (b.value.i32 == 0) return OnRuntimeError();
                         uint32_t ua = static_cast<uint32_t>(a.value.i32);
                         uint32_t ub = static_cast<uint32_t>(b.value.i32);
                         int32_t res = static_cast<int32_t>(ua % ub);
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
                     case 0x77: {
                         // i32.rotl
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         int32_t res = static_cast<int32_t>(Rotl32(static_cast<uint32_t>(a.value.i32),
                                                                   static_cast<uint32_t>(b.value.i32)));
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
                     case 0x78: {
                         // i32.rotr
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         int32_t res = static_cast<int32_t>(Rotr32(static_cast<uint32_t>(a.value.i32),
                                                                   static_cast<uint32_t>(b.value.i32)));
-                        stack_[stack_top_++].value.i32 = res;
+                        stack[stack_top_++].value.i32 = res;
                         break;
                     }
 
                     case 0x79: {
                         // i64.clz
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         int64_t res = static_cast<int64_t>(CountLeadingZeros64(static_cast<uint64_t>(val.value.i64)));
-                        stack_[stack_top_ - 1].value.i64 = res;
+                        stack[stack_top_ - 1].value.i64 = res;
                         break;
                     }
 
                     case 0x7A: {
                         // i64.ctz
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         int64_t res = static_cast<int64_t>(CountTrailingZeros64(static_cast<uint64_t>(val.value.i64)));
-                        stack_[stack_top_ - 1].value.i64 = res;
+                        stack[stack_top_ - 1].value.i64 = res;
                         break;
                     }
 
                     case 0x7B: {
                         // i64.popcnt
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         int64_t res = static_cast<int64_t>(PopCount64(static_cast<uint64_t>(val.value.i64)));
-                        stack_[stack_top_ - 1].value.i64 = res;
+                        stack[stack_top_ - 1].value.i64 = res;
                         break;
                     }
 
                     case 0x7F: {
                         // i64.div_s
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         if (b.value.i64 == 0) return OnRuntimeError();
                         if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) return
                                 OnRuntimeError();
                         int64_t res = a.value.i64 / b.value.i64;
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
                     case 0x80: {
                         // i64.div_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         if (b.value.i64 == 0) return OnRuntimeError();
                         uint64_t ua = static_cast<uint64_t>(a.value.i64);
                         uint64_t ub = static_cast<uint64_t>(b.value.i64);
                         int64_t res = static_cast<int64_t>(ua / ub);
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
                     case 0x81: {
                         // i64.rem_s
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         if (b.value.i64 == 0) return OnRuntimeError();
                         int64_t res = 0;
                         if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) {
@@ -4318,39 +4318,39 @@ namespace embwasm {
                         } else {
                             res = a.value.i64 % b.value.i64;
                         }
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
                     case 0x82: {
                         // i64.rem_u
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         if (b.value.i64 == 0) return OnRuntimeError();
                         uint64_t ua = static_cast<uint64_t>(a.value.i64);
                         uint64_t ub = static_cast<uint64_t>(b.value.i64);
                         int64_t res = static_cast<int64_t>(ua % ub);
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
                     case 0x89: {
                         // i64.rotl
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         int64_t res = static_cast<int64_t>(Rotl64(static_cast<uint64_t>(a.value.i64),
                                                                   static_cast<uint64_t>(b.value.i64)));
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
                     case 0x8A: {
                         // i64.rotr
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         int64_t res = static_cast<int64_t>(Rotr64(static_cast<uint64_t>(a.value.i64),
                                                                   static_cast<uint64_t>(b.value.i64)));
-                        stack_[stack_top_++].value.i64 = res;
+                        stack[stack_top_++].value.i64 = res;
                         break;
                     }
 
@@ -4362,7 +4362,7 @@ namespace embwasm {
                     case 0x90: // f32.nearest
                     case 0x91: {
                         // f32.sqrt
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         float res = 0.0f;
                         switch (op) {
                             case 0x8B: res = std::fabs(val.value.f32);
@@ -4380,8 +4380,8 @@ namespace embwasm {
                             case 0x91: res = std::sqrt(val.value.f32);
                                 break;
                         }
-                        stack_[stack_top_ - 1].value.f32 = 0;
-                        stack_[stack_top_ - 1].value.f32 = res;
+                        stack[stack_top_ - 1].value.f32 = 0;
+                        stack[stack_top_ - 1].value.f32 = res;
                         break;
                     }
 
@@ -4389,8 +4389,8 @@ namespace embwasm {
                     case 0x97: // f32.max
                     case 0x98: {
                         // f32.copysign
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         float res = 0.0f;
                         if (op == 0x96) {
                             // min
@@ -4416,7 +4416,7 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f32 = res;
-                        stack_[stack_top_++] = result_val;
+                        stack[stack_top_++] = result_val;
                         break;
                     }
 
@@ -4428,7 +4428,7 @@ namespace embwasm {
                     case 0x9E: // f64.nearest
                     case 0x9F: {
                         // f64.sqrt
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         double res = 0.0;
                         switch (op) {
                             case 0x99: res = std::fabs(val.value.f64);
@@ -4446,8 +4446,8 @@ namespace embwasm {
                             case 0x9F: res = std::sqrt(val.value.f64);
                                 break;
                         }
-                        stack_[stack_top_ - 1].value.f64 = 0;
-                        stack_[stack_top_ - 1].value.f64 = res;
+                        stack[stack_top_ - 1].value.f64 = 0;
+                        stack[stack_top_ - 1].value.f64 = res;
                         break;
                     }
 
@@ -4455,8 +4455,8 @@ namespace embwasm {
                     case 0xA5: // f64.max
                     case 0xA6: {
                         // f64.copysign
-                        WasmValue b = stack_[--stack_top_];
-                        WasmValue a = stack_[--stack_top_];
+                        WasmValue b = stack[--stack_top_];
+                        WasmValue a = stack[--stack_top_];
                         double res = 0.0;
                         if (op == 0xA4) {
                             // min
@@ -4482,80 +4482,80 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f64 = res;
-                        stack_[stack_top_++] = result_val;
+                        stack[stack_top_++] = result_val;
                         break;
                     }
 
                     case 0xBC: {
                         // i32.reinterpret_f32
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         int32_t bits;
                         std::memcpy(&bits, &val.value.f32, 4);
-                        stack_[stack_top_ - 1].value.i32 = bits;
+                        stack[stack_top_ - 1].value.i32 = bits;
                         break;
                     }
 
                     case 0xBD: {
                         // i64.reinterpret_f64
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         int64_t bits;
                         std::memcpy(&bits, &val.value.f64, 8);
-                        stack_[stack_top_ - 1].value.i64 = bits;
+                        stack[stack_top_ - 1].value.i64 = bits;
                         break;
                     }
 
                     case 0xBE: {
                         // f32.reinterpret_i32
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         float bits;
                         std::memcpy(&bits, &val.value.i32, 4);
-                        stack_[stack_top_ - 1].value.f32 = 0;
-                        stack_[stack_top_ - 1].value.f32 = bits;
+                        stack[stack_top_ - 1].value.f32 = 0;
+                        stack[stack_top_ - 1].value.f32 = bits;
                         break;
                     }
 
                     case 0xBF: {
                         // f64.reinterpret_i64
-                        WasmValue val = stack_[stack_top_ - 1];
+                        WasmValue val = stack[stack_top_ - 1];
                         double bits;
                         std::memcpy(&bits, &val.value.i64, 8);
-                        stack_[stack_top_ - 1].value.f64 = 0;
-                        stack_[stack_top_ - 1].value.f64 = bits;
+                        stack[stack_top_ - 1].value.f64 = 0;
+                        stack[stack_top_ - 1].value.f64 = bits;
                         break;
                     }
 
                     // Sign extension opcodes (sign extension proposal)
                     case 0xC0: {
                         // i32.extend8_s
-                        int32_t v = stack_[stack_top_ - 1].value.i32;
-                        stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int8_t>(v & 0xFF));
+                        int32_t v = stack[stack_top_ - 1].value.i32;
+                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int8_t>(v & 0xFF));
                         break;
                     }
                     case 0xC1: {
                         // i32.extend16_s
-                        int32_t v = stack_[stack_top_ - 1].value.i32;
-                        stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int16_t>(v & 0xFFFF));
+                        int32_t v = stack[stack_top_ - 1].value.i32;
+                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int16_t>(v & 0xFFFF));
                         break;
                     }
                     case 0xC2: {
                         // i64.extend8_s
-                        int64_t v = stack_[stack_top_ - 1].value.i64;
+                        int64_t v = stack[stack_top_ - 1].value.i64;
                         int64_t res = static_cast<int64_t>(static_cast<int8_t>(v & 0xFF));
-                        stack_[stack_top_ - 1].value.i64 = res;
+                        stack[stack_top_ - 1].value.i64 = res;
                         break;
                     }
                     case 0xC3: {
                         // i64.extend16_s
-                        int64_t v = stack_[stack_top_ - 1].value.i64;
+                        int64_t v = stack[stack_top_ - 1].value.i64;
                         int64_t res = static_cast<int64_t>(static_cast<int16_t>(v & 0xFFFF));
-                        stack_[stack_top_ - 1].value.i64 = res;
+                        stack[stack_top_ - 1].value.i64 = res;
                         break;
                     }
                     case 0xC4: {
                         // i64.extend32_s
-                        int64_t v = stack_[stack_top_ - 1].value.i64;
+                        int64_t v = stack[stack_top_ - 1].value.i64;
                         int64_t res = static_cast<int64_t>(static_cast<int32_t>(v & 0xFFFFFFFFULL));
-                        stack_[stack_top_ - 1].value.i64 = res;
+                        stack[stack_top_ - 1].value.i64 = res;
                         break;
                     }
 
@@ -4565,14 +4565,14 @@ namespace embwasm {
                         (void) heap_type;
                         WasmValue ref_val = {};
                         ref_val.value.i64 = -1;
-                        stack_[stack_top_++] = ref_val;
+                        stack[stack_top_++] = ref_val;
                         break;
                     }
 
                     // ref.is_null (0xD1)
                     case 0xD1: {
-                        int64_t ptr_val = stack_[--stack_top_].value.i64;
-                        stack_[stack_top_++].value.i32 = ptr_val == -1 ? 1 : 0;
+                        int64_t ptr_val = stack[--stack_top_].value.i64;
+                        stack[stack_top_++].value.i32 = ptr_val == -1 ? 1 : 0;
                         break;
                     }
 
@@ -4581,7 +4581,7 @@ namespace embwasm {
                         uint32_t func_idx = DecodeVarUint32(ip, limit);
                         WasmValue ref_val = {};
                         ref_val.value.i64 = static_cast<int64_t>(func_idx);
-                        stack_[stack_top_++] = ref_val;
+                        stack[stack_top_++] = ref_val;
                         break;
                     }
 
@@ -4591,99 +4591,99 @@ namespace embwasm {
                         switch (sub_op) {
                             case 0: {
                                 // i32.trunc_sat_f32_s
-                                float fv = stack_[stack_top_ - 1].value.f32;
+                                float fv = stack[stack_top_ - 1].value.f32;
                                 int32_t res;
                                 if (std::isnan(fv)) { res = 0; } else if (fv >= 2147483648.0f) {
                                     res = static_cast<int32_t>(2147483647);
                                 } else if (fv < -2147483648.0f) { res = static_cast<int32_t>(0x80000000U); } else {
                                     res = static_cast<int32_t>(fv);
                                 }
-                                stack_[stack_top_ - 1].value.i32 = res;
+                                stack[stack_top_ - 1].value.i32 = res;
                                 break;
                             }
                             case 1: {
                                 // i32.trunc_sat_f32_u
-                                float fv = stack_[stack_top_ - 1].value.f32;
+                                float fv = stack[stack_top_ - 1].value.f32;
                                 uint32_t res;
                                 if (std::isnan(fv) || fv < 0.0f) { res = 0; } else if (fv >= 4294967296.0f) {
                                     res = 0xFFFFFFFFU;
                                 } else { res = static_cast<uint32_t>(fv); }
-                                stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(res);
+                                stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(res);
                                 break;
                             }
                             case 2: {
                                 // i32.trunc_sat_f64_s
-                                double dv = stack_[stack_top_ - 1].value.f64;
+                                double dv = stack[stack_top_ - 1].value.f64;
                                 int32_t res;
                                 if (std::isnan(dv)) { res = 0; } else if (dv >= 2147483648.0) {
                                     res = static_cast<int32_t>(2147483647);
                                 } else if (dv < -2147483648.0) { res = static_cast<int32_t>(0x80000000U); } else {
                                     res = static_cast<int32_t>(dv);
                                 }
-                                stack_[stack_top_ - 1].value.i32 = res;
+                                stack[stack_top_ - 1].value.i32 = res;
                                 break;
                             }
                             case 3: {
                                 // i32.trunc_sat_f64_u
-                                double dv = stack_[stack_top_ - 1].value.f64;
+                                double dv = stack[stack_top_ - 1].value.f64;
                                 uint32_t res;
                                 if (std::isnan(dv) || dv < 0.0) { res = 0; } else if (dv >= 4294967296.0) {
                                     res = 0xFFFFFFFFU;
                                 } else { res = static_cast<uint32_t>(dv); }
-                                stack_[stack_top_ - 1].value.i32 = static_cast<int32_t>(res);
+                                stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(res);
                                 break;
                             }
                             case 4: {
                                 // i64.trunc_sat_f32_s
-                                float fv = stack_[stack_top_ - 1].value.f32;
+                                float fv = stack[stack_top_ - 1].value.f32;
                                 int64_t res;
                                 if (std::isnan(fv)) { res = 0; } else if (fv >= 9223372036854775808.0f) {
                                     res = static_cast<int64_t>(0x7FFFFFFFFFFFFFFFLL);
                                 } else if (fv < -9223372036854775808.0f) {
                                     res = static_cast<int64_t>(0x8000000000000000ULL);
                                 } else { res = static_cast<int64_t>(fv); }
-                                stack_[stack_top_ - 1].value.i64 = res;
+                                stack[stack_top_ - 1].value.i64 = res;
                                 break;
                             }
                             case 5: {
                                 // i64.trunc_sat_f32_u
-                                float fv = stack_[stack_top_ - 1].value.f32;
+                                float fv = stack[stack_top_ - 1].value.f32;
                                 int64_t res;
                                 if (std::isnan(fv) || fv < 0.0f) { res = 0; } else if (fv >= 18446744073709551616.0f) {
                                     res = static_cast<int64_t>(0xFFFFFFFFFFFFFFFFULL);
                                 } else { res = static_cast<int64_t>(static_cast<uint64_t>(fv)); }
-                                stack_[stack_top_ - 1].value.i64 = res;
+                                stack[stack_top_ - 1].value.i64 = res;
                                 break;
                             }
                             case 6: {
                                 // i64.trunc_sat_f64_s
-                                double dv = stack_[stack_top_ - 1].value.f64;
+                                double dv = stack[stack_top_ - 1].value.f64;
                                 int64_t res;
                                 if (std::isnan(dv)) { res = 0; } else if (dv >= 9223372036854775808.0) {
                                     res = static_cast<int64_t>(0x7FFFFFFFFFFFFFFFLL);
                                 } else if (dv < -9223372036854775808.0) {
                                     res = static_cast<int64_t>(0x8000000000000000ULL);
                                 } else { res = static_cast<int64_t>(dv); }
-                                stack_[stack_top_ - 1].value.i64 = res;
+                                stack[stack_top_ - 1].value.i64 = res;
                                 break;
                             }
                             case 7: {
                                 // i64.trunc_sat_f64_u
-                                double dv = stack_[stack_top_ - 1].value.f64;
+                                double dv = stack[stack_top_ - 1].value.f64;
                                 int64_t res;
                                 if (std::isnan(dv) || dv < 0.0) { res = 0; } else if (dv >= 18446744073709551616.0) {
                                     res = static_cast<int64_t>(0xFFFFFFFFFFFFFFFFULL);
                                 } else { res = static_cast<int64_t>(static_cast<uint64_t>(dv)); }
-                                stack_[stack_top_ - 1].value.i64 = res;
+                                stack[stack_top_ - 1].value.i64 = res;
                                 break;
                             }
                             case 8: {
                                 // memory.init
                                 uint32_t data_idx = DecodeVarUint32(ip, limit);
                                 ip++; // memory index (0)
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                int32_t s = stack_[--stack_top_].value.i32;
-                                int32_t d = stack_[--stack_top_].value.i32;
+                                int32_t n = stack[--stack_top_].value.i32;
+                                int32_t s = stack[--stack_top_].value.i32;
+                                int32_t d = stack[--stack_top_].value.i32;
 
                                 if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                                 if (n == 0) {
@@ -4717,9 +4717,9 @@ namespace embwasm {
                                 // memory.copy
                                 ip++; // dst memory (0)
                                 ip++; // src memory (0)
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                int32_t s = stack_[--stack_top_].value.i32;
-                                int32_t d = stack_[--stack_top_].value.i32;
+                                int32_t n = stack[--stack_top_].value.i32;
+                                int32_t s = stack[--stack_top_].value.i32;
+                                int32_t d = stack[--stack_top_].value.i32;
 
                                 if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                                 if (n == 0) break;
@@ -4735,9 +4735,9 @@ namespace embwasm {
                             case 11: {
                                 // memory.fill
                                 ip++; // memory (0)
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                int32_t val = stack_[--stack_top_].value.i32;
-                                int32_t d = stack_[--stack_top_].value.i32;
+                                int32_t n = stack[--stack_top_].value.i32;
+                                int32_t val = stack[--stack_top_].value.i32;
+                                int32_t d = stack[--stack_top_].value.i32;
 
                                 if (n < 0 || d < 0) return OnRuntimeError();
                                 if (n == 0) break;
@@ -4753,9 +4753,9 @@ namespace embwasm {
                                 // table.init
                                 uint32_t elem_idx = DecodeVarUint32(ip, limit);
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                int32_t s = stack_[--stack_top_].value.i32;
-                                int32_t d = stack_[--stack_top_].value.i32;
+                                int32_t n = stack[--stack_top_].value.i32;
+                                int32_t s = stack[--stack_top_].value.i32;
+                                int32_t d = stack[--stack_top_].value.i32;
 
                                 if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                                 if (n == 0) {
@@ -4802,9 +4802,9 @@ namespace embwasm {
                                 // table.copy
                                 uint32_t dst_table = DecodeVarUint32(ip, limit);
                                 uint32_t src_table = DecodeVarUint32(ip, limit);
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                int32_t s = stack_[--stack_top_].value.i32;
-                                int32_t d = stack_[--stack_top_].value.i32;
+                                int32_t n = stack[--stack_top_].value.i32;
+                                int32_t s = stack[--stack_top_].value.i32;
+                                int32_t d = stack[--stack_top_].value.i32;
 
                                 if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
                                 if (n == 0) {
@@ -4830,29 +4830,29 @@ namespace embwasm {
                             case 15: {
                                 // table.grow
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                WasmValue init_val = stack_[--stack_top_];
+                                int32_t n = stack[--stack_top_].value.i32;
+                                WasmValue init_val = stack[--stack_top_];
 
                                 if (table_idx >= table_count) return OnRuntimeError();
                                 if (n < 0) {
-                                    stack_[stack_top_++].value.i32 = -1;
+                                    stack[stack_top_++].value.i32 = -1;
                                     break;
                                 }
                                 if (n == 0) {
-                                    stack_[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
+                                    stack[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                                     break;
                                 }
 
                                 uint32_t old_size = table_sizes[table_idx];
                                 uint64_t new_size = static_cast<uint64_t>(old_size) + n;
                                 if (new_size > table_max_sizes[table_idx]) {
-                                    stack_[stack_top_++].value.i32 = -1;
+                                    stack[stack_top_++].value.i32 = -1;
                                     break;
                                 }
                                 uint32_t *new_tbl = static_cast<uint32_t *>(pool_->
                                     Allocate(new_size * sizeof(uint32_t)));
                                 if (!new_tbl) {
-                                    stack_[stack_top_++].value.i32 = -1;
+                                    stack[stack_top_++].value.i32 = -1;
                                     break;
                                 }
 
@@ -4887,22 +4887,22 @@ namespace embwasm {
                                     }
                                 }
 
-                                stack_[stack_top_++].value.i32 = static_cast<int32_t>(old_size);
+                                stack[stack_top_++].value.i32 = static_cast<int32_t>(old_size);
                                 break;
                             }
                             case 16: {
                                 // table.size
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
                                 if (table_idx >= table_count) return OnRuntimeError();
-                                stack_[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
+                                stack[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                                 break;
                             }
                             case 17: {
                                 // table.fill
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                int32_t n = stack_[--stack_top_].value.i32;
-                                WasmValue val = stack_[--stack_top_];
-                                int32_t idx = stack_[--stack_top_].value.i32;
+                                int32_t n = stack[--stack_top_].value.i32;
+                                WasmValue val = stack[--stack_top_];
+                                int32_t idx = stack[--stack_top_].value.i32;
 
                                 if (n < 0 || idx < 0) return OnRuntimeError();
                                 if (n == 0) {
