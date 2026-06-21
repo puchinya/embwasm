@@ -23,7 +23,7 @@ WasmResult ThreadSpawn(
 
     uint32_t val = static_cast<uint32_t>(args[0].value.i32);
     WasmScheduler* scheduler = engine.GetScheduler();
-    if (!scheduler) return WasmResult::kErrorRuntimeError;
+    if (!scheduler) return WasmResult::kErrorExecuteRuntimeError;
 
     // スケジューラからエンジンを取得してインデックスを解決
     int32_t resolved_idx = -1;
@@ -111,15 +111,15 @@ WasmResult EventWait(
 {
     (void)results; (void)result_count;
     if (arg_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     uint32_t event_id = static_cast<uint32_t>(args[0].value.i32);
     WasmScheduler* scheduler = engine.GetScheduler();
-    if (!scheduler) return WasmResult::kErrorRuntimeError;
+    if (!scheduler) return WasmResult::kErrorExecuteRuntimeError;
 
     WasmThreadContext* current = scheduler->GetCurrentThreadContext();
-    if (!current) return WasmResult::kErrorRuntimeError;
+    if (!current) return WasmResult::kErrorExecuteRuntimeError;
 
     scheduler->WaitEvent(current->id, event_id);
 
@@ -142,7 +142,7 @@ WasmResult EventSignal(
 
     uint32_t event_id = static_cast<uint32_t>(args[0].value.i32);
     WasmScheduler* scheduler = engine.GetScheduler();
-    if (!scheduler) return WasmResult::kErrorRuntimeError;
+    if (!scheduler) return WasmResult::kErrorExecuteRuntimeError;
 
     scheduler->SignalEvent(event_id);
 

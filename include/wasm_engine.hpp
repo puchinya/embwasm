@@ -174,20 +174,18 @@ public:
     /// @param module_name_len  モジュール名の長さ（バイト数）。
     /// @param binary           WASM バイナリデータの先頭ポインタ。
     /// @param size             バイナリのバイト数。
-    /// @return 0 以上のインスタンス ID（成功）。負値のエラーコード（失敗）。
+    /// @return 0 以上のインスタンス ID（成功）。負値のエラーコード（失敗(WasmResult型)）。
     int32_t LoadModule(const char* module_name, std::size_t module_name_len, const uint8_t* binary, std::size_t size) noexcept;
 
     /// @brief すべてのモジュールをアンロードし、プール上のメモリを解放します。
     void UnloadAllModules() noexcept;
 
-    /// @brief WASM バイナリをロードする後方互換 API（"default" モジュールとして登録）。
+    /// @brief WASM バイナリをロードする。
     /// @param binary  WASM バイナリデータの先頭ポインタ。
     /// @param size    バイナリのバイト数。
-    /// @return kOk（成功）またはエラーコード。
-    WasmResult LoadModule(const uint8_t* binary, std::size_t size) noexcept {
-        int32_t r = LoadModule("default", 7, binary, size);
-        if (r >= 0) return WasmResult::kOk;
-        return static_cast<WasmResult>(r);
+    /// @return 0 以上のインスタンス ID（成功）。負値のエラーコード（失敗(WasmResult型)）。
+    int32_t LoadModule(const uint8_t* binary, std::size_t size) noexcept {
+        return LoadModule(nullptr, 0, binary, size);
     }
 
     /// @brief ロード済みの全 WASM モジュールのインポートを解決（インスタンス化）します。

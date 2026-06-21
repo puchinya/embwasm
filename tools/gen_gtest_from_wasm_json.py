@@ -87,6 +87,28 @@ def wasm_method_name(snake_name):
     }
     return ''.join(camel_map.get(p, p.capitalize()) for p in snake_name.split('_'))
 
+def build_invoke_args(args, test_lines):
+    """Invoke 引数リストをビルドし WasmValue args[] 行を追加する。(args_param, args_count_param) を返す。"""
+    if args:
+        arg_vals = []
+        for a in args:
+            t = a['type']
+            val = python_type_to_cpp(t, a['value'])
+            if "nan" in str(a['value']).lower() or "inf" in str(a['value']).lower():
+                factory_method = wasm_method_name(f"create_{t}_bits")
+            elif (t == "f32" or t == "f64") and "uint" in val:
+                factory_method = wasm_method_name(f"create_{t}_bits")
+            elif t in ["externref", "funcref"] and val != "nullptr":
+                factory_method = wasm_method_name(f"create_{t}")
+                val = f"reinterpret_cast<const void*>({val}ULL)"
+            else:
+                factory_method = wasm_method_name(f"create_{t}")
+            arg_vals.append(f'interpreter.{factory_method}({val})')
+        vals_str = ", ".join(arg_vals)
+        test_lines.append(f'        WasmValue args[] = {{ {vals_str} }};')
+        return "args", str(len(args))
+    return "nullptr", "0"
+
 def file_to_c_array(file_path):
     if not os.path.exists(file_path):
         return "0x00", 0
@@ -272,29 +294,7 @@ def process_combined_assets(input_dir, output_dir):
                             escaped_func_name = escape_wasm_string_literal(func_name)
                             test_lines.append(f'    {{ // Line {line_num}')
 
-                            if args:
-                                arg_vals = []
-                                for a in args:
-                                    t = a['type']
-                                    val = python_type_to_cpp(t, a['value'])
-
-                                    if "nan" in str(a['value']).lower() or "inf" in str(a['value']).lower():
-                                        factory_method = wasm_method_name(f"create_{t}_bits")
-                                    elif (t == "f32" or t == "f64") and "uint" in val:
-                                        factory_method = wasm_method_name(f"create_{t}_bits")
-                                    elif t in ["externref", "funcref"] and val != "nullptr":
-                                        factory_method = wasm_method_name(f"create_{t}")
-                                        val = f"reinterpret_cast<const void*>({val}ULL)"
-                                    else:
-                                        factory_method = wasm_method_name(f"create_{t}")
-
-                                    arg_vals.append(f'interpreter.{factory_method}({val})')
-
-                                vals_str = ", ".join(arg_vals)
-                                test_lines.append(f'        WasmValue args[] = {{ {vals_str} }};')
-                                args_param, args_count_param = "args", str(len(args))
-                            else:
-                                args_param, args_count_param = "nullptr", "0"
+                            args_param, args_count_param = build_invoke_args(args, test_lines)
 
                             action_module = action.get("module")
                             if action_module:
@@ -324,6 +324,73 @@ def process_combined_assets(input_dir, output_dir):
                             else:
                                 test_lines.append(f'        ASSERT_EQ(0, {invoke_base}, nullptr));')
 
+                            test_lines.append('    }')
+
+                        elif action.get("type") == "get":
+                            field_name = action.get("field")
+                            module_name = action.get("module")
+                            expected = cmd.get("expected", [])
+                            if expected:
+                                exp = expected[0]
+                                exp_type = exp['type']
+                                exp_val = python_type_to_cpp(exp_type, exp['value'])
+                                escaped_field = escape_wasm_string_literal(field_name)
+                                escaped_module = escape_wasm_string_literal(module_name) if module_name else "nullptr"
+                                test_lines.append(f'    {{ // Line {line_num}')
+                                test_lines.append(f'        WasmValue result = interpreter.GetGlobal({escaped_module}, {escaped_field});')
+                                if "f32" in exp_type or "f64" in exp_type:
+                                    if "nan" in str(exp['value']).lower():
+                                        test_lines.append(f'        EXPECT_TRUE(interpreter.{wasm_method_name("is_nan_" + exp_type)}(result));')
+                                    elif "uint" in exp_val or "inf" in str(exp['value']).lower():
+                                        test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.{wasm_method_name("to_" + exp_type + "_bits")}(result));')
+                                    else:
+                                        test_lines.append(f'        EXPECT_NEAR({exp_val}, interpreter.{wasm_method_name("to_" + exp_type)}(result), 1e-5);')
+                                elif exp_type in ["externref", "funcref"] and exp_val != "nullptr":
+                                    test_lines.append(f'        EXPECT_EQ(reinterpret_cast<void*>({exp_val}ULL), interpreter.{wasm_method_name("to_" + exp_type)}(result));')
+                                else:
+                                    test_lines.append(f'        EXPECT_EQ({exp_val}, interpreter.{wasm_method_name("to_" + exp_type)}(result));')
+                                test_lines.append('    }')
+
+                    elif cmd_type == "assert_trap":
+                        action = cmd.get("action", {})
+                        if action.get("type") == "invoke":
+                            func_name = action.get("field")
+                            args = action.get("args", [])
+                            escaped_func_name = escape_wasm_string_literal(func_name)
+                            test_lines.append(f'    {{ // Line {line_num} (assert_trap: {cmd.get("text", "")})')
+
+                            args_param, args_count_param = build_invoke_args(args, test_lines)
+
+                            action_module = action.get("module")
+                            if action_module:
+                                invoke_module_arg = escape_wasm_string_literal(action_module) + ", "
+                            else:
+                                invoke_module_arg = ""
+                            invoke_base = f'interpreter.Invoke({invoke_module_arg}{escaped_func_name}, {args_param}, {args_count_param}'
+
+                            test_lines.append(f'        EXPECT_NE(0, {invoke_base}, nullptr));')
+                            test_lines.append('    }')
+
+                    elif cmd_type in ["assert_unlinkable", "assert_uninstantiable"]:
+                        wasm_filename = cmd.get("filename")
+                        if wasm_filename:
+                            if wasm_filename not in local_wasm_map:
+                                wasm_full_path = os.path.join(json_dir, wasm_filename)
+                                array_str, array_size = file_to_c_array(wasm_full_path)
+
+                                var_name = f"wasm_data_{global_wasm_idx}"
+                                size_name = f"wasm_size_{global_wasm_idx}"
+                                local_wasm_map[wasm_filename] = (var_name, size_name)
+                                global_wasm_idx += 1
+
+                                data_lines.append(f'// From {base_name}.json Line {line_num} ({wasm_filename})')
+                                data_lines.append(f'static const uint8_t {var_name}[] = {array_str};')
+                                data_lines.append(f'static const size_t {size_name} = {array_size};')
+                                data_lines.append('')
+
+                            var_name, size_name = local_wasm_map[wasm_filename]
+                            test_lines.append(f'    {{ // Line {line_num} ({cmd_type}: {cmd.get("text", "")})')
+                            test_lines.append(f'        EXPECT_LT(interpreter.LoadModuleExpectFailure({var_name}, {size_name}), 0);')
                             test_lines.append('    }')
 
                 test_lines.append('}')

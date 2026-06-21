@@ -47,21 +47,30 @@ struct WasmValue {
 enum class WasmResult : int32_t {
     kOk = 0,
     kYield = 1,                  ///< 実行を一時中断（協調スケジューラへ戻る）。
-    kErrorInvalidMagic = -1,     ///< WASM マジックナンバーが不正。
-    kErrorInvalidVersion = -2,   ///< WASM バージョンが非対応。
-    kErrorUnknownSection = -3,   ///< 未知のセクションを検出。
-    kErrorOutOfMemory = -4,      ///< メモリプールが枯渇。
-    kErrorValidationFailed = -5, ///< 事前検査失敗（型不整合・制限超過）。
-    kErrorModuleNotFound = -6, ///< 指定したモジュールが見つからない。
-    kErrorFunctionNotFound = -7, ///< 指定した関数が見つからない。
-    kErrorStackOverflow = -8,    ///< スタックオーバーフロー。
-    kErrorCallStackOverflow = -9,    ///< コールスタックオーバーフロー。
-    kErrorRuntimeError = -10,     ///< その他の実行時エラー。
-    kErrorTooManyModules = -11,   ///< ロード済みモジュール数が kMaxModules を超過。
-    kErrorLinearMemoryLimitExceeded = -12,    ///< エンジン設定の線形メモリサイズ制限値を超過。
-    kErrorInvalidArgument = -13, //< 引数えラー
-    kErrorParse = -14, //< WASM ファイルのパースエラー
-    kErrorLinking = -15 //< Importsのリンクエラー。
+
+    kErrorInvalidArgument = -1, ///< 引数エラー
+    kErrorInvalidOperation = -2, ///< 不正な操作
+    kErrorOutOfMemory = -3,      ///< メモリプールが枯渇。
+
+    kErrorModuleNotFound = -10, ///< 指定したモジュールが見つからない。
+    kErrorFunctionNotFound = -11, ///< 指定した関数が見つからない。
+    kErrorTooManyModules = -12,   ///< ロード済みモジュール数が kMaxModules を超過。
+
+    kErrorParseInvalidMagic = -20,     ///< WASM マジックナンバーが不正。
+    kErrorParseInvalidVersion = -21,   ///< WASM バージョンが非対応。
+    kErrorParseUnknownSection = -22,   ///< 未知のセクションを検出。
+    kErrorParseOthers = -23,    ///< WASM ファイルのパースエラー
+
+    kErrorValidationFailed = -30, ///< 事前検査失敗（型不整合・制限超過）。
+
+    kErrorLinking = -40, ///< Importsのリンクエラー。
+
+    kErrorInstantiate = -50, ///< インスタンス生成エラー。
+
+    kErrorExecuteStackOverflow = -60,    ///< スタックオーバーフロー。
+    kErrorExecuteCallStackOverflow = -61,    ///< コールスタックオーバーフロー。
+    kErrorExecuteRuntimeError = -62,     ///< その他の実行時エラー。
+    kErrorLinearMemoryLimitExceeded = -63,    ///< エンジン設定の線形メモリサイズ制限値を超過。
 };
 
 /// @brief ホスト関数のシグネチャ型。

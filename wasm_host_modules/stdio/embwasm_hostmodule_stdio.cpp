@@ -17,7 +17,7 @@ WasmResult Printf(
     // fmt (string) -> ptr, len (2 arguments)
     // args (list<s32>) -> ptr, len (2 arguments)
     if (arg_count < 4) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     uint32_t fmt_ptr = args[0].value.i32;
@@ -30,7 +30,7 @@ WasmResult Printf(
 
     // Bounds checking
     if (fmt_ptr + fmt_len > mem_size || list_ptr + list_len * sizeof(int32_t) > mem_size) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const char* fmt = reinterpret_cast<const char*>(mem + fmt_ptr);
@@ -148,7 +148,7 @@ WasmResult Puts(
 {
     // s (string) -> ptr, len (2 arguments)
     if (arg_count < 2) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     uint32_t str_ptr = args[0].value.i32;
@@ -158,7 +158,7 @@ WasmResult Puts(
     size_t mem_size = engine.GetLinearMemorySize();
 
     if (str_ptr + str_len > mem_size) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const char* s = reinterpret_cast<const char*>(mem + str_ptr);

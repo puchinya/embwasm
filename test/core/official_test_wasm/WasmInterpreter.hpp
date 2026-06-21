@@ -17,6 +17,12 @@ private:
 
     uint8_t *pool_buf_;
 
+    void InstantiateAll() {
+        embwasm::WasmResult res = engine_.InstantiateModules();
+        if (res != embwasm::WasmResult::kOk)
+            std::printf("InstantiateModules failed: %d\n", static_cast<int>(res));
+    }
+
     void ReloadSpectest() {
         static const uint8_t kSpectestWasm[] = {
             // magic + version
@@ -111,8 +117,29 @@ public:
         int32_t id = engine_.LoadModule(module_name, name_len, bytes, size);
         if (id < 0) {
             std::printf("LoadModule failed with error code: %d\n", -id);
+            return id;
+        }
+        embwasm::WasmResult res = engine_.InstantiateModules();
+        if (res != embwasm::WasmResult::kOk) {
+            std::printf("InstantiateModules failed with error code: %d\n", static_cast<int>(res));
+            return static_cast<int32_t>(res);
         }
         return id;
+    }
+
+    int32_t LoadModuleExpectFailure(const uint8_t* bytes, size_t size) {
+        int32_t id = engine_.LoadModule(nullptr, 0, bytes, size);
+        if (id < 0) return id;
+        embwasm::WasmResult res = engine_.InstantiateModules();
+        if (res == embwasm::WasmResult::kOk) return 0;
+        // Keep is_active = true so any func refs written into shared tables
+        // during partial instantiation remain callable (WASM MVP semantics).
+        // Set is_instantiated = true to prevent retry.
+        embwasm::WasmModuleInstance* mod = engine_.GetModuleInstanceById(id);
+        if (mod) {
+            mod->is_instantiated = true;
+        }
+        return static_cast<int32_t>(res);
     }
 
     void RegisterModule(const char* alias_name) {
@@ -212,6 +239,45 @@ public:
     int32_t Invoke(const char (&module_name)[N], const char (&func_name)[M],
                    const WasmValue* args, size_t args_count, WasmValue* out_result) {
         return InvokeInternal(module_name, N - 1, func_name, M - 1, args, args_count, out_result);
+    }
+
+    WasmValue GetGlobalInternal(const char* module_name, size_t module_name_len,
+                                const char* field_name, size_t field_name_len,
+                                int depth = 0) {
+        WasmValue v = {};
+        if (depth > 8) return v;
+        const embwasm::WasmModuleInstance* mod =
+            engine_.GetModuleInstance(module_name, module_name_len);
+        if (!mod) return v;
+        for (size_t i = 0; i < mod->export_count; ++i) {
+            const auto& exp = mod->exports[i];
+            if (exp.kind == 3 && exp.name_len == field_name_len &&
+                std::memcmp(exp.name, field_name, field_name_len) == 0) {
+                if (exp.index >= mod->global_count) return v;
+                // If this global index corresponds to an imported global,
+                // follow the import chain to get the live value from the source.
+                for (size_t j = 0; j < mod->import_count; ++j) {
+                    const auto& imp = mod->imports[j];
+                    if (imp.kind == 3 && imp.index == exp.index) {
+                        return GetGlobalInternal(imp.module_name, imp.module_name_len,
+                                                 imp.field_name, imp.field_name_len,
+                                                 depth + 1);
+                    }
+                }
+                return mod->globals[exp.index].value;
+            }
+        }
+        return v;
+    }
+
+    template <size_t N, size_t M>
+    WasmValue GetGlobal(const char (&module_name)[N], const char (&field_name)[M]) {
+        return GetGlobalInternal(module_name, N - 1, field_name, M - 1);
+    }
+
+    template <size_t M>
+    WasmValue GetGlobal(std::nullptr_t, const char (&field_name)[M]) {
+        return GetGlobalInternal(nullptr, 0, field_name, M - 1);
     }
 
     void UnloadAll() {

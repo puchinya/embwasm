@@ -21,7 +21,7 @@ WasmResult PrintVal(
     (void)result_count;
 
     if (arg_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     g_last_printed_value = args[0].value.i32;
@@ -41,7 +41,7 @@ WasmResult PrintChar(
     (void)result_count;
 
     if (arg_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     g_last_printed_char = static_cast<char>(args[0].value.i32);

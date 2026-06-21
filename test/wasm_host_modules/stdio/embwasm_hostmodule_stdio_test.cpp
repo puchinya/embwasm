@@ -31,7 +31,7 @@ protected:
     void SetUp() override {
         pool_.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
         engine_.Init(pool_);
-        ASSERT_EQ(engine_.LoadModule(kWasmMemBinaryForStdioTest, sizeof(kWasmMemBinaryForStdioTest)), embwasm::WasmResult::kOk);
+        ASSERT_GE(engine_.LoadModule(kWasmMemBinaryForStdioTest, sizeof(kWasmMemBinaryForStdioTest)), 0);
         ASSERT_EQ(engine_.InstantiateModules(), embwasm::WasmResult::kOk);
         mem_ = engine_.GetLinearMemory();
         mem_size_ = engine_.GetLinearMemorySize();
@@ -92,7 +92,7 @@ TEST_F(WasmHostModuleStdioTest, PutsExecution) {
         oob_args, 2,
         results, 1
     );
-    EXPECT_EQ(res_oob, embwasm::WasmResult::kErrorRuntimeError);
+    EXPECT_EQ(res_oob, embwasm::WasmResult::kErrorExecuteRuntimeError);
 }
 
 // 3. Printf のテスト
@@ -172,5 +172,5 @@ TEST_F(WasmHostModuleStdioTest, PrintfOmissionAndOOB) {
         oob_args, 4,
         nullptr, 0
     );
-    EXPECT_EQ(res_oob, embwasm::WasmResult::kErrorRuntimeError);
+    EXPECT_EQ(res_oob, embwasm::WasmResult::kErrorExecuteRuntimeError);
 }

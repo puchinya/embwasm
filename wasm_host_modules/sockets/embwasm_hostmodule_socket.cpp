@@ -201,7 +201,7 @@ WasmResult SocketCreate(WasmEngine& engine,
                         WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 3 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int domain   = args[0].value.i32;
@@ -231,7 +231,7 @@ WasmResult SocketClose(WasmEngine& engine,
                        WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 1 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle = args[0].value.i32;
@@ -256,7 +256,7 @@ WasmResult SocketBind(WasmEngine& engine,
                       const WasmValue* args, uint32_t arg_count,
                       WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 3 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle   = args[0].value.i32;
@@ -289,7 +289,7 @@ WasmResult SocketListen(WasmEngine& engine,
                         WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 2 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle  = args[0].value.i32;
@@ -315,7 +315,7 @@ WasmResult SocketAccept(WasmEngine& engine,
                         const WasmValue* args, uint32_t arg_count,
                         WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 3 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle          = args[0].value.i32;
@@ -362,7 +362,7 @@ WasmResult SocketConnect(WasmEngine& engine,
                          const WasmValue* args, uint32_t arg_count,
                          WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 3 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle   = args[0].value.i32;
@@ -397,7 +397,7 @@ WasmResult SocketSend(WasmEngine& engine,
                       const WasmValue* args, uint32_t arg_count,
                       WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 4 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle  = args[0].value.i32;
@@ -432,7 +432,7 @@ WasmResult SocketRecv(WasmEngine& engine,
                       const WasmValue* args, uint32_t arg_count,
                       WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 4 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle  = args[0].value.i32;
@@ -463,7 +463,7 @@ WasmResult SocketSendTo(WasmEngine& engine,
                         const WasmValue* args, uint32_t arg_count,
                         WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 6 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle   = args[0].value.i32;
@@ -504,7 +504,7 @@ WasmResult SocketRecvFrom(WasmEngine& engine,
                           const WasmValue* args, uint32_t arg_count,
                           WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 6 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle         = args[0].value.i32;
@@ -548,7 +548,7 @@ WasmResult SocketSetOpt(WasmEngine& engine,
                         const WasmValue* args, uint32_t arg_count,
                         WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 5 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle    = args[0].value.i32;
@@ -583,7 +583,7 @@ WasmResult SocketGetOpt(WasmEngine& engine,
                         const WasmValue* args, uint32_t arg_count,
                         WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 5 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle      = args[0].value.i32;
@@ -623,7 +623,7 @@ WasmResult SocketSetNonBlocking(WasmEngine& engine,
                                 WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 2 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle      = args[0].value.i32;
@@ -647,7 +647,7 @@ WasmResult SocketPoll(WasmEngine& engine,
                       WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 3 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t handle     = args[0].value.i32;
@@ -672,7 +672,7 @@ WasmResult InetAddr(WasmEngine& engine,
                     const WasmValue* args, uint32_t arg_count,
                     WasmValue* results, uint32_t result_count) noexcept {
     if (arg_count < 1 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const int32_t str_ptr = args[0].value.i32;
@@ -710,7 +710,7 @@ WasmResult HostToNetShort(WasmEngine& engine,
                           WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 1 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const uint16_t host_short =
@@ -728,7 +728,7 @@ WasmResult NetToHostShort(WasmEngine& engine,
                           WasmValue* results, uint32_t result_count) noexcept {
     (void)engine;
     if (arg_count < 1 || result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     const uint16_t net_short =
@@ -746,7 +746,7 @@ WasmResult SocketGetLastError(WasmEngine& engine,
                               WasmValue* results, uint32_t result_count) noexcept {
     (void)engine; (void)args; (void)arg_count;
     if (result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     
