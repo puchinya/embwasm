@@ -221,9 +221,6 @@ public:
         embwasm::WasmResult run_res = engine_.Execute(
             module_name, module_name_len, func_name, func_name_len, args,
             static_cast<uint32_t>(args_count), &res, result_count);
-        if (run_res != embwasm::WasmResult::kOk) {
-            std::printf("Invoke failed with error code: %d\n", static_cast<int>(run_res));
-        }
 
         if (out_result != nullptr) *out_result = res;
         return static_cast<int32_t>(run_res);
