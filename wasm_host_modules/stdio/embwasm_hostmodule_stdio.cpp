@@ -8,33 +8,21 @@ namespace stdio {
 
 WasmResult Printf(
     WasmEngine& engine,
-    const WasmValue* args,
-    uint32_t arg_count,
-    WasmValue* results,
-    uint32_t result_count) noexcept
+    const char* fmt,
+    uint32_t fmt_len,
+    const int32_t* args,
+    uint32_t args_len) noexcept
 {
-    (void)results; (void)result_count;
-    // fmt (string) -> ptr, len (2 arguments)
-    // args (list<s32>) -> ptr, len (2 arguments)
-    if (arg_count < 4) {
-        return WasmResult::kErrorExecuteRuntimeError;
-    }
-
-    uint32_t fmt_ptr = args[0].value.i32;
-    uint32_t fmt_len = args[1].value.i32;
-    uint32_t list_ptr = args[2].value.i32;
-    uint32_t list_len = args[3].value.i32;
-
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem_base = engine.GetLinearMemory();
     size_t mem_size = engine.GetLinearMemorySize();
 
-    // Bounds checking
-    if (fmt_ptr + fmt_len > mem_size || list_ptr + list_len * sizeof(int32_t) > mem_size) {
+    // 境界チェック
+    ptrdiff_t fmt_off = reinterpret_cast<const uint8_t*>(fmt) - mem_base;
+    ptrdiff_t args_off = reinterpret_cast<const uint8_t*>(args) - mem_base;
+    if (fmt_off < 0 || static_cast<size_t>(fmt_off) + fmt_len > mem_size ||
+        (args_len > 0 && (args_off < 0 || static_cast<size_t>(args_off) + args_len * sizeof(int32_t) > mem_size))) {
         return WasmResult::kErrorExecuteRuntimeError;
     }
-
-    const char* fmt = reinterpret_cast<const char*>(mem + fmt_ptr);
-    const int32_t* format_args = reinterpret_cast<const int32_t*>(mem + list_ptr);
 
     uint32_t arg_idx = 0;
     for (uint32_t i = 0; i < fmt_len; ) {
@@ -44,29 +32,21 @@ WasmResult Printf(
                 i++;
                 continue;
             }
-            if (fmt[i+1] == '%') {
+            if (fmt[i + 1] == '%') {
                 std::putchar('%');
                 i += 2;
                 continue;
             }
 
-            // Parse flags, width, precision, modifiers
+            // フラグ・幅・精度・修飾子をスキャン
             uint32_t j = i + 1;
-            while (j < fmt_len && (fmt[j] == '-' || fmt[j] == '+' || fmt[j] == ' ' || fmt[j] == '#' || fmt[j] == '0')) {
-                j++;
-            }
-            while (j < fmt_len && (fmt[j] >= '0' && fmt[j] <= '9')) {
-                j++;
-            }
+            while (j < fmt_len && (fmt[j] == '-' || fmt[j] == '+' || fmt[j] == ' ' || fmt[j] == '#' || fmt[j] == '0')) j++;
+            while (j < fmt_len && (fmt[j] >= '0' && fmt[j] <= '9')) j++;
             if (j < fmt_len && fmt[j] == '.') {
                 j++;
-                while (j < fmt_len && (fmt[j] >= '0' && fmt[j] <= '9')) {
-                    j++;
-                }
+                while (j < fmt_len && (fmt[j] >= '0' && fmt[j] <= '9')) j++;
             }
-            while (j < fmt_len && (fmt[j] == 'h' || fmt[j] == 'l' || fmt[j] == 'z' || fmt[j] == 'j' || fmt[j] == 't')) {
-                j++;
-            }
+            while (j < fmt_len && (fmt[j] == 'h' || fmt[j] == 'l' || fmt[j] == 'z' || fmt[j] == 'j' || fmt[j] == 't')) j++;
 
             if (j >= fmt_len) {
                 std::putchar('%');
@@ -76,21 +56,15 @@ WasmResult Printf(
 
             char specifier = fmt[j];
 
-            // String parameter (%s)
             if (specifier == 's') {
-                if (arg_idx >= list_len) {
-                    i = j + 1;
-                    continue;
-                }
-                int32_t str_offset = format_args[arg_idx++];
+                if (arg_idx >= args_len) { i = j + 1; continue; }
+                int32_t str_offset = args[arg_idx++];
                 if (str_offset < 0 || static_cast<size_t>(str_offset) >= mem_size) {
                     std::printf("(null)");
                 } else {
-                    const char* s = reinterpret_cast<const char*>(mem + str_offset);
-                    // Print characters safely within linear memory bounds
+                    const char* s = reinterpret_cast<const char*>(mem_base + str_offset);
                     while (static_cast<size_t>(str_offset) < mem_size && *s) {
-                        std::putchar(*s);
-                        s++;
+                        std::putchar(*s++);
                         str_offset++;
                     }
                 }
@@ -98,27 +72,22 @@ WasmResult Printf(
                 continue;
             }
 
-            // Integer formats (%d, %i, %u, %x, %X, %c, %p)
-            if (specifier == 'd' || specifier == 'i' || specifier == 'u' || specifier == 'x' || specifier == 'X' || specifier == 'c' || specifier == 'p') {
-                if (arg_idx >= list_len) {
-                    i = j + 1;
-                    continue;
-                }
-                int32_t val = format_args[arg_idx++];
+            if (specifier == 'd' || specifier == 'i' || specifier == 'u' ||
+                specifier == 'x' || specifier == 'X' || specifier == 'c' || specifier == 'p') {
+                if (arg_idx >= args_len) { i = j + 1; continue; }
+                int32_t val = args[arg_idx++];
 
                 char sub_fmt[32];
                 size_t sub_len = j - i + 1;
                 if (sub_len < sizeof(sub_fmt)) {
                     std::memcpy(sub_fmt, &fmt[i], sub_len);
                     sub_fmt[sub_len] = '\0';
-
-                    if (specifier == 'p') {
+                    if (specifier == 'p')
                         std::printf(sub_fmt, reinterpret_cast<void*>(static_cast<uintptr_t>(val)));
-                    } else if (specifier == 'd' || specifier == 'i') {
+                    else if (specifier == 'd' || specifier == 'i')
                         std::printf(sub_fmt, static_cast<int>(val));
-                    } else {
+                    else
                         std::printf(sub_fmt, static_cast<unsigned int>(val));
-                    }
                 } else {
                     std::printf("%d", static_cast<int>(val));
                 }
@@ -126,7 +95,6 @@ WasmResult Printf(
                 continue;
             }
 
-            // Ignore unsupported specifiers (like float/double %f, %g)
             std::putchar('%');
             i++;
         } else {
@@ -141,38 +109,25 @@ WasmResult Printf(
 
 WasmResult Puts(
     WasmEngine& engine,
-    const WasmValue* args,
-    uint32_t arg_count,
-    WasmValue* results,
-    uint32_t result_count) noexcept
+    const char* s,
+    uint32_t s_len,
+    int32_t& out_result) noexcept
 {
-    // s (string) -> ptr, len (2 arguments)
-    if (arg_count < 2) {
-        return WasmResult::kErrorExecuteRuntimeError;
-    }
-
-    uint32_t str_ptr = args[0].value.i32;
-    uint32_t str_len = args[1].value.i32;
-
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem_base = engine.GetLinearMemory();
     size_t mem_size = engine.GetLinearMemorySize();
 
-    if (str_ptr + str_len > mem_size) {
+    ptrdiff_t offset = reinterpret_cast<const uint8_t*>(s) - mem_base;
+    if (offset < 0 || static_cast<size_t>(offset) + s_len > mem_size) {
         return WasmResult::kErrorExecuteRuntimeError;
     }
 
-    const char* s = reinterpret_cast<const char*>(mem + str_ptr);
-
-    for (uint32_t i = 0; i < str_len; ++i) {
+    for (uint32_t i = 0; i < s_len; ++i) {
         std::putchar(s[i]);
     }
     std::putchar('\n');
     std::fflush(stdout);
 
-    if (result_count >= 1) {
-        results[0].value.i32 = static_cast<int32_t>(str_len + 1);
-    }
-
+    out_result = static_cast<int32_t>(s_len + 1);
     return WasmResult::kOk;
 }
 

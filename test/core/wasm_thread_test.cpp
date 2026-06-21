@@ -87,30 +87,26 @@ TEST_F(WasmThreadTest, WaitSignaledEvent) {
 }
 
 TEST_F(WasmThreadTest, ThreadSpawnApi) {
-    WasmValue args[1] = {embwasm::WasmValue::FromI32(10)}; // func_idx = 10
-    WasmValue results[1];
-    WasmResult res = hostmodules::thread::ThreadSpawn(engine, args, 1, results, 1);
-    
+    int32_t out_result = 0;
+    WasmResult res = hostmodules::thread::ThreadSpawn(engine, nullptr, 0, out_result);
     EXPECT_EQ(res, WasmResult::kOk);
-    EXPECT_NE(results[0].value.i32, 0);
+    EXPECT_NE(out_result, 0);
 }
 
 TEST_F(WasmThreadTest, ThreadYieldApi) {
-    WasmResult res = hostmodules::thread::ThreadYield(engine, nullptr, 0, nullptr, 0);
+    WasmResult res = hostmodules::thread::ThreadYield(engine);
     EXPECT_EQ(res, WasmResult::kYield);
 }
 
 TEST_F(WasmThreadTest, EventWaitSignalApi) {
     (void)scheduler.CreateThread(0);
     uint32_t eid = scheduler.CreateEvent();
-    
-    WasmValue args[1] = {embwasm::WasmValue::FromI32(static_cast<int32_t>(eid))};
-    WasmResult res = hostmodules::thread::EventWait(engine, args, 1, nullptr, 0);
-    
+
+    WasmResult res = hostmodules::thread::EventWait(engine, static_cast<int32_t>(eid));
     EXPECT_EQ(res, WasmResult::kYield);
     EXPECT_EQ(scheduler.GetCurrentThreadContext()->state, ThreadState::kWaiting);
-    
-    res = hostmodules::thread::EventSignal(engine, args, 1, nullptr, 0);
+
+    res = hostmodules::thread::EventSignal(engine, static_cast<int32_t>(eid));
     EXPECT_EQ(res, WasmResult::kOk);
     EXPECT_EQ(scheduler.GetCurrentThreadContext()->state, ThreadState::kReady);
 }

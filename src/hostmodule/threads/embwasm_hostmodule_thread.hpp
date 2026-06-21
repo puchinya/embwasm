@@ -12,16 +12,15 @@ namespace hostmodules {
 namespace thread {
 
 #if EMBWASM_ENABLE_MULTITHREADING
-WasmResult ThreadSpawn(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
-WasmResult ThreadYield(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
-WasmResult EventWait(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
-WasmResult EventSignal(WasmEngine& engine, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+WasmResult ThreadSpawn(WasmEngine& engine, const char* name, uint32_t name_len, int32_t& out_result) noexcept;
+WasmResult ThreadYield(WasmEngine& engine) noexcept;
+WasmResult EventWait(WasmEngine& engine, int32_t event_id) noexcept;
+WasmResult EventSignal(WasmEngine& engine, int32_t event_id) noexcept;
 #else
-// マルチスレッド無効時はエラーを返すダミー実装をインラインまたは実装ファイルで提供する
-inline WasmResult ThreadSpawn(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
-inline WasmResult ThreadYield(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
-inline WasmResult EventWait(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
-inline WasmResult EventSignal(WasmEngine&, const WasmValue*, uint32_t, WasmValue*, uint32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult ThreadSpawn(WasmEngine&, const char*, uint32_t, int32_t&) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult ThreadYield(WasmEngine&) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult EventWait(WasmEngine&, int32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult EventSignal(WasmEngine&, int32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
 #endif
 
 } // namespace thread

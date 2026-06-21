@@ -471,6 +471,11 @@ namespace embwasm {
                             entry.module_name, entry.module_name_len,
                             entry.field_name, entry.field_name_len);
                         if (host_id != HostFunctionId::kInvalid) {
+                            if (entry.desc.func.type_index < mod->signature_count &&
+                                !ValidateHostFunctionType(host_id, &mod->signatures[entry.desc.func.type_index])) {
+                                result = WasmResult::kErrorLinking;
+                                break;
+                            }
                             func.kind = WasmFunctionKind::kHost;
                             func.host.host_func_id = host_id;
                             break;
@@ -2774,37 +2779,9 @@ namespace embwasm {
             }
 
             if (initial_func->kind == WasmFunctionKind::kHost) {
-                // ホストAPI (C++関数) の呼び出し（シグネチャに応じた完全なポップ・プッシュ実装）
-                const WasmTypeSignature &sig = signatures[initial_func->type_index];
-
-                // 引数の数だけスタックからポップ
-                if (ctx->stack_top < sig.param_count) {
-                    // デバッグのため、足りない分は0で埋める
-                    while (ctx->stack_top < sig.param_count) {
-                        ctx->stack[ctx->stack_top++] = WasmValue{};
-                    }
-                }
-
-                WasmValue call_args[WasmTypeSignature::kMaxParams];
-                // スタックはLIFOなので、ポップした引数は逆順に格納する
-                for (uint32_t i = 0; i < sig.param_count; ++i) {
-                    call_args[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
-                }
-
-                // 戻り値用の一時バッファ
-                WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-
-                WasmResult res = DispatchHostFunction(*this, initial_func->host.host_func_id, call_args,
-                                                      sig.param_count, call_results, sig.result_count);
+                WasmResult res = DispatchHostFunction(*this, initial_func->host.host_func_id, ctx);
                 if (res != WasmResult::kOk) return res;
-
-                // 実行結果をスタックにプッシュ
-                for (uint32_t i = 0; i < sig.result_count; ++i) {
-                    ctx->stack[ctx->stack_top++] = call_results[i];
-                    if (ctx->stack_top > max_stack_depth_) {
-                        max_stack_depth_ = ctx->stack_top;
-                    }
-                }
+                if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                 return WasmResult::kOk;
             }
 
@@ -3292,31 +3269,13 @@ namespace embwasm {
                         }
 
                         if (target_func->kind == WasmFunctionKind::kHost) {
-                            // ホスト関数の呼び出し
-                            const WasmTypeSignature &sig = call_mod->signatures[target_func->type_index];
-
-                            WasmValue call_args[WasmTypeSignature::kMaxParams];
-                            for (uint32_t i = 0; i < sig.param_count; ++i) {
-                                call_args[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
-                            }
-
-                            WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-                            WasmResult res = DispatchHostFunction(*this, target_func->host.host_func_id, call_args,
-                                                                  sig.param_count, call_results, sig.result_count);
-
-                            // Yield対応
+                            WasmResult res = DispatchHostFunction(*this, target_func->host.host_func_id, ctx);
                             if (res == WasmResult::kYield) {
                                 frame.ip = ip;
                                 return WasmResult::kYield;
                             }
                             if (res != WasmResult::kOk) return res;
-
-                            for (uint32_t i = 0; i < sig.result_count; ++i) {
-                                ctx->stack[ctx->stack_top++] = call_results[i];
-                                if (ctx->stack_top > max_stack_depth_) {
-                                    max_stack_depth_ = ctx->stack_top;
-                                }
-                            }
+                            if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         } else {
                             // 内部関数の実行（他モジュールの内部関数も含む）
                             if (ctx->call_stack_top >= kWasmCallStackSize) {
@@ -3418,23 +3377,13 @@ namespace embwasm {
                         }
 
                         if (target_func->kind == WasmFunctionKind::kHost) {
-                            const WasmTypeSignature &sig = target_module->signatures[target_func->type_index];
-                            WasmValue call_args[WasmTypeSignature::kMaxParams];
-                            for (uint32_t i = 0; i < sig.param_count; ++i) {
-                                call_args[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
-                            }
-                            WasmValue call_results[WasmTypeSignature::kMaxResults] = {};
-                            WasmResult res = DispatchHostFunction(*this, target_func->host.host_func_id, call_args,
-                                                                  sig.param_count, call_results, sig.result_count);
+                            WasmResult res = DispatchHostFunction(*this, target_func->host.host_func_id, ctx);
                             if (res == WasmResult::kYield) {
                                 frame.ip = ip;
                                 return WasmResult::kYield;
                             }
                             if (res != WasmResult::kOk) return res;
-                            for (uint32_t i = 0; i < sig.result_count; ++i) {
-                                ctx->stack[ctx->stack_top++] = call_results[i];
-                                if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
-                            }
+                            if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         } else {
                             if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorExecuteCallStackOverflow;
                             const WasmTypeSignature &sig = target_module->signatures[target_func->type_index];

@@ -6,29 +6,9 @@
 namespace embwasm {
 class WasmEngine;
 
-// 指定された数値をコンソールに出力するAPI
-WasmResult PrintVal(
-    WasmEngine& engine,
-    const WasmValue* args, 
-    uint32_t arg_count, 
-    WasmValue* results, 
-    uint32_t result_count) noexcept;
-
-// 指定された文字コードをコンソールに1文字出力するAPI
-WasmResult PrintChar(
-    WasmEngine& engine,
-    const WasmValue* args, 
-    uint32_t arg_count, 
-    WasmValue* results, 
-    uint32_t result_count) noexcept;
-
-// テスト用ダミーAPI
-WasmResult DummyHostFunc(
-    WasmEngine& engine,
-    const WasmValue* args, 
-    uint32_t arg_count, 
-    WasmValue* results, 
-    uint32_t result_count) noexcept;
+WasmResult PrintVal(WasmEngine& engine, int32_t val) noexcept;
+WasmResult PrintChar(WasmEngine& engine, int32_t character) noexcept;
+WasmResult DummyHostFunc(WasmEngine& engine) noexcept;
 
 extern int g_test_env_init_called;
 extern int g_test_env_deinit_called;

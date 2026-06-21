@@ -8,21 +8,18 @@ namespace embwasm {
 namespace hostmodules {
 namespace stdio {
 
-// printf のホストAPI実装
 WasmResult Printf(
     WasmEngine& engine,
-    const WasmValue* args,
-    uint32_t arg_count,
-    WasmValue* results,
-    uint32_t result_count) noexcept;
+    const char* fmt,
+    uint32_t fmt_len,
+    const int32_t* args,
+    uint32_t args_len) noexcept;
 
-// puts のホストAPI実装
 WasmResult Puts(
     WasmEngine& engine,
-    const WasmValue* args,
-    uint32_t arg_count,
-    WasmValue* results,
-    uint32_t result_count) noexcept;
+    const char* s,
+    uint32_t s_len,
+    int32_t& out_result) noexcept;
 
 } // namespace stdio
 } // namespace hostmodules

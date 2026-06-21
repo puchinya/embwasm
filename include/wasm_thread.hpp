@@ -69,6 +69,8 @@ struct WasmThreadContext {
     void Reset() noexcept {
         id = 0;
         state = ThreadState::kTerminated;
+        stack_top = 0;
+        call_stack_top = 0;
         locals_pool_top = 0;
         start_module = nullptr;
     }
