@@ -2589,9 +2589,6 @@ namespace embwasm {
                 return WasmResult::kErrorExecuteStackOverflow;
             }
             exec_ctx->stack[exec_ctx->stack_top++] = args[i];
-            if (exec_ctx->stack_top > max_stack_depth_) {
-                max_stack_depth_ = exec_ctx->stack_top;
-            }
         }
 
         WasmResult res = scheduler_.Run();
@@ -2629,9 +2626,6 @@ namespace embwasm {
                 return WasmResult::kErrorExecuteStackOverflow;
             }
             default_ctx.stack[default_ctx.stack_top++] = args[i];
-            if (default_ctx.stack_top > max_stack_depth_) {
-                max_stack_depth_ = default_ctx.stack_top;
-            }
         }
 
         WasmResult res = ExecuteInternal(mod, static_cast<uint32_t>(func_idx));
@@ -3469,9 +3463,6 @@ namespace embwasm {
                         // local.get <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
                         stack[stack_top_++] = locals[local_idx];
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
-                        }
                         break;
                     }
 
@@ -3700,9 +3691,6 @@ namespace embwasm {
                         // i32.const <value>
                         int32_t val = DecodeVarInt32(ip, limit);
                         stack[stack_top_++].value.i32 = val;
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
-                        }
                         break;
                     }
 
@@ -3710,9 +3698,6 @@ namespace embwasm {
                         // i64.const <value>
                         int64_t val = DecodeVarInt64(ip, limit);
                         stack[stack_top_++].value.i64 = val;
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
-                        }
                         break;
                     }
 
@@ -3720,9 +3705,6 @@ namespace embwasm {
                         // f32.const <value>
                         std::memcpy(&stack[stack_top_++].value.f32, ip, 4);
                         ip += 4;
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
-                        }
                         break;
                     }
 
@@ -3730,9 +3712,6 @@ namespace embwasm {
                         // f64.const <value>
                         std::memcpy(&stack[stack_top_++].value.f64, ip, 8);
                         ip += 8;
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
-                        }
                         break;
                     }
 
@@ -4200,9 +4179,6 @@ namespace embwasm {
                         (void) reserved;
                         int32_t pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
                         stack[stack_top_++].value.i32 = pages;
-                        if (stack_top_ > max_stack_depth_) {
-                            max_stack_depth_ = stack_top_;
-                        }
                         break;
                     }
 
