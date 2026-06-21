@@ -83,13 +83,6 @@ enum class WasmResult : int32_t {
 /// @param user_data    ホスト側が任意に設定できるユーザーデータポインタ。
 typedef WasmResult (*HostFunction)(const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count, void* user_data);
 
-/// @brief 静的ホスト API テーブルのエントリ。
-struct HostApiEntry {
-    const char* module_name; ///< インポートモジュール名（NULL 終端文字列）。
-    const char* field_name;  ///< インポートフィールド名（NULL 終端文字列）。
-    HostFunction function;   ///< 対応するホスト関数ポインタ。
-};
-
 /// @brief WASM 関数シグネチャ（引数型リスト＋戻り値型リスト）。
 ///
 /// 静的配列で保持し、動的メモリを使用しません。
@@ -101,6 +94,8 @@ struct WasmTypeSignature {
     uint32_t result_count;         ///< 実際の戻り値数。
     WasmType params[kMaxParams];   ///< 引数の型リスト。
     WasmType results[kMaxResults]; ///< 戻り値の型リスト。
+
+    static bool Equals(const WasmTypeSignature *x, const WasmTypeSignature *y);
 };
 
 /// @brief WASM インポートエントリ。

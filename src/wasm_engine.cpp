@@ -12,8 +12,16 @@
 #include "wasm_platform.hpp"
 #include <cstring>
 #include <cmath>
+#include <algorithm>
 
 namespace embwasm {
+
+    bool WasmTypeSignature::Equals(const WasmTypeSignature *x, const WasmTypeSignature *y) {
+        return x->param_count == y->param_count && x->result_count == y->result_count &&
+            std::equal(x->params, x->params + x->param_count, y->params) &&
+            std::equal(x->results, x->results + x->result_count, y->results);
+    }
+
     // =============================================================================
     // Helper Functions for Bitwise and Math operations
     // =============================================================================
@@ -482,12 +490,7 @@ namespace embwasm {
                                 if (type_ok) {
                                     const WasmTypeSignature& isig = mod->signatures[imp_tidx];
                                     const WasmTypeSignature& ssig = src_mod->signatures[src_tidx];
-                                    type_ok = (isig.param_count == ssig.param_count &&
-                                               isig.result_count == ssig.result_count);
-                                    for (uint32_t ti = 0; ti < isig.param_count && type_ok; ++ti)
-                                        if (isig.params[ti] != ssig.params[ti]) type_ok = false;
-                                    for (uint32_t ti = 0; ti < isig.result_count && type_ok; ++ti)
-                                        if (isig.results[ti] != ssig.results[ti]) type_ok = false;
+                                    type_ok = WasmTypeSignature::Equals(&isig, &ssig);
                                 }
                                 if (type_ok) func.import.resolved_func = rfunc;
                                 else result = WasmResult::kErrorLinking;
