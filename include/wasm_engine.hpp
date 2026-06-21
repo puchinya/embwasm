@@ -122,8 +122,9 @@ struct WasmModuleInstance {
     const uint8_t** data_segments;
     uint32_t* data_segment_sizes;
     bool* data_segment_dropped;
-    uint32_t* data_segment_offsets;   ///< アクティブセグメントのメモリオフセット。
-    bool* data_segment_is_active;     ///< true=アクティブ、false=パッシブ。
+    uint32_t* data_segment_offsets;              ///< アクティブセグメントのメモリオフセット。
+    uint32_t* data_segment_offset_global_refs;  ///< オフセット式が global.get のときのグローバルインデックス（0xFFFFFFFF = i32.const）。
+    bool* data_segment_is_active;               ///< true=アクティブ、false=パッシブ。
     std::size_t data_segment_count;
     std::size_t data_segment_capacity;
 
@@ -131,8 +132,9 @@ struct WasmModuleInstance {
     uint32_t* elem_segment_sizes;
     bool* elem_segment_dropped;
     uint32_t* elem_segment_table_indices; ///< アクティブセグメントのターゲットテーブル。
-    uint32_t* elem_segment_offsets;       ///< アクティブセグメントのテーブルオフセット。
-    bool* elem_segment_is_active;         ///< true=アクティブ、false=パッシブ/宣言的。
+    uint32_t* elem_segment_offsets;              ///< アクティブセグメントのテーブルオフセット。
+    uint32_t* elem_segment_offset_global_refs;  ///< オフセット式が global.get のときのグローバルインデックス（0xFFFFFFFF = i32.const）。
+    bool* elem_segment_is_active;               ///< true=アクティブ、false=パッシブ/宣言的。
     std::size_t elem_segment_count;
     std::size_t elem_segment_capacity;
 

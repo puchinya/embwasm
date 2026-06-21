@@ -345,6 +345,7 @@ namespace embwasm {
         m.data_segment_sizes = nullptr;
         m.data_segment_dropped = nullptr;
         m.data_segment_offsets = nullptr;
+        m.data_segment_offset_global_refs = nullptr;
         m.data_segment_is_active = nullptr;
         m.data_segment_count = 0;
         m.data_segment_capacity = 0;
@@ -353,6 +354,7 @@ namespace embwasm {
         m.elem_segment_dropped = nullptr;
         m.elem_segment_table_indices = nullptr;
         m.elem_segment_offsets = nullptr;
+        m.elem_segment_offset_global_refs = nullptr;
         m.elem_segment_is_active = nullptr;
         m.elem_segment_count = 0;
         m.elem_segment_capacity = 0;
@@ -596,6 +598,25 @@ namespace embwasm {
                 }
             }
 
+            // --- 1c. global.get を参照するセグメントオフセットを再評価 ---
+            // パース時点でインポートグローバルは 0 だったため、ResolveImports() 後に再計算する。
+            if (mod->data_segment_offset_global_refs) {
+                for (std::size_t d = 0; d < mod->data_segment_count; ++d) {
+                    uint32_t gref = mod->data_segment_offset_global_refs[d];
+                    if (gref != 0xFFFFFFFFu && gref < mod->global_count) {
+                        mod->data_segment_offsets[d] = static_cast<uint32_t>(mod->globals[gref].value.value.i32);
+                    }
+                }
+            }
+            if (mod->elem_segment_offset_global_refs) {
+                for (std::size_t e = 0; e < mod->elem_segment_count; ++e) {
+                    uint32_t gref = mod->elem_segment_offset_global_refs[e];
+                    if (gref != 0xFFFFFFFFu && gref < mod->global_count) {
+                        mod->elem_segment_offsets[e] = static_cast<uint32_t>(mod->globals[gref].value.value.i32);
+                    }
+                }
+            }
+
             // --- 2. 線形メモリのインスタンス化 ---
             // インポートメモリは ResolveImports() で解決済み。ここでは own メモリのみ確保する。
             if (mod->has_memory && !mod->is_memory_shared && mod->linear_memory_ptr == nullptr) {
@@ -773,6 +794,10 @@ namespace embwasm {
             pool_->Free(mod->data_segment_offsets);
             mod->data_segment_offsets = nullptr;
         }
+        if (mod->data_segment_offset_global_refs) {
+            pool_->Free(mod->data_segment_offset_global_refs);
+            mod->data_segment_offset_global_refs = nullptr;
+        }
         if (mod->data_segment_is_active) {
             pool_->Free(mod->data_segment_is_active);
             mod->data_segment_is_active = nullptr;
@@ -798,6 +823,10 @@ namespace embwasm {
         if (mod->elem_segment_offsets) {
             pool_->Free(mod->elem_segment_offsets);
             mod->elem_segment_offsets = nullptr;
+        }
+        if (mod->elem_segment_offset_global_refs) {
+            pool_->Free(mod->elem_segment_offset_global_refs);
+            mod->elem_segment_offset_global_refs = nullptr;
         }
         if (mod->elem_segment_is_active) {
             pool_->Free(mod->elem_segment_is_active);
@@ -1829,20 +1858,23 @@ namespace embwasm {
             mod->data_segments          = static_cast<const uint8_t **>(pool_->Allocate(counts.data_count * sizeof(const uint8_t *)));
             mod->data_segment_sizes     = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
             mod->data_segment_dropped   = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
-            mod->data_segment_offsets   = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_is_active = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
+            mod->data_segment_offsets              = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_offset_global_refs   = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_is_active            = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
             if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped ||
-                !mod->data_segment_offsets || !mod->data_segment_is_active) {
+                !mod->data_segment_offsets || !mod->data_segment_offset_global_refs || !mod->data_segment_is_active) {
                 return WasmResult::kErrorOutOfMemory;
             }
             std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t *));
             std::memset(mod->data_segment_sizes, 0, counts.data_count * sizeof(uint32_t));
             std::memset(mod->data_segment_dropped, 0, counts.data_count * sizeof(bool));
             std::memset(mod->data_segment_offsets, 0, counts.data_count * sizeof(uint32_t));
+            std::memset(mod->data_segment_offset_global_refs, 0xFF, counts.data_count * sizeof(uint32_t));
             std::memset(mod->data_segment_is_active, 0, counts.data_count * sizeof(bool));
         } else {
             mod->data_segments = nullptr; mod->data_segment_sizes = nullptr;
             mod->data_segment_dropped = nullptr; mod->data_segment_offsets = nullptr;
+            mod->data_segment_offset_global_refs = nullptr;
             mod->data_segment_is_active = nullptr;
         }
 
@@ -1853,10 +1885,12 @@ namespace embwasm {
             mod->elem_segment_sizes         = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
             mod->elem_segment_dropped       = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
             mod->elem_segment_table_indices = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_offsets       = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_is_active     = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
+            mod->elem_segment_offsets              = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_offset_global_refs   = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_is_active            = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
             if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped ||
-                !mod->elem_segment_table_indices || !mod->elem_segment_offsets || !mod->elem_segment_is_active) {
+                !mod->elem_segment_table_indices || !mod->elem_segment_offsets ||
+                !mod->elem_segment_offset_global_refs || !mod->elem_segment_is_active) {
                 return WasmResult::kErrorOutOfMemory;
             }
             std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t *));
@@ -1864,11 +1898,13 @@ namespace embwasm {
             std::memset(mod->elem_segment_dropped, 0, counts.elem_count * sizeof(bool));
             std::memset(mod->elem_segment_table_indices, 0, counts.elem_count * sizeof(uint32_t));
             std::memset(mod->elem_segment_offsets, 0, counts.elem_count * sizeof(uint32_t));
+            std::memset(mod->elem_segment_offset_global_refs, 0xFF, counts.elem_count * sizeof(uint32_t));
             std::memset(mod->elem_segment_is_active, 0, counts.elem_count * sizeof(bool));
         } else {
             mod->elem_segments = nullptr; mod->elem_segment_sizes = nullptr;
             mod->elem_segment_dropped = nullptr; mod->elem_segment_table_indices = nullptr;
-            mod->elem_segment_offsets = nullptr; mod->elem_segment_is_active = nullptr;
+            mod->elem_segment_offsets = nullptr; mod->elem_segment_offset_global_refs = nullptr;
+            mod->elem_segment_is_active = nullptr;
         }
 
         // =========================================================
@@ -2203,12 +2239,14 @@ namespace embwasm {
                             }
                             if (ptr >= section_end) return WasmResult::kErrorParse;
                             uint8_t opcode = *ptr++;
+                            uint32_t offset_global_ref = 0xFFFFFFFFu;
                             if (opcode == 0x41) {
                                 // i32.const
                                 offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
                             } else if (opcode == 0x23) {
                                 // global.get
                                 uint32_t gidx = DecodeVarUint32(ptr, section_end);
+                                offset_global_ref = gidx;
                                 if (gidx < glob_idx) {
                                     offset = static_cast<uint32_t>(globals[gidx].value.value.i32);
                                 }
@@ -2216,6 +2254,9 @@ namespace embwasm {
                                 return WasmResult::kErrorParse;
                             }
                             if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParse;
+                            if (mod->data_segment_offset_global_refs) {
+                                mod->data_segment_offset_global_refs[data_segment_count_] = offset_global_ref;
+                            }
                         }
 
                         uint32_t data_size = DecodeVarUint32(ptr, section_end);
@@ -2274,6 +2315,7 @@ namespace embwasm {
 
 
                         uint32_t offset = 0;
+                        uint32_t offset_global_ref = 0xFFFFFFFFu;
                         if (has_offset) {
                             uint8_t opcode = *ptr++;
                             if (opcode == 0x41) {
@@ -2282,6 +2324,7 @@ namespace embwasm {
                             } else if (opcode == 0x23) {
                                 // global.get
                                 uint32_t global_idx = DecodeVarUint32(ptr, section_end);
+                                offset_global_ref = global_idx;
                                 if (global_idx < glob_idx) {
                                     offset = globals[global_idx].value.value.i32;
                                 }
@@ -2344,6 +2387,7 @@ namespace embwasm {
                             elem_segment_dropped_[elem_segment_count_] = false;
                             mod->elem_segment_table_indices[elem_segment_count_] = table_idx;
                             mod->elem_segment_offsets[elem_segment_count_] = offset;
+                            mod->elem_segment_offset_global_refs[elem_segment_count_] = offset_global_ref;
                             mod->elem_segment_is_active[elem_segment_count_] = has_offset;
                             elem_segment_count_++;
                         } else {
