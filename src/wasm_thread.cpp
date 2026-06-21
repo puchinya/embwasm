@@ -48,6 +48,7 @@ uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_i
     main.stack_top = 0;
     main.call_stack_top = 0;
     main.locals_pool_top = 0;
+    main.labels_pool_top = 0;
     main.wait_event_id = func_index;
     main.start_module = mod;
     return main.id;
@@ -71,6 +72,7 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
             threads_[i]->state = ThreadState::kReady;
             threads_[i]->stack_top = 0;
             threads_[i]->call_stack_top = 0;
+            threads_[i]->labels_pool_top = 0;
             threads_[i]->wait_event_id = func_index;
 
             // 呼び出し元のモジュールを記録（初回ExecuteInternal用）

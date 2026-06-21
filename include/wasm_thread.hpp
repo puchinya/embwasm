@@ -32,7 +32,8 @@ struct WasmFrame {
     WasmValue* locals;        ///< `WasmThreadContext::locals_pool` 内のスライスへのポインタ。
     uint32_t total_locals;    ///< 引数＋ローカル変数の合計数。
 
-    WasmLabel labels[kMaxLabels]; ///< 制御フロー用ラベルスタック。
+    WasmLabel* labels;            ///< `WasmThreadContext::labels_pool` 内のスライスへのポインタ。
+    uint32_t label_capacity;      ///< このフレームに割り当てたラベルスロット数。
     std::size_t label_stack_top;  ///< ラベルスタックの現在深さ。
 };
 
@@ -62,6 +63,10 @@ struct WasmThreadContext {
     WasmValue locals_pool[kLocalsPoolSize];
     std::size_t locals_pool_top; ///< 現在の使用済み先頭インデックス。
 
+    /// @brief 全フレーム共有のラベルプール。フレームごとに必要数を切り出します。
+    WasmLabel labels_pool[kLabelsPoolSize];
+    std::size_t labels_pool_top; ///< 現在の使用済み先頭インデックス。
+
     uint32_t wait_event_id;        ///< 待機中のイベント ID（kWaiting 時のみ有効）。
     WasmModuleInstance* start_module; ///< 初回 `ExecuteInternal` に渡すモジュールインスタンス。
 
@@ -72,6 +77,7 @@ struct WasmThreadContext {
         stack_top = 0;
         call_stack_top = 0;
         locals_pool_top = 0;
+        labels_pool_top = 0;
         start_module = nullptr;
     }
 };

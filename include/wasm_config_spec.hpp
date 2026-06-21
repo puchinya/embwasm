@@ -46,6 +46,9 @@ constexpr std::size_t kLocalsPoolSize = 32768;
 // 1つの関数内の制御ブロック（block, loop, if）の最大ネスト数
 constexpr std::size_t kMaxLabels = 48;
 
+// ラベルプールの総サイズ（全コールフレーム共有・WasmThreadContext 内に静的確保）
+constexpr std::size_t kLabelsPoolSize = 12288; // kWasmCallStackSize * kMaxLabels = 256 * 48
+
 // サポートする最大グローバル変数数
 constexpr std::size_t kMaxGlobals = 256;
 

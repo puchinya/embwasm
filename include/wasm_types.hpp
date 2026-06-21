@@ -67,10 +67,11 @@ enum class WasmResult : int32_t {
 
     kErrorInstantiate = -50, ///< インスタンス生成エラー。
 
-    kErrorExecuteStackOverflow = -60,    ///< スタックオーバーフロー。
-    kErrorExecuteCallStackOverflow = -61,    ///< コールスタックオーバーフロー。
+    kErrorExecuteTrapStackOverflow = -60,    ///< スタックオーバーフロー。
+    kErrorExecuteTrapCallStackOverflow = -61,    ///< コールスタックオーバーフロー。
     kErrorExecuteRuntimeError = -62,     ///< その他の実行時エラー。
-    kErrorLinearMemoryLimitExceeded = -63,    ///< エンジン設定の線形メモリサイズ制限値を超過。
+    kErrorExecuteTrapLinearMemoryLimitExceeded = -63,    ///< エンジン設定の線形メモリサイズ制限値を超過。
+    kErrorExecuteTrapLabelStackOverflow = -64,           ///< ラベルスタックオーバーフロー。
 };
 
 static inline bool IsSuccess(WasmResult result) {
