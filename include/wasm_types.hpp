@@ -73,6 +73,14 @@ enum class WasmResult : int32_t {
     kErrorLinearMemoryLimitExceeded = -63,    ///< エンジン設定の線形メモリサイズ制限値を超過。
 };
 
+static inline bool IsSuccess(WasmResult result) {
+    return static_cast<int32_t>(result) >= 0;
+}
+
+static inline bool IsError(WasmResult result) {
+    return static_cast<int32_t>(result) < 0;
+}
+
 /// @brief ホスト関数のシグネチャ型。
 ///
 /// 例外無効（`-fno-exceptions`）のため、実行結果を WasmResult で返し、値は results 引数に格納します。
