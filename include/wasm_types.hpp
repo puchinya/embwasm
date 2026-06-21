@@ -72,6 +72,16 @@ enum class WasmResult : int32_t {
     kErrorExecuteRuntimeError = -62,     ///< その他の実行時エラー。
     kErrorExecuteTrapLinearMemoryLimitExceeded = -63,    ///< エンジン設定の線形メモリサイズ制限値を超過。
     kErrorExecuteTrapLabelStackOverflow = -64,           ///< ラベルスタックオーバーフロー。
+    kErrorExecuteTrapTableOutOfBounds = -65,    ///< テーブルインデックスが範囲外。
+    kErrorExecuteTrapIntegerDivideByZero = -66, ///< 整数除算でゼロ除算が発生。
+    kErrorExecuteTrapIntegerOverflow = -67, ///< 整数オーバーフロー。
+    kErrorExecuteTrapInvalidConversionToInteger = -68, ///< 整数への変換に失敗。
+    kErrorExecuteTrapIndirectCallSignatureMismatch = -69, ///< 関数シグネチャが一致しない。
+    kErrorExecuteTrapUnreachable = -70, ///< unreachable命令が実行された。
+    kErrorExecuteTrapMemoryOutOfBounds = -71, ///< 線形メモリインデックスが範囲外。
+    kErrorExecuteTrapTableUninitializedElement = -72, ///< テーブル要素が初期化されていない。
+    kErrorExecuteTrapGlobalImmutable = -73, ///< グローバル変数が不変である。
+    kErrorExecuteTrapDataOutOfBounds = -74, ///< データインデックスが範囲外。
 };
 
 static inline bool IsSuccess(WasmResult result) {

@@ -153,6 +153,11 @@ struct WasmModuleInstance {
     int32_t GetExportFunctionIndex(const char* func_name, std::size_t func_name_len) const noexcept;
 };
 
+struct WasmTrapInfo {
+    WasmResult result;
+    uint32_t pc;
+};
+
 /// @brief ベアメタル環境向け極小 WASM 実行エンジン。
 ///
 /// STL・例外・RTTI・動的メモリを一切使用しません。
@@ -349,7 +354,7 @@ private:
 
     WasmResult ResolveImports(WasmModuleInstance* mod) noexcept;
     void FreeModuleInstance(WasmModuleInstance* mod) noexcept;
-    WasmResult OnRuntimeError() noexcept;
+    WasmResult OnTrap(WasmResult result) noexcept;
 
     struct NameAlias {
         char alias[64];

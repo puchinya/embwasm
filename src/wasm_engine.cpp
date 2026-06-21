@@ -2725,8 +2725,8 @@ namespace embwasm {
         return -1;
     }
 
-    WasmResult WasmEngine::OnRuntimeError() noexcept {
-        return WasmResult::kErrorExecuteRuntimeError;
+    WasmResult WasmEngine::OnTrap(WasmResult result) noexcept {
+        return result;
     }
 
     WasmResult WasmEngine::
@@ -2737,7 +2737,7 @@ namespace embwasm {
         WasmThreadContext *ctx = ctx_;
 #endif
         if (!ctx || !module) {
-            return OnRuntimeError();
+            return WasmResult::kErrorInvalidArgument;
         }
 
         // 既存のコードとの互換性のためのエイリアス
@@ -2827,7 +2827,7 @@ namespace embwasm {
 
                 // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
                 if (ctx->stack_top < sig.param_count) {
-                    return OnRuntimeError();
+                    return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                 }
                 for (uint32_t i = 0; i < sig.param_count; ++i) {
                     frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
@@ -2872,7 +2872,7 @@ namespace embwasm {
                 uint8_t op = *ip++;
                 switch (op) {
                     case 0x00: // unreachable
-                        return OnRuntimeError();
+                        return WasmResult::kErrorExecuteTrapUnreachable;
 
                     case 0x01: // nop
                         break;
@@ -3106,7 +3106,7 @@ namespace embwasm {
                     case 0x05: {
                         // else
                         // if ブロックの実行が終わって else に到達した場合は end までジャンプ
-                        if (frame.label_stack_top == 0) return OnRuntimeError();
+                        if (frame.label_stack_top == 0) return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                         ip = frame.labels[frame.label_stack_top - 1].pc;
                         frame.label_stack_top--; // if ブロックのラベルをポップする
                         break;
@@ -3351,30 +3351,23 @@ namespace embwasm {
                         uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
 
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                            return OnRuntimeError();
+                            return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                         }
                         uint32_t ref_val = tables[table_idx][elem_idx];
-                        if (ref_val == 0xFFFFFFFF) return OnRuntimeError();
+                        if (ref_val == 0xFFFFFFFF) return OnTrap(WasmResult::kErrorExecuteTrapTableUninitializedElement);
                         WasmModuleInstance *target_module = nullptr;
                         uint32_t target_idx = 0xFFFFFFFF;
                         DecodeFuncRef(ref_val, this, current_mod, target_module, target_idx);
-                        if (!target_module || target_idx >= target_module->function_count) return OnRuntimeError();
+                        if (!target_module || target_idx >= target_module->function_count) return OnTrap(WasmResult::kErrorExecuteRuntimeError);
 
                         const WasmFunction *target_func = &target_module->functions[target_idx];
                         // 型シグネチャ検証: モジュールが異なる場合は同一インデックスでも構造比較が必要
                         if (target_func->type_index != type_idx || target_module != current_mod) {
-                            const WasmTypeSignature &sa = target_module->signatures[target_func->type_index];
-                            const WasmTypeSignature &sb = signatures[type_idx];
-                            bool same = (sa.param_count == sb.param_count) && (sa.result_count == sb.result_count);
-                            if (same) {
-                                for (uint32_t pi = 0; pi < sa.param_count && same; ++pi) {
-                                    if (sa.params[pi] != sb.params[pi]) same = false;
-                                }
-                                for (uint32_t ri = 0; ri < sa.result_count && same; ++ri) {
-                                    if (sa.results[ri] != sb.results[ri]) same = false;
-                                }
+                            const WasmTypeSignature *sa = &target_module->signatures[target_func->type_index];
+                            const WasmTypeSignature *sb = &signatures[type_idx];
+                            if (!WasmTypeSignature::Equals(sa, sb)) {
+                                return OnTrap(WasmResult::kErrorExecuteTrapIndirectCallSignatureMismatch);
                             }
-                            if (!same) return OnRuntimeError();
                         }
 
                         // kImportのときはチェーンを辿って実際の関数を得る
@@ -3382,7 +3375,7 @@ namespace embwasm {
                             WasmModuleInstance *rm = nullptr;
                             const WasmFunction *rf = nullptr;
                             if (!ResolveWasmImportChain(this, target_func, rm, rf)) {
-                                return WasmResult::kErrorFunctionNotFound;
+                                return OnTrap(WasmResult::kErrorFunctionNotFound);
                             }
                             target_module = rm;
                             target_func = rf;
@@ -3474,10 +3467,10 @@ namespace embwasm {
 
                     case 0x1C: {
                         // select (t*)
-                        if (ip >= limit) return OnRuntimeError();
+                        if (ip >= limit) return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                         uint32_t type_count = DecodeVarUint32(ip, limit);
                         if (type_count > static_cast<std::size_t>(limit - ip)) {
-                            return OnRuntimeError();
+                            return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                         }
                         ip += type_count;
                         int32_t cond = stack[--stack_top_].value.i32;
@@ -3518,7 +3511,7 @@ namespace embwasm {
                     case 0x24: {
                         // global.set <global_idx>
                         uint32_t idx = DecodeVarUint32(ip, limit);
-                        if (!globals[idx].is_mutable) return OnRuntimeError();
+                        if (!globals[idx].is_mutable) return OnTrap(WasmResult::kErrorExecuteTrapGlobalImmutable);
                         globals[idx].value = stack[--stack_top_];
                         break;
                     }
@@ -3528,7 +3521,7 @@ namespace embwasm {
                         uint32_t table_idx = DecodeVarUint32(ip, limit);
                         uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                            return OnRuntimeError();
+                            return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                         }
                         uint32_t target_idx = tables[table_idx][elem_idx];
 
@@ -3548,7 +3541,7 @@ namespace embwasm {
                         WasmValue val = stack[--stack_top_];
                         uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                            return OnRuntimeError();
+                            return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                         }
                         uint32_t target_idx = 0xFFFFFFFF;
                         if (val.value.i64 != -1) {
@@ -3605,7 +3598,7 @@ namespace embwasm {
                         }
                         if (op == 0x2E || op == 0x2F || op == 0x32 || op == 0x33) size = 2;
 
-                        if (!linear_memory_ptr || addr + size > linear_memory_size) return OnRuntimeError();
+                        if (!linear_memory_ptr || addr + size > linear_memory_size) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
 
                         WasmValue result_val;
                         result_val.value.i64 = 0;
@@ -3688,7 +3681,7 @@ namespace embwasm {
                                 break;
                         }
                         if (!linear_memory_ptr || addr + size > linear_memory_size) {
-                            return OnRuntimeError();
+                            return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                         }
                         if (op == 0x36) {
                             std::memcpy(&linear_memory_ptr[addr], &val.value.i32, 4);
@@ -3947,13 +3940,13 @@ namespace embwasm {
                             case 0x6C: res = a.value.i32 * b.value.i32;
                                 break;
                             case 0x6D:
-                                if (b.value.i32 == 0) return OnRuntimeError();
+                                if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                                 if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) return
-                                        OnRuntimeError();
+                                        OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
                                 res = a.value.i32 / b.value.i32;
                                 break;
                             case 0x6E:
-                                if (b.value.i32 == 0) return OnRuntimeError();
+                                if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                                 res = static_cast<int32_t>(
                                     static_cast<uint32_t>(a.value.i32) / static_cast<uint32_t>(b.value.i32));
                                 break;
@@ -4074,28 +4067,28 @@ namespace embwasm {
                     case 0xA8: { // i32.trunc_f32_s
                         float f = stack[stack_top_ - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f < -2147483648.0f || f >= 2147483648.0f)
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(f);
                         break;
                     }
                     case 0xA9: { // i32.trunc_f32_u
                         float f = stack[stack_top_ - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f <= -1.0f || f >= 4294967296.0f)
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<uint32_t>(f));
                         break;
                     }
                     case 0xAA: { // i32.trunc_f64_s
                         double d = stack[stack_top_ - 1].value.f64;
                         if (!(d > -2147483649.0 && d < 2147483648.0))
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(d);
                         break;
                     }
                     case 0xAB: { // i32.trunc_f64_u
                         double d = stack[stack_top_ - 1].value.f64;
                         if (!(d > -1.0 && d < 4294967296.0))
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<uint32_t>(d));
                         break;
                     }
@@ -4119,28 +4112,28 @@ namespace embwasm {
                     case 0xAE: { // i64.trunc_f32_s
                         float f = stack[stack_top_ - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f < -9223372036854775808.0f || f >= 9223372036854775808.0f)
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(f);
                         break;
                     }
                     case 0xAF: { // i64.trunc_f32_u
                         float f = stack[stack_top_ - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f <= -1.0f || f >= 18446744073709551616.0f)
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(static_cast<uint64_t>(f));
                         break;
                     }
                     case 0xB0: { // i64.trunc_f64_s
                         double d = stack[stack_top_ - 1].value.f64;
                         if (std::isnan(d) || std::isinf(d) || d < -9223372036854775808.0 || d >= 9223372036854775808.0)
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(d);
                         break;
                     }
                     case 0xB1: { // i64.trunc_f64_u
                         double d = stack[stack_top_ - 1].value.f64;
                         if (!(d > -1.0 && d < 18446744073709551616.0))
-                            return WasmResult::kErrorExecuteRuntimeError;
+                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
                         stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(static_cast<uint64_t>(d));
                         break;
                     }
@@ -4301,7 +4294,7 @@ namespace embwasm {
                         // i32.rem_s
                         WasmValue b = stack[--stack_top_];
                         WasmValue a = stack[--stack_top_];
-                        if (b.value.i32 == 0) return OnRuntimeError();
+                        if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                         int32_t res = 0;
                         if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) {
                             res = 0;
@@ -4316,7 +4309,7 @@ namespace embwasm {
                         // i32.rem_u
                         WasmValue b = stack[--stack_top_];
                         WasmValue a = stack[--stack_top_];
-                        if (b.value.i32 == 0) return OnRuntimeError();
+                        if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                         uint32_t ua = static_cast<uint32_t>(a.value.i32);
                         uint32_t ub = static_cast<uint32_t>(b.value.i32);
                         int32_t res = static_cast<int32_t>(ua % ub);
@@ -4372,9 +4365,9 @@ namespace embwasm {
                         // i64.div_s
                         WasmValue b = stack[--stack_top_];
                         WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnRuntimeError();
+                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                         if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) return
-                                OnRuntimeError();
+                                OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
                         int64_t res = a.value.i64 / b.value.i64;
                         stack[stack_top_++].value.i64 = res;
                         break;
@@ -4384,7 +4377,7 @@ namespace embwasm {
                         // i64.div_u
                         WasmValue b = stack[--stack_top_];
                         WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnRuntimeError();
+                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                         uint64_t ua = static_cast<uint64_t>(a.value.i64);
                         uint64_t ub = static_cast<uint64_t>(b.value.i64);
                         int64_t res = static_cast<int64_t>(ua / ub);
@@ -4396,7 +4389,7 @@ namespace embwasm {
                         // i64.rem_s
                         WasmValue b = stack[--stack_top_];
                         WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnRuntimeError();
+                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                         int64_t res = 0;
                         if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) {
                             res = 0;
@@ -4411,7 +4404,7 @@ namespace embwasm {
                         // i64.rem_u
                         WasmValue b = stack[--stack_top_];
                         WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnRuntimeError();
+                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                         uint64_t ua = static_cast<uint64_t>(a.value.i64);
                         uint64_t ub = static_cast<uint64_t>(b.value.i64);
                         int64_t res = static_cast<int64_t>(ua % ub);
@@ -4770,12 +4763,14 @@ namespace embwasm {
                                 int32_t s = stack[--stack_top_].value.i32;
                                 int32_t d = stack[--stack_top_].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
-                                if (data_idx >= data_segment_count) return OnRuntimeError();
+                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                if (data_idx >= data_segment_count) return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
                                 uint32_t dseg_size = data_segment_dropped[data_idx] ? 0 : data_segment_sizes[data_idx];
-                                if (static_cast<uint64_t>(s) + n > dseg_size ||
-                                    static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                    return OnRuntimeError();
+                                if (static_cast<uint64_t>(s) + n > dseg_size) {
+                                    return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                }
+                                if (static_cast<uint64_t>(d) + n > linear_memory_size) {
+                                    return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                                 }
                                 if (n == 0) break;
                                 if (linear_memory_ptr && data_segments[data_idx]) {
@@ -4786,7 +4781,7 @@ namespace embwasm {
                             case 9: {
                                 // data.drop
                                 uint32_t data_idx = DecodeVarUint32(ip, limit);
-                                if (data_idx >= data_segment_count) return OnRuntimeError();
+                                if (data_idx >= data_segment_count) return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
                                 data_segment_dropped[data_idx] = true;
                                 data_segments[data_idx] = nullptr;
                                 data_segment_sizes[data_idx] = 0;
@@ -4800,10 +4795,10 @@ namespace embwasm {
                                 int32_t s = stack[--stack_top_].value.i32;
                                 int32_t d = stack[--stack_top_].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
+                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                                 if (static_cast<uint64_t>(s) + n > linear_memory_size ||
                                     static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                    return OnRuntimeError();
+                                    return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                                 }
                                 if (n == 0) break;
                                 if (linear_memory_ptr) {
@@ -4818,9 +4813,9 @@ namespace embwasm {
                                 int32_t val = stack[--stack_top_].value.i32;
                                 int32_t d = stack[--stack_top_].value.i32;
 
-                                if (n < 0 || d < 0) return OnRuntimeError();
+                                if (n < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                                 if (static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                    return OnRuntimeError();
+                                    return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                                 }
                                 if (n == 0) break;
                                 if (linear_memory_ptr) {
@@ -4836,14 +4831,20 @@ namespace embwasm {
                                 int32_t s = stack[--stack_top_].value.i32;
                                 int32_t d = stack[--stack_top_].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
-                                if (elem_idx >= elem_segment_count || table_idx >= table_count) {
-                                    return OnRuntimeError();
+                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                if (elem_idx >= elem_segment_count) {
+                                    return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                }
+                                if (table_idx >= table_count) {
+                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 }
                                 uint32_t eseg_size = elem_segment_dropped[elem_idx] ? 0 : elem_segment_sizes[elem_idx];
-                                if (static_cast<uint64_t>(s) + n > eseg_size ||
-                                    static_cast<uint64_t>(d) + n > table_sizes[table_idx]) {
-                                    return OnRuntimeError();
+                                if (static_cast<uint64_t>(s) + n > eseg_size) {
+                                    return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                }
+
+                                if (static_cast<uint64_t>(d) + n > table_sizes[table_idx]) {
+                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 }
                                 if (n == 0) break;
                                 uint32_t *tbl = tables[table_idx];
@@ -4861,7 +4862,7 @@ namespace embwasm {
                             case 13: {
                                 // elem.drop
                                 uint32_t elem_idx = DecodeVarUint32(ip, limit);
-                                if (elem_idx >= elem_segment_count) return OnRuntimeError();
+                                if (elem_idx >= elem_segment_count) return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
                                 elem_segment_dropped[elem_idx] = true;
                                 if (elem_segments[elem_idx]) {
                                     pool_->Free(elem_segments[elem_idx]);
@@ -4878,13 +4879,13 @@ namespace embwasm {
                                 int32_t s = stack[--stack_top_].value.i32;
                                 int32_t d = stack[--stack_top_].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnRuntimeError();
+                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 if (dst_table >= table_count || src_table >= table_count) {
-                                    return OnRuntimeError();
+                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 }
                                 if (static_cast<uint64_t>(s) + n > table_sizes[src_table] ||
                                     static_cast<uint64_t>(d) + n > table_sizes[dst_table]) {
-                                    return OnRuntimeError();
+                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 }
                                 if (n == 0) break;
                                 uint32_t *tbl_dst = tables[dst_table];
@@ -4900,7 +4901,7 @@ namespace embwasm {
                                 int32_t n = stack[--stack_top_].value.i32;
                                 WasmValue init_val = stack[--stack_top_];
 
-                                if (table_idx >= table_count) return OnRuntimeError();
+                                if (table_idx >= table_count) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 if (n < 0) {
                                     stack[stack_top_++].value.i32 = -1;
                                     break;
@@ -4960,7 +4961,7 @@ namespace embwasm {
                             case 16: {
                                 // table.size
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                if (table_idx >= table_count) return OnRuntimeError();
+                                if (table_idx >= table_count) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 stack[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                                 break;
                             }
@@ -4971,10 +4972,10 @@ namespace embwasm {
                                 WasmValue val = stack[--stack_top_];
                                 int32_t idx = stack[--stack_top_].value.i32;
 
-                                if (n < 0 || idx < 0) return OnRuntimeError();
+                                if (n < 0 || idx < 0) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 if (table_idx >= table_count || static_cast<uint64_t>(idx) + n > table_sizes[
                                         table_idx]) {
-                                    return OnRuntimeError();
+                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                 }
                                 if (n == 0) break;
                                 uint32_t *tbl = tables[table_idx];
@@ -4994,14 +4995,14 @@ namespace embwasm {
                                 break;
                             }
                             default:
-                                return OnRuntimeError();
+                                return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                         }
                         break;
                     }
 
                     default:
                         // 未対応のオペコード
-                        return OnRuntimeError();
+                        return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                 }
             }
 
