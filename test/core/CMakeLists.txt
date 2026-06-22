@@ -17,14 +17,14 @@ if(BUILD_TESTING)
     enable_testing()
 
     set(TEST_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/test_env.wit)
-    set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
+    set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/embwasm_util.py)
     set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
     set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
 
     # WIT ファイルの変更を検知して自動生成します
     add_custom_command(
         OUTPUT ${GEN_CPP} ${GEN_H}
-        COMMAND python3 ${GEN_SCRIPT} ${TEST_CONFIG_FILE} ${GEN_CPP} ${GEN_H}
+        COMMAND python3 ${GEN_SCRIPT} gen-hostapi-dispatch ${TEST_CONFIG_FILE} ${GEN_H} ${GEN_CPP}
         DEPENDS ${TEST_CONFIG_FILE} ${GEN_SCRIPT}
         COMMENT "Generating static API lookup tables for test from test_env.wit"
     )

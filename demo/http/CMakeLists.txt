@@ -3,7 +3,7 @@
 # =============================================================================
 
 set(DEMO_CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/hostapi.wit)
-set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/gen_api.py)
+set(GEN_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/codegen/embwasm_util.py)
 set(GEN_CPP ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.cpp)
 set(GEN_H ${CMAKE_CURRENT_BINARY_DIR}/wasm_api_static.hpp)
 set(GEN_WASM_WIT_DIR ${CMAKE_CURRENT_BINARY_DIR}/wit)
@@ -15,7 +15,7 @@ set(GEN_WASM_C ${GEN_WASM_DIR}/wasm_host_api.c)
 # ホスト側 API ルックアップテーブルの自動生成
 add_custom_command(
     OUTPUT ${GEN_CPP} ${GEN_H}
-    COMMAND python3 ${GEN_SCRIPT} ${DEMO_CONFIG_FILE} ${GEN_CPP} ${GEN_H}
+    COMMAND python3 ${GEN_SCRIPT} gen-hostapi-dispatch ${DEMO_CONFIG_FILE} ${GEN_H} ${GEN_CPP}
     DEPENDS ${DEMO_CONFIG_FILE} ${GEN_SCRIPT}
     COMMENT "Generating static API lookup tables from hostapi.wit"
 )

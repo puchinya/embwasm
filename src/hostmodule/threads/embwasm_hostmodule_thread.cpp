@@ -4,11 +4,14 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace thread {
+namespace embwasm {
+namespace threads {
+namespace threads {
 
 #if EMBWASM_ENABLE_MULTITHREADING
 
-WasmResult ThreadSpawn(WasmEngine& engine, const char* name, uint32_t name_len, int32_t& out_result) noexcept {
+// [embwasm-proto:func:thread_spawn]
+WasmResult thread_spawn(WasmEngine& engine, const char* name, uint32_t name_len, int32_t& out_result) noexcept {
     WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorExecuteRuntimeError;
 
@@ -39,12 +42,14 @@ WasmResult ThreadSpawn(WasmEngine& engine, const char* name, uint32_t name_len, 
     return WasmResult::kOk;
 }
 
-WasmResult ThreadYield(WasmEngine& engine) noexcept {
+// [embwasm-proto:func:thread_yield]
+WasmResult thread_yield(WasmEngine& engine) noexcept {
     (void)engine;
     return WasmResult::kYield;
 }
 
-WasmResult EventWait(WasmEngine& engine, int32_t event_id) noexcept {
+// [embwasm-proto:func:event_wait]
+WasmResult event_wait(WasmEngine& engine, int32_t event_id) noexcept {
     WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorExecuteRuntimeError;
 
@@ -56,7 +61,8 @@ WasmResult EventWait(WasmEngine& engine, int32_t event_id) noexcept {
     return WasmResult::kYield;
 }
 
-WasmResult EventSignal(WasmEngine& engine, int32_t event_id) noexcept {
+// [embwasm-proto:func:event_signal]
+WasmResult event_signal(WasmEngine& engine, int32_t event_id) noexcept {
     WasmScheduler* scheduler = engine.GetScheduler();
     if (!scheduler) return WasmResult::kErrorExecuteRuntimeError;
 
@@ -65,8 +71,11 @@ WasmResult EventSignal(WasmEngine& engine, int32_t event_id) noexcept {
     return WasmResult::kOk;
 }
 
+// [embwasm-proto:funcs-end]
 #endif // EMBWASM_ENABLE_MULTITHREADING
 
-} // namespace thread
+} // namespace threads
+} // namespace threads
+} // namespace embwasm
 } // namespace hostmodules
 } // namespace embwasm

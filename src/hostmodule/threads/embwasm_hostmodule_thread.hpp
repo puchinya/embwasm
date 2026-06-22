@@ -9,21 +9,27 @@ namespace embwasm {
 class WasmEngine;
 
 namespace hostmodules {
-namespace thread {
+namespace embwasm {
+namespace threads {
+namespace threads {
 
+// [embwasm-proto:decl-begin]
 #if EMBWASM_ENABLE_MULTITHREADING
-WasmResult ThreadSpawn(WasmEngine& engine, const char* name, uint32_t name_len, int32_t& out_result) noexcept;
-WasmResult ThreadYield(WasmEngine& engine) noexcept;
-WasmResult EventWait(WasmEngine& engine, int32_t event_id) noexcept;
-WasmResult EventSignal(WasmEngine& engine, int32_t event_id) noexcept;
+WasmResult thread_spawn(WasmEngine& engine, const char* name, uint32_t name_len, int32_t& out_result) noexcept;
+WasmResult thread_yield(WasmEngine& engine) noexcept;
+WasmResult event_wait(WasmEngine& engine, int32_t event_id) noexcept;
+WasmResult event_signal(WasmEngine& engine, int32_t event_id) noexcept;
 #else
-inline WasmResult ThreadSpawn(WasmEngine&, const char*, uint32_t, int32_t&) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
-inline WasmResult ThreadYield(WasmEngine&) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
-inline WasmResult EventWait(WasmEngine&, int32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
-inline WasmResult EventSignal(WasmEngine&, int32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult thread_spawn(WasmEngine&, const char*, uint32_t, int32_t&) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult thread_yield(WasmEngine&) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult event_wait(WasmEngine&, int32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
+inline WasmResult event_signal(WasmEngine&, int32_t) noexcept { return WasmResult::kErrorExecuteRuntimeError; }
 #endif
+// [embwasm-proto:decl-end]
 
-} // namespace thread
+} // namespace threads
+} // namespace threads
+} // namespace embwasm
 } // namespace hostmodules
 } // namespace embwasm
 

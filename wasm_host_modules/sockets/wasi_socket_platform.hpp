@@ -20,7 +20,9 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace socket {
+namespace wasi {
+namespace sockets {
+namespace sockets {
 
 // ---------------------------------------------------------------------------
 // SocketHandle
@@ -71,58 +73,42 @@ void PlatformSocketDeinit() noexcept;
 // ---------------------------------------------------------------------------
 
 /// ソケットを作成する。
-/// @param domain    AF_INET=2 など
-/// @param type      SOCK_STREAM=1, SOCK_DGRAM=2 など
-/// @param protocol  0 = デフォルト
-/// @return 成功: PlatformSocket 値、失敗: kInvalidPlatformSocket
 PlatformSocket PlatformSocketCreate(int domain, int type, int protocol) noexcept;
 
 /// ソケットを閉じる。
-/// @return 0: 成功、-1: エラー
 int PlatformSocketClose(PlatformSocket sock) noexcept;
 
 /// ソケットにアドレスをバインドする。
-/// @param addr_buf  WASM 線形メモリから取得した sockaddr_in バイト列 (kWasiSockAddrInSize バイト)
-/// @return 0: 成功、-1: エラー
 int PlatformSocketBind(PlatformSocket sock,
                        const uint8_t* addr_buf,
                        uint32_t addr_len) noexcept;
 
 /// リッスン状態に移行する。
-/// @return 0: 成功、-1: エラー
 int PlatformSocketListen(PlatformSocket sock, int backlog) noexcept;
 
 /// 接続を受け付ける。
-/// @param peer_addr_buf   接続元アドレス格納先 (NULL 可)
-/// @param peer_addr_len   格納先バッファサイズ / 出力: 実際のサイズ (NULL 可)
-/// @return 成功: 新しい PlatformSocket、失敗: kInvalidPlatformSocket
 PlatformSocket PlatformSocketAccept(PlatformSocket sock,
                                     uint8_t* peer_addr_buf,
                                     uint32_t* peer_addr_len) noexcept;
 
 /// リモートアドレスへ接続する。
-/// @param addr_buf  WASM 線形メモリから取得した sockaddr_in バイト列
-/// @return 0: 成功、-1: エラー
 int PlatformSocketConnect(PlatformSocket sock,
                           const uint8_t* addr_buf,
                           uint32_t addr_len) noexcept;
 
 /// データを送信する。
-/// @return 送信バイト数 (>=0)、エラー時 -1
 int PlatformSocketSend(PlatformSocket sock,
                        const uint8_t* buf,
                        uint32_t len,
                        int flags) noexcept;
 
 /// データを受信する。
-/// @return 受信バイト数 (>=0、0 は接続終了)、エラー時 -1
 int PlatformSocketRecv(PlatformSocket sock,
                        uint8_t* buf,
                        uint32_t len,
                        int flags) noexcept;
 
 /// 指定アドレスへデータを送信する（UDP 用）。
-/// @return 送信バイト数 (>=0)、エラー時 -1
 int PlatformSocketSendTo(PlatformSocket sock,
                          const uint8_t* buf,
                          uint32_t len,
@@ -131,9 +117,6 @@ int PlatformSocketSendTo(PlatformSocket sock,
                          uint32_t addr_len) noexcept;
 
 /// 送信元アドレスつきでデータを受信する（UDP 用）。
-/// @param src_addr_buf     送信元アドレス格納先 (NULL 可)
-/// @param src_addr_len     格納先バッファサイズ / 出力: 実際のサイズ (NULL 可)
-/// @return 受信バイト数 (>=0)、エラー時 -1
 int PlatformSocketRecvFrom(PlatformSocket sock,
                            uint8_t* buf,
                            uint32_t len,
@@ -142,7 +125,6 @@ int PlatformSocketRecvFrom(PlatformSocket sock,
                            uint32_t* src_addr_len) noexcept;
 
 /// ソケットオプションを設定する（setsockopt 相当）。
-/// @return 0: 成功、-1: エラー
 int PlatformSocketSetOpt(PlatformSocket sock,
                          int level,
                          int optname,
@@ -150,7 +132,6 @@ int PlatformSocketSetOpt(PlatformSocket sock,
                          uint32_t optlen) noexcept;
 
 /// ソケットオプションを取得する（getsockopt 相当）。
-/// @return 0: 成功、-1: エラー
 int PlatformSocketGetOpt(PlatformSocket sock,
                          int level,
                          int optname,
@@ -158,33 +139,28 @@ int PlatformSocketGetOpt(PlatformSocket sock,
                          uint32_t* optlen) noexcept;
 
 /// ノンブロッキングモードを設定する。
-/// @param nonblocking 1: ノンブロッキング、0: ブロッキング
-/// @return 0: 成功、-1: エラー
 int PlatformSocketSetNonBlocking(PlatformSocket sock, int nonblocking) noexcept;
 
 /// 単一ソケットのイベントを待つ（poll 相当）。
-/// @param events    監視するイベントビットマスク (bit0=read, bit1=write, bit2=error)
-/// @param timeout_ms タイムアウト（ミリ秒、-1 で無限待ち）
-/// @return 準備できたイベントのビットマスク、エラー時 -1
 int PlatformSocketPoll(PlatformSocket sock,
                        int events,
                        int timeout_ms) noexcept;
 
-/// IPv4 アドレス文字列を 32bit ネットワークバイトオーダーに変換する（inet_addr 相当）。
-/// @param addr_str  ヌル終端の ASCII 文字列
-/// @return ネットワークバイトオーダーの IPv4 アドレス、失敗時 0
+/// IPv4 アドレス文字列を 32bit ネットワークバイトオーダーに変換する。
 uint32_t PlatformInetAddr(const char* addr_str) noexcept;
 
-/// ホストバイトオーダーの 16bit 値をネットワークバイトオーダーに変換する（htons 相当）。
+/// ホストバイトオーダーの 16bit 値をネットワークバイトオーダーに変換する。
 uint16_t PlatformHostToNetShort(uint16_t host_short) noexcept;
 
-/// ネットワークバイトオーダーの 16bit 値をホストバイトオーダーに変換する（ntohs 相当）。
+/// ネットワークバイトオーダーの 16bit 値をホストバイトオーダーに変換する。
 uint16_t PlatformNetToHostShort(uint16_t net_short) noexcept;
 
 /// 最後に発生したエラーコードを返す（errno / WSAGetLastError 相当）。
 int PlatformSocketGetLastError() noexcept;
 
-}  // namespace socket
+}  // namespace sockets
+}  // namespace sockets
+}  // namespace wasi
 }  // namespace hostmodules
 }  // namespace embwasm
 

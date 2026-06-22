@@ -9,7 +9,7 @@
 //   内部では静的テーブル (kMaxSockets エントリ) でプラットフォーム固有の
 //   ソケット記述子にマッピングする。
 //
-//   POSIX 環境 (macOS/Linux) では、SocketAccept と SocketRecv を
+//   POSIX 環境 (macOS/Linux) では、socket_accept と socket_recv を
 //   非同期化する：バックグラウンド I/O マネージャスレッドが select() で
 //   複数 fd を監視し、完了時にスタックへ結果を積んで ThreadNotify を呼ぶ。
 //
@@ -37,7 +37,9 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace socket {
+namespace wasi {
+namespace sockets {
+namespace sockets {
 
 // ---------------------------------------------------------------------------
 // 設定定数
@@ -319,7 +321,8 @@ static bool RegisterAsyncRecv(WasmEngine& engine, int32_t handle,
 // モジュールライフサイクル
 // ---------------------------------------------------------------------------
 
-void Initialize(WasmEngine& engine) noexcept {
+// [embwasm-proto:func:initialize]
+void initialize(WasmEngine& engine) noexcept {
     (void)engine;
     if (s_initialized) return;
     InitTable();
@@ -330,7 +333,8 @@ void Initialize(WasmEngine& engine) noexcept {
     s_initialized = true;
 }
 
-void Deinitialize(WasmEngine& engine) noexcept {
+// [embwasm-proto:func:deinitialize]
+void deinitialize(WasmEngine& engine) noexcept {
     (void)engine;
     if (!s_initialized) return;
 #if !defined(_WIN32)
@@ -351,9 +355,10 @@ void Deinitialize(WasmEngine& engine) noexcept {
 // ホスト API 実装（型付きシグネチャ）
 // ---------------------------------------------------------------------------
 
-WasmResult SocketCreate(WasmEngine& engine,
-                        int32_t domain, int32_t type, int32_t protocol,
-                        int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_create]
+WasmResult socket_create(WasmEngine& engine,
+                         int32_t domain, int32_t type, int32_t protocol,
+                         int32_t& out_result) noexcept {
     (void)engine;
     PlatformSocket ps = PlatformSocketCreate(domain, type, protocol);
     if (ps == kInvalidPlatformSocket) {
@@ -368,9 +373,10 @@ WasmResult SocketCreate(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketClose(WasmEngine& engine,
-                       int32_t sock,
-                       int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_close]
+WasmResult socket_close(WasmEngine& engine,
+                        int32_t sock,
+                        int32_t& out_result) noexcept {
     (void)engine;
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket) {
@@ -383,9 +389,10 @@ WasmResult SocketClose(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketBind(WasmEngine& engine,
-                      int32_t sock, int32_t addr_ptr, int32_t addr_len,
-                      int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_bind]
+WasmResult socket_bind(WasmEngine& engine,
+                       int32_t sock, int32_t addr_ptr, int32_t addr_len,
+                       int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || addr_len <= 0) {
         out_result = -1;
@@ -402,9 +409,10 @@ WasmResult SocketBind(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketListen(WasmEngine& engine,
-                        int32_t sock, int32_t backlog,
-                        int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_listen]
+WasmResult socket_listen(WasmEngine& engine,
+                         int32_t sock, int32_t backlog,
+                         int32_t& out_result) noexcept {
     (void)engine;
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket) {
@@ -415,15 +423,15 @@ WasmResult SocketListen(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketAccept(WasmEngine& engine,
-                        int32_t sock, int32_t peer_addr_ptr, int32_t peer_addr_len_ptr,
-                        int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_accept]
+WasmResult socket_accept(WasmEngine& engine,
+                         int32_t sock, int32_t peer_addr_ptr, int32_t peer_addr_len_ptr,
+                         int32_t& out_result) noexcept {
     (void)peer_addr_ptr;
     (void)peer_addr_len_ptr;
 
 #if !defined(_WIN32)
     // 非同期モード: I/O マネージャに委譲して kYield を返す
-    // 結果は I/O マネージャが ctx->stack に積んでから ThreadNotify を呼ぶ
     if (RegisterAsyncAccept(engine, sock)) {
         WasmScheduler* sched = engine.GetScheduler();
         WasmThreadContext* ctx = sched ? sched->GetCurrentThreadContext() : nullptr;
@@ -452,9 +460,10 @@ WasmResult SocketAccept(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketConnect(WasmEngine& engine,
-                         int32_t sock, int32_t addr_ptr, int32_t addr_len,
-                         int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_connect]
+WasmResult socket_connect(WasmEngine& engine,
+                          int32_t sock, int32_t addr_ptr, int32_t addr_len,
+                          int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || addr_len <= 0) {
         out_result = -1;
@@ -471,9 +480,10 @@ WasmResult SocketConnect(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketSend(WasmEngine& engine,
-                      int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
-                      int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_send]
+WasmResult socket_send(WasmEngine& engine,
+                       int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
+                       int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || buf_len <= 0) {
         out_result = -1;
@@ -492,9 +502,10 @@ WasmResult SocketSend(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketRecv(WasmEngine& engine,
-                      int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
-                      int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_recv]
+WasmResult socket_recv(WasmEngine& engine,
+                       int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
+                       int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || buf_len <= 0) {
         out_result = -1;
@@ -526,10 +537,11 @@ WasmResult SocketRecv(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketSendTo(WasmEngine& engine,
-                        int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
-                        int32_t addr_ptr, int32_t addr_len,
-                        int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_send_to]
+WasmResult socket_send_to(WasmEngine& engine,
+                          int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
+                          int32_t addr_ptr, int32_t addr_len,
+                          int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || buf_len <= 0) {
         out_result = -1;
@@ -561,10 +573,11 @@ WasmResult SocketSendTo(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketRecvFrom(WasmEngine& engine,
-                          int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
-                          int32_t src_addr_ptr, int32_t src_addr_len_ptr,
-                          int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_recv_from]
+WasmResult socket_recv_from(WasmEngine& engine,
+                            int32_t sock, int32_t buf_ptr, int32_t buf_len, int32_t flags,
+                            int32_t src_addr_ptr, int32_t src_addr_len_ptr,
+                            int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || buf_len <= 0) {
         out_result = -1;
@@ -597,10 +610,11 @@ WasmResult SocketRecvFrom(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketSetOpt(WasmEngine& engine,
-                        int32_t sock, int32_t level, int32_t optname,
-                        int32_t optval_ptr, int32_t optlen,
-                        int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_set_opt]
+WasmResult socket_set_opt(WasmEngine& engine,
+                          int32_t sock, int32_t level, int32_t optname,
+                          int32_t optval_ptr, int32_t optlen,
+                          int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket || optlen <= 0) {
         out_result = -1;
@@ -617,10 +631,11 @@ WasmResult SocketSetOpt(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketGetOpt(WasmEngine& engine,
-                        int32_t sock, int32_t level, int32_t optname,
-                        int32_t optval_ptr, int32_t optlen_ptr,
-                        int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_get_opt]
+WasmResult socket_get_opt(WasmEngine& engine,
+                          int32_t sock, int32_t level, int32_t optname,
+                          int32_t optval_ptr, int32_t optlen_ptr,
+                          int32_t& out_result) noexcept {
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket) {
         out_result = -1;
@@ -639,9 +654,10 @@ WasmResult SocketGetOpt(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketSetNonBlocking(WasmEngine& engine,
-                                int32_t sock, int32_t nonblocking,
-                                int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_set_non_blocking]
+WasmResult socket_set_non_blocking(WasmEngine& engine,
+                                   int32_t sock, int32_t nonblocking,
+                                   int32_t& out_result) noexcept {
     (void)engine;
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket) {
@@ -652,9 +668,10 @@ WasmResult SocketSetNonBlocking(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult SocketPoll(WasmEngine& engine,
-                      int32_t sock, int32_t events, int32_t timeout_ms,
-                      int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_poll]
+WasmResult socket_poll(WasmEngine& engine,
+                       int32_t sock, int32_t events, int32_t timeout_ms,
+                       int32_t& out_result) noexcept {
     (void)engine;
     PlatformSocket ps = GetPlatformSocket(sock);
     if (ps == kInvalidPlatformSocket) {
@@ -665,9 +682,10 @@ WasmResult SocketPoll(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult InetAddr(WasmEngine& engine,
-                    int32_t addr_str_ptr,
-                    int32_t& out_result) noexcept {
+// [embwasm-proto:func:inet_addr]
+WasmResult inet_addr(WasmEngine& engine,
+                     int32_t addr_str_ptr,
+                     int32_t& out_result) noexcept {
     if (addr_str_ptr < 0) {
         out_result = 0;
         return WasmResult::kOk;
@@ -679,31 +697,37 @@ WasmResult InetAddr(WasmEngine& engine,
     return WasmResult::kOk;
 }
 
-WasmResult HostToNetShort(WasmEngine& engine,
-                          int32_t host_short,
-                          int32_t& out_result) noexcept {
+// [embwasm-proto:func:host_to_net_short]
+WasmResult host_to_net_short(WasmEngine& engine,
+                             int32_t host_short,
+                             int32_t& out_result) noexcept {
     (void)engine;
     out_result = static_cast<int32_t>(
         PlatformHostToNetShort(static_cast<uint16_t>(host_short)));
     return WasmResult::kOk;
 }
 
-WasmResult NetToHostShort(WasmEngine& engine,
-                          int32_t net_short,
-                          int32_t& out_result) noexcept {
+// [embwasm-proto:func:net_to_host_short]
+WasmResult net_to_host_short(WasmEngine& engine,
+                             int32_t net_short,
+                             int32_t& out_result) noexcept {
     (void)engine;
     out_result = static_cast<int32_t>(
         PlatformNetToHostShort(static_cast<uint16_t>(net_short)));
     return WasmResult::kOk;
 }
 
-WasmResult SocketGetLastError(WasmEngine& engine,
-                              int32_t& out_result) noexcept {
+// [embwasm-proto:func:socket_get_last_error]
+WasmResult socket_get_last_error(WasmEngine& engine,
+                                 int32_t& out_result) noexcept {
     (void)engine;
     out_result = PlatformSocketGetLastError();
     return WasmResult::kOk;
 }
 
-}  // namespace socket
+// [embwasm-proto:funcs-end]
+}  // namespace sockets
+}  // namespace sockets
+}  // namespace wasi
 }  // namespace hostmodules
 }  // namespace embwasm

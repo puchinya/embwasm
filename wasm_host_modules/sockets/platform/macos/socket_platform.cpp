@@ -25,7 +25,9 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace socket {
+namespace wasi {
+namespace sockets {
+namespace sockets {
 
 // ---------------------------------------------------------------------------
 // 初期化 / 終了（POSIX では不要）
@@ -255,6 +257,8 @@ int PlatformSocketGetLastError() noexcept {
     return errno;
 }
 
-}  // namespace socket
+}  // namespace sockets
+}  // namespace sockets
+}  // namespace wasi
 }  // namespace hostmodules
 }  // namespace embwasm

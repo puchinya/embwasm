@@ -1,18 +1,15 @@
 #!/usr/bin/env python3
-"""gen_api.py - WASM Host API スタティック C++ コード生成スクリプト
+"""embwasm_util.py - embwasm コード生成ユーティリティ
 
-WIT (WebAssembly Interface Type) ファイルを読み込み、ホスト関数のルックアップテーブル、
-型付きプロトタイプ宣言、スタックベースのディスパッチャを自動生成します。
-
-WIT ファイルのメタデータタグ:
-    /// @cpp-func: <C++関数名>    # インポート関数に対応する C++ 関数のフルパス
-    /// @cpp-header: <ヘッダー名> # インクルードするヘッダーファイル
-    /// @wit-import: <WITファイル> # 別の WIT ファイルをインポート (相対パス)
+サブコマンド:
+  gen-hostapi-dispatch  WIT からホスト API ルックアップテーブル・ディスパッチャを生成
+  gen-hostapi-proto     WIT からホストモジュールの HPP + CPP スケルトンを生成
 """
 
 import os
 import sys
 import re
+import argparse
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +158,7 @@ def _parse_wit_sig(sig_str):
 
 
 # ---------------------------------------------------------------------------
-# コード生成ヘルパー
+# コード生成ヘルパー (gen-hostapi-dispatch 用)
 # ---------------------------------------------------------------------------
 
 def _gen_dispatch_case(api, const_name):
@@ -183,24 +180,21 @@ def _gen_dispatch_case(api, const_name):
         wasm_slots = _wit_to_wasm_types(t)
 
         if len(wasm_slots) == 1:
-            # プリミティブ型
             cpp_t = _PRIMITIVE_CPP.get(t, 'uint32_t')
             vf = _WASM_VALUE_FIELD[wasm_slots[0]]
             lines.append(f'{i}{cpp_t} _{name} = static_cast<{cpp_t}>(ctx->stack[--ctx->stack_top].value.{vf});')
         else:
-            # string / list<T>: len が上、ptr が下（WASM の push 順 ptr→len に対し pop では len→ptr）
+            # string / list<T>: len が上、ptr が下
             lines.append(f'{i}uint32_t _{name}_len = static_cast<uint32_t>(ctx->stack[--ctx->stack_top].value.i32);')
             lines.append(f'{i}uint32_t _{name}_ptr = static_cast<uint32_t>(ctx->stack[--ctx->stack_top].value.i32);')
 
     if needs_mem:
         lines.append(f'{i}uint8_t* _mem = engine.GetLinearMemory();')
 
-    # 結果用ローカル変数の宣言
     for idx, rt in enumerate(result_wit_types):
         out_name = '_out_result' if idx == 0 else f'_out_result{idx}'
         lines.append(f'{i}{_wit_to_out_var_type(rt)} {out_name} = {{}};')
 
-    # 関数呼び出し引数の構築
     call_args = ['engine']
     for name, t in zip(param_names, param_wit_types):
         t = t.strip()
@@ -264,7 +258,7 @@ def _gen_validate_case(api, const_name):
 
 def _gen_typed_protos(apis):
     """名前空間ごとにグループ化した型付きプロトタイプ宣言を生成する。"""
-    ns_protos = {}  # namespace → [proto_str, ...]
+    ns_protos = {}
 
     for api in apis:
         cpp_func = api['function']
@@ -286,8 +280,6 @@ def _gen_typed_protos(apis):
     blocks = []
     for ns in sorted(ns_protos.keys()):
         protos = ns_protos[ns]
-        # The generated header wraps everything in namespace embwasm { }.
-        # Strip the leading 'embwasm::' (or bare 'embwasm') prefix so we don't double-nest.
         if ns == 'embwasm':
             rel_ns = ''
         elif ns.startswith('embwasm::'):
@@ -455,13 +447,13 @@ def load_all_configs(entry_path):
 
 
 # ---------------------------------------------------------------------------
-# コード生成メイン
+# gen-hostapi-dispatch
 # ---------------------------------------------------------------------------
 
-def main():
-    config_path = sys.argv[1] if len(sys.argv) > 1 else 'hostapi.wit'
-    out_cpp_path = sys.argv[2] if len(sys.argv) > 2 else 'src/wasm_api_static.cpp'
-    out_h_path = sys.argv[3] if len(sys.argv) > 3 else 'include/wasm_api_static.hpp'
+def cmd_gen_hostapi_dispatch(args):
+    config_path = args.wit_file
+    out_h_path = args.out_hpp
+    out_cpp_path = args.out_cpp
 
     if not os.path.exists(config_path):
         print(f"Error: Configuration file '{config_path}' not found.", file=sys.stderr)
@@ -471,7 +463,6 @@ def main():
     apis.sort(key=lambda x: (x['module'], x['field']))
     modules = sorted(list(set(api['module'] for api in apis)))
 
-    # 初期化 / 終了関数の収集
     module_inits, module_deinits = {}, {}
     for api in apis:
         m = api['module']
@@ -487,13 +478,11 @@ def main():
         f"    {module_deinits[m]}(engine);" for m in modules if m in module_deinits
     )
 
-    # HostModuleId 定数
     module_enum_members_str = "\n".join(
         f"    k{''.join(w.capitalize() for w in re.sub(r'[^a-zA-Z0-9_]', '_', m).split('_') if w)} = {i},"
         for i, m in enumerate(modules)
     )
 
-    # HostFunctionId 定数 (kWasmHostFuncId プレフィックス)
     enum_members = []
     for idx, api in enumerate(apis):
         mod_part = "".join(w.capitalize() for w in api["module"].split("_") if w)
@@ -504,7 +493,6 @@ def main():
         )
     enum_members_str = "\n".join(enum_members)
 
-    # 静的テーブルエントリ
     cpp_entries_str = ",\n".join(
         f'    {{ "{api["import_module"]}", "{api.get("wit_field") or api["field"]}", kWasmHostFuncId'
         f'{"".join(w.capitalize() for w in api["module"].split("_") if w)}'
@@ -513,32 +501,26 @@ def main():
         for api in apis
     )
 
-    # モジュール ID 検索
     module_lookup_str = "\n".join(
         f'    if (module_len == {len(m)} && std::memcmp(module_name, "{m}", {len(m)}) == 0) '
         f'return HostModuleId::k{"".join(w.capitalize() for w in re.sub(r"[^a-zA-Z0-9_]", "_", m).split("_") if w)};'
         for m in modules
     )
 
-    # DispatchHostFunction の case 文
     dispatch_cases_str = "\n".join(
         _gen_dispatch_case(api, em.split("=")[0].replace("constexpr HostFunctionId", "").strip())
         for api, em in zip(apis, enum_members)
     )
 
-    # ValidateHostFunctionType の case 文
     validate_cases_str = "\n".join(
         _gen_validate_case(api, em.split("=")[0].replace("constexpr HostFunctionId", "").strip())
         for api, em in zip(apis, enum_members)
     )
 
-    # 型付きプロトタイプ宣言
     typed_protos_str = _gen_typed_protos(apis)
 
-    # インクルード
     include_directives_str = "\n".join(f'#include "{h}"' for h in headers)
 
-    # 二分探索ルックアップロジック（既存コードを維持）
     lookup_logic = """\
     if ((module_len == 5 && std::memcmp(module_name, "$root", 5) == 0) || (module_len == 3 && std::memcmp(module_name, "env", 3) == 0)) {
         for (std::size_t i = 0; i < kStaticApiTableSize; ++i) {
@@ -593,10 +575,9 @@ def main():
     }
     return HostFunctionId::kInvalid;"""
 
-    # ヘッダーファイル生成
     h_content = f"""// =============================================================================
 // Copyright (c) 2026 embwasm Project. All rights reserved.
-// [Auto-generated by gen_api.py] - DO NOT EDIT DIRECTLY
+// [Auto-generated by embwasm_util.py gen-hostapi-dispatch] - DO NOT EDIT DIRECTLY
 // =============================================================================
 
 #ifndef EMBWASM_WASM_API_STATIC_HPP_
@@ -636,10 +617,9 @@ bool ValidateHostFunctionType(HostFunctionId id, const WasmTypeSignature* sig) n
 #endif // EMBWASM_WASM_API_STATIC_HPP_
 """
 
-    # ソースファイル生成
     cpp_content = f"""// =============================================================================
 // Copyright (c) 2026 embwasm Project. All rights reserved.
-// [Auto-generated by gen_api.py] - DO NOT EDIT DIRECTLY
+// [Auto-generated by embwasm_util.py gen-hostapi-dispatch] - DO NOT EDIT DIRECTLY
 // =============================================================================
 
 #include "wasm_api_static.hpp"
@@ -710,6 +690,315 @@ bool ValidateHostFunctionType(HostFunctionId id, const WasmTypeSignature* sig) n
         f.write(cpp_content)
 
     print(f"Generated {out_h_path} and {out_cpp_path} from {config_path}")
+
+
+# ---------------------------------------------------------------------------
+# gen-hostapi-proto ヘルパー
+# ---------------------------------------------------------------------------
+
+def _wit_package_to_ns(package_raw):
+    """'embwasm:threads' → 'embwasm::threads' (: → ::, - → _)"""
+    return package_raw.replace('-', '_').replace(':', '::')
+
+
+def _parse_wit_for_proto(wit_path):
+    """proto 生成に必要な情報を WIT ファイルからパースして返す。
+
+    Returns:
+        (package_raw, interface_raw, headers, funcs)
+        funcs: [(field_name, param_names, param_wit_types, result_wit_types), ...]
+    """
+    with open(wit_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    package_match = re.search(r"package\s+([\w:-]+);", content)
+    package_raw = package_match.group(1) if package_match else "unknown:unknown"
+
+    interface_match = re.search(r"interface\s+([\w-]+)\s*{", content)
+    interface_raw = interface_match.group(1) if interface_match else "unknown"
+
+    header_matches = re.findall(r"^///\s*@cpp-header:\s*[\"']?([\w./-]+)[\"']?", content, re.MULTILINE)
+
+    funcs = []
+    lines = content.splitlines()
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("///"):
+            continue
+        if "func" in stripped and ":" in stripped:
+            parts = stripped.split(":", 1)
+            field_name_raw = parts[0].replace("import ", "").strip()
+            if not re.match(r'^[\w-]+$', field_name_raw):
+                continue
+            field_name = field_name_raw.replace("-", "_")
+            sig_part = parts[1].strip() if len(parts) > 1 else ""
+            param_names, param_wit_types, result_wit_types = _parse_wit_sig(sig_part)
+            if 'func' in sig_part:
+                funcs.append((field_name, param_names, param_wit_types, result_wit_types))
+
+    return package_raw, interface_raw, header_matches, funcs
+
+
+def _build_proto_hpp(package_raw, interface_raw, funcs, guard_macro):
+    """gen-hostapi-proto 用の HPP 文字列を生成する。"""
+    pkg_ns = _wit_package_to_ns(package_raw)
+    iface_ns = interface_raw.replace('-', '_')
+    # namespace parts after 'embwasm {' and 'hostmodules {'
+    # full: embwasm::hostmodules::<pkg_ns>::<iface_ns>
+    # inner parts (after embwasm::hostmodules::):
+    inner_parts = pkg_ns.split('::') + [iface_ns]
+
+    open_inner = '\n'.join(f'namespace {p} {{' for p in inner_parts)
+    close_inner = '\n'.join(f'}} // namespace {p}' for p in reversed(inner_parts))
+
+    decls = []
+    for field_name, param_names, param_wit_types, result_wit_types in funcs:
+        cpp_params = ['WasmEngine& engine']
+        for pname, pwit in zip(param_names, param_wit_types):
+            for cpp_t, cpp_n in _wit_to_cpp_proto_params(pname, pwit):
+                cpp_params.append(f'{cpp_t} {cpp_n}')
+        for idx, rt in enumerate(result_wit_types):
+            cpp_t, cpp_n = _wit_to_cpp_result_param(rt, idx)
+            cpp_params.append(f'{cpp_t} {cpp_n}')
+        decls.append(f'WasmResult {field_name}({", ".join(cpp_params)}) noexcept;')
+
+    decls_str = '\n'.join(decls)
+
+    return f"""\
+// =============================================================================
+// Copyright (c) 2026 embwasm Project. All rights reserved.
+// [Auto-generated by embwasm_util.py gen-hostapi-proto] - DO NOT EDIT DIRECTLY
+// =============================================================================
+
+#ifndef {guard_macro}
+#define {guard_macro}
+
+#include "wasm_types.hpp"
+
+namespace embwasm {{
+class WasmEngine;
+
+namespace hostmodules {{
+{open_inner}
+
+// [embwasm-proto:decl-begin]
+{decls_str}
+// [embwasm-proto:decl-end]
+
+{close_inner}
+}} // namespace hostmodules
+}} // namespace embwasm
+
+#endif // {guard_macro}
+"""
+
+
+def _build_proto_cpp_stub(field_name, param_names, param_wit_types, result_wit_types):
+    """単一関数スタブ文字列（マーカー付き）を返す。"""
+    cpp_params = ['WasmEngine& engine']
+    void_args = ['(void)engine;']
+    for pname, pwit in zip(param_names, param_wit_types):
+        for cpp_t, cpp_n in _wit_to_cpp_proto_params(pname, pwit):
+            cpp_params.append(f'{cpp_t} {cpp_n}')
+            void_args.append(f'(void){cpp_n};')
+    for idx, rt in enumerate(result_wit_types):
+        cpp_t, cpp_n = _wit_to_cpp_result_param(rt, idx)
+        cpp_params.append(f'{cpp_t} {cpp_n}')
+        void_args.append(f'(void){cpp_n};')
+    void_str = ' '.join(void_args)
+    sig = f'WasmResult {field_name}({", ".join(cpp_params)}) noexcept'
+    return (f'// [embwasm-proto:func:{field_name}]\n'
+            f'{sig} {{\n    {void_str}\n    return WasmResult::kErrorExecuteRuntimeError;\n}}')
+
+
+def _build_proto_cpp(package_raw, interface_raw, funcs, hpp_filename):
+    """gen-hostapi-proto 用の CPP スタブ文字列を生成する。"""
+    pkg_ns = _wit_package_to_ns(package_raw)
+    iface_ns = interface_raw.replace('-', '_')
+    inner_parts = pkg_ns.split('::') + [iface_ns]
+
+    open_inner = '\n'.join(f'namespace {p} {{' for p in inner_parts)
+    close_inner = '\n'.join(f'}} // namespace {p}' for p in reversed(inner_parts))
+
+    stubs_str = '\n\n'.join(
+        _build_proto_cpp_stub(fn, pn, pw, rw) for fn, pn, pw, rw in funcs
+    )
+
+    return f"""\
+// =============================================================================
+// Copyright (c) 2026 embwasm Project. All rights reserved.
+// [Auto-generated by embwasm_util.py gen-hostapi-proto] - DO NOT EDIT DIRECTLY
+// =============================================================================
+
+#include "{hpp_filename}"
+#include "wasm_engine.hpp"
+
+namespace embwasm {{
+namespace hostmodules {{
+{open_inner}
+
+{stubs_str}
+
+// [embwasm-proto:funcs-end]
+{close_inner}
+}} // namespace hostmodules
+}} // namespace embwasm
+"""
+
+
+# ---------------------------------------------------------------------------
+# gen-hostapi-proto インクリメンタル更新ヘルパー
+# ---------------------------------------------------------------------------
+
+_DECL_BEGIN = '// [embwasm-proto:decl-begin]'
+_DECL_END   = '// [embwasm-proto:decl-end]'
+_FUNCS_END  = '// [embwasm-proto:funcs-end]'
+
+
+def _update_proto_hpp(existing, new_decls_block):
+    """既存 HPP の decl-begin/end 間を new_decls_block で置き換える。
+    マーカーが無ければ None を返す（→ 全上書きフォールバック）。"""
+    begin_idx = existing.find(_DECL_BEGIN)
+    end_idx   = existing.find(_DECL_END)
+    if begin_idx == -1 or end_idx == -1 or end_idx <= begin_idx:
+        return None
+    return (existing[:begin_idx]
+            + _DECL_BEGIN + '\n'
+            + new_decls_block + '\n'
+            + _DECL_END
+            + existing[end_idx + len(_DECL_END):])
+
+
+def _get_known_cpp_funcs(content):
+    """[embwasm-proto:func:NAME] マーカーから関数名 set を返す。"""
+    return set(re.findall(r'//\s*\[embwasm-proto:func:(\w+)\]', content))
+
+
+def _update_proto_cpp(existing_content, new_funcs):
+    """既存 CPP を差分更新する。
+    - 削除関数: func マーカーを obsolete マーカーに置き換える
+    - 追加関数: funcs-end の直前にスタブを挿入
+    マーカーが無ければ None を返す（→ 全上書きフォールバック）。"""
+    if _FUNCS_END not in existing_content:
+        return None
+
+    known = _get_known_cpp_funcs(existing_content)
+    new_names = {f[0] for f in new_funcs}
+
+    result = existing_content
+
+    # 削除: func マーカー → obsolete マーカー
+    for fname in sorted(known - new_names):
+        old_tag = f'// [embwasm-proto:func:{fname}]'
+        new_tag = (f'// [embwasm-proto:obsolete:{fname}]'
+                   f' -- WIT から削除されました。実装を確認後に削除してください。')
+        result = result.replace(old_tag, new_tag, 1)
+
+    # 追加: funcs-end の直前に新スタブを挿入
+    added = [f for f in new_funcs if f[0] not in known]
+    if added:
+        stubs = '\n\n'.join(
+            _build_proto_cpp_stub(fn, pn, pw, rw) for fn, pn, pw, rw in added
+        )
+        result = result.replace(_FUNCS_END, stubs + '\n\n' + _FUNCS_END, 1)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# gen-hostapi-proto
+# ---------------------------------------------------------------------------
+
+def cmd_gen_hostapi_proto(args):
+    wit_path = args.wit_file
+    out_h_path = args.out_hpp
+    out_cpp_path = args.out_cpp
+
+    if not os.path.exists(wit_path):
+        print(f"Error: WIT file '{wit_path}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    package_raw, interface_raw, _headers, funcs = _parse_wit_for_proto(wit_path)
+
+    hpp_basename = os.path.basename(out_h_path)
+    guard_macro = re.sub(r'[^A-Z0-9]', '_', hpp_basename.upper()) + '_'
+
+    # --- HPP ---
+    decls_lines = []
+    for field_name, param_names, param_wit_types, result_wit_types in funcs:
+        cpp_params = ['WasmEngine& engine']
+        for pname, pwit in zip(param_names, param_wit_types):
+            for cpp_t, cpp_n in _wit_to_cpp_proto_params(pname, pwit):
+                cpp_params.append(f'{cpp_t} {cpp_n}')
+        for idx, rt in enumerate(result_wit_types):
+            cpp_t, cpp_n = _wit_to_cpp_result_param(rt, idx)
+            cpp_params.append(f'{cpp_t} {cpp_n}')
+        decls_lines.append(f'WasmResult {field_name}({", ".join(cpp_params)}) noexcept;')
+    new_decls_block = '\n'.join(decls_lines)
+
+    if os.path.exists(out_h_path):
+        with open(out_h_path, 'r', encoding='utf-8') as f:
+            existing_hpp = f.read()
+        hpp_content = _update_proto_hpp(existing_hpp, new_decls_block)
+        if hpp_content is None:
+            print(f"Warning: no proto markers in {out_h_path}, overwriting.", file=sys.stderr)
+            hpp_content = _build_proto_hpp(package_raw, interface_raw, funcs, guard_macro)
+    else:
+        hpp_content = _build_proto_hpp(package_raw, interface_raw, funcs, guard_macro)
+
+    # --- CPP ---
+    if os.path.exists(out_cpp_path):
+        with open(out_cpp_path, 'r', encoding='utf-8') as f:
+            existing_cpp = f.read()
+        cpp_content = _update_proto_cpp(existing_cpp, funcs)
+        if cpp_content is None:
+            print(f"Warning: no proto markers in {out_cpp_path}, overwriting.", file=sys.stderr)
+            cpp_content = _build_proto_cpp(package_raw, interface_raw, funcs, hpp_basename)
+    else:
+        cpp_content = _build_proto_cpp(package_raw, interface_raw, funcs, hpp_basename)
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_h_path)), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(out_cpp_path)), exist_ok=True)
+
+    with open(out_h_path, 'w', encoding='utf-8') as f:
+        f.write(hpp_content)
+    with open(out_cpp_path, 'w', encoding='utf-8') as f:
+        f.write(cpp_content)
+
+    print(f"Generated {out_h_path} and {out_cpp_path} from {wit_path}")
+
+
+# ---------------------------------------------------------------------------
+# エントリポイント
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog='embwasm_util.py',
+        description='embwasm コード生成ユーティリティ',
+    )
+    subparsers = parser.add_subparsers(dest='subcommand', required=True)
+
+    p_dispatch = subparsers.add_parser(
+        'gen-hostapi-dispatch',
+        help='WIT からホスト API ルックアップテーブル・ディスパッチャを生成',
+    )
+    p_dispatch.add_argument('wit_file', help='入力 WIT ファイル')
+    p_dispatch.add_argument('out_hpp', help='出力 HPP パス')
+    p_dispatch.add_argument('out_cpp', help='出力 CPP パス')
+    p_dispatch.set_defaults(func=cmd_gen_hostapi_dispatch)
+
+    p_proto = subparsers.add_parser(
+        'gen-hostapi-proto',
+        help='WIT からホストモジュール HPP + CPP スケルトンを生成',
+    )
+    p_proto.add_argument('wit_file', help='入力 WIT ファイル')
+    p_proto.add_argument('out_hpp', help='出力 HPP パス')
+    p_proto.add_argument('out_cpp', help='出力 CPP パス')
+    p_proto.set_defaults(func=cmd_gen_hostapi_proto)
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == '__main__':

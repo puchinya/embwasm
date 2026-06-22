@@ -6,22 +6,28 @@
 
 namespace embwasm {
 namespace hostmodules {
+namespace embwasm {
+namespace stdio {
 namespace stdio {
 
-WasmResult Printf(
+// [embwasm-proto:decl-begin]
+WasmResult printf(
     WasmEngine& engine,
     const char* fmt,
     uint32_t fmt_len,
     const int32_t* args,
     uint32_t args_len) noexcept;
 
-WasmResult Puts(
+WasmResult puts(
     WasmEngine& engine,
     const char* s,
     uint32_t s_len,
     int32_t& out_result) noexcept;
+// [embwasm-proto:decl-end]
 
 } // namespace stdio
+} // namespace stdio
+} // namespace embwasm
 } // namespace hostmodules
 } // namespace embwasm
 

@@ -4,9 +4,12 @@
 
 namespace embwasm {
 namespace hostmodules {
+namespace embwasm {
+namespace stdio {
 namespace stdio {
 
-WasmResult Printf(
+// [embwasm-proto:func:printf]
+WasmResult printf(
     WasmEngine& engine,
     const char* fmt,
     uint32_t fmt_len,
@@ -107,7 +110,8 @@ WasmResult Printf(
     return WasmResult::kOk;
 }
 
-WasmResult Puts(
+// [embwasm-proto:func:puts]
+WasmResult puts(
     WasmEngine& engine,
     const char* s,
     uint32_t s_len,
@@ -131,6 +135,9 @@ WasmResult Puts(
     return WasmResult::kOk;
 }
 
+// [embwasm-proto:funcs-end]
 } // namespace stdio
+} // namespace stdio
+} // namespace embwasm
 } // namespace hostmodules
 } // namespace embwasm
