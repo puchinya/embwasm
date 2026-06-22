@@ -68,7 +68,7 @@ TEST_F(WasmThreadTest, SignalWaitEvent) {
 
     scheduler.WaitEvent(tid, eid);
     EXPECT_EQ(ctx->state, ThreadState::kWaiting);
-    EXPECT_EQ(ctx->wait_event_id, eid);
+    EXPECT_EQ(ctx->wait_param.event_id, eid);
 
     scheduler.SignalEvent(eid);
     EXPECT_EQ(ctx->state, ThreadState::kReady);

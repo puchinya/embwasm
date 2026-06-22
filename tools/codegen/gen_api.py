@@ -145,7 +145,8 @@ def _parse_wit_sig(sig_str):
         for p in _split_params(params_str):
             if ':' in p:
                 colon = p.index(':')
-                param_names.append(p[:colon].strip().replace('-', '_'))
+                raw_name = p[:colon].strip().lstrip('%').replace('-', '_')
+                param_names.append(raw_name)
                 param_wit_types.append(p[colon + 1:].strip())
 
     result_wit_types = []
@@ -642,6 +643,7 @@ bool ValidateHostFunctionType(HostFunctionId id, const WasmTypeSignature* sig) n
 // =============================================================================
 
 #include "wasm_api_static.hpp"
+#include "wasm_engine.hpp"
 #include "wasm_thread.hpp"
 {include_directives_str}
 #include <cstring>

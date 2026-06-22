@@ -26,6 +26,25 @@ uint32_t DisableInterrupts() noexcept;
  */
 void RestoreInterrupts(uint32_t primask_val) noexcept;
 
+/**
+ * @brief 単調増加の現在時刻をミリ秒で返します。
+ * @return 現在時刻（ms）。オーバーフローは約 49 日で発生します。
+ */
+uint32_t PlatformGetTimeMs() noexcept;
+
+/**
+ * @brief ネイティブスレッドを最大 timeout_ms ミリ秒スリープさせます。
+ *        PlatformNotifyActivity() が呼ばれると即時復帰します。
+ * @param timeout_ms タイムアウト（ms）。UINT32_MAX の場合は無期限待機。
+ */
+void PlatformWaitForActivity(uint32_t timeout_ms) noexcept;
+
+/**
+ * @brief PlatformWaitForActivity() で待機中のスレッドを即時起床させます。
+ *        ISR やバックグラウンドスレッドから呼び出し可能です。
+ */
+void PlatformNotifyActivity() noexcept;
+
 // =============================================================================
 // 2. OS非依存のコンパイラ・CPUアーキテクチャ最適化処理（ヘッダー共通定義）
 // =============================================================================

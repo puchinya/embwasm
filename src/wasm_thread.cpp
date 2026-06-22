@@ -1,5 +1,6 @@
 #include "wasm_thread.hpp"
 #include "wasm_engine.hpp"
+#include "wasm_platform.hpp"
 
 namespace embwasm {
 
@@ -22,7 +23,6 @@ void WasmScheduler::Init() noexcept {
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         threads_[i] = nullptr;
     }
-    // メインスレッド（slot 0）は Init 時に確保（ワーカーは CreateThread 時に遅延確保）
     void* main_ctx = pool->Allocate(sizeof(WasmThreadContext));
     if (!main_ctx) return;
     threads_[kMainThreadIndex] = static_cast<WasmThreadContext*>(main_ctx);
@@ -49,17 +49,15 @@ uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_i
     main.call_stack_top = 0;
     main.locals_pool_top = 0;
     main.labels_pool_top = 0;
-    main.wait_event_id = func_index;
+    main.start_func_index = func_index;
     main.start_module = mod;
     return main.id;
 }
 
 uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
     if (!threads_) return 0;
-    // ワーカースレッド: slot 1 以降を使用（slot 0 はメインスレッド専用）
     for (std::size_t i = kMainThreadIndex + 1; i < kMaxThreads; ++i) {
         if (!threads_[i] || threads_[i]->state == ThreadState::kTerminated) {
-            // 未確保スロットは新規に確保、終了済みスロットは再利用
             if (!threads_[i]) {
                 WasmMemoryPool* pool = engine_.GetMemoryPool();
                 if (!pool) return 0;
@@ -73,9 +71,8 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
             threads_[i]->stack_top = 0;
             threads_[i]->call_stack_top = 0;
             threads_[i]->labels_pool_top = 0;
-            threads_[i]->wait_event_id = func_index;
+            threads_[i]->start_func_index = func_index;
 
-            // 呼び出し元のモジュールを記録（初回ExecuteInternal用）
             WasmThreadContext* active_ctx = GetCurrentThreadContext();
             WasmModuleInstance* caller_mod = nullptr;
             if (active_ctx && active_ctx->call_stack_top > 0) {
@@ -93,8 +90,6 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
 uint32_t WasmScheduler::CreateEvent() noexcept {
     for (std::size_t i = 0; i < kMaxEvents; ++i) {
         if (events_[i].id != 0 && !events_[i].signaled) {
-            // 未使用（またはリセット済み）のイベントを返す
-            // 簡易実装のため、常に固定数を使い回す
             return events_[i].id;
         }
     }
@@ -105,12 +100,16 @@ void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
     if (!threads_ || event_id == 0 || event_id > kMaxEvents) return;
     events_[event_id - 1].signaled = true;
 
-    // このイベントを待っているスレッドをReadyにする
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        if (threads_[i] && threads_[i]->state == ThreadState::kWaiting && threads_[i]->wait_event_id == event_id) {
-            threads_[i]->state = ThreadState::kReady;
+        WasmThreadContext* t = threads_[i];
+        if (t && t->state == ThreadState::kWaiting
+               && t->wait_kind == WaitKind::kEvent
+               && t->wait_param.event_id == event_id) {
+            t->state    = ThreadState::kReady;
+            t->wait_kind = WaitKind::kNone;
         }
     }
+    PlatformNotifyActivity();
 }
 
 void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
@@ -120,12 +119,80 @@ void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
     WasmThreadContext* ctx = threads_[thread_id - 1];
     if (!ctx) return;
     if (events_[event_id - 1].signaled) {
-        // 既にシグナルされている場合は待たない（消費するかは設計次第だが、ここではリセットする）
         events_[event_id - 1].signaled = false;
-        ctx->state = ThreadState::kReady;
+        ctx->state    = ThreadState::kReady;
+        ctx->wait_kind = WaitKind::kNone;
     } else {
-        ctx->state = ThreadState::kWaiting;
-        ctx->wait_event_id = event_id;
+        ctx->state    = ThreadState::kWaiting;
+        ctx->wait_kind = WaitKind::kEvent;
+        ctx->wait_param.event_id = event_id;
+    }
+}
+
+void WasmScheduler::ThreadWait(uint32_t thread_id) noexcept {
+    WasmThreadContext* ctx = GetThreadContext(thread_id);
+    if (!ctx) return;
+    if (ctx->notify_pending) {
+        ctx->notify_pending = false;
+        ctx->state    = ThreadState::kReady;
+        ctx->wait_kind = WaitKind::kNone;
+    } else {
+        ctx->state    = ThreadState::kWaiting;
+        ctx->wait_kind = WaitKind::kNotify;
+    }
+}
+
+void WasmScheduler::ThreadNotify(uint32_t thread_id) noexcept {
+    WasmThreadContext* ctx = GetThreadContext(thread_id);
+    if (!ctx) return;
+    if (ctx->state == ThreadState::kWaiting && ctx->wait_kind == WaitKind::kNotify) {
+        ctx->state    = ThreadState::kReady;
+        ctx->wait_kind = WaitKind::kNone;
+        PlatformNotifyActivity();
+    } else {
+        ctx->notify_pending = true;
+    }
+}
+
+void WasmScheduler::ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept {
+    WasmThreadContext* ctx = GetThreadContext(thread_id);
+    if (!ctx) return;
+    ctx->state    = ThreadState::kWaiting;
+    ctx->wait_kind = WaitKind::kSleep;
+    ctx->wait_param.wake_time_ms = PlatformGetTimeMs() + duration_ms;
+}
+
+bool WasmScheduler::HasReadyThread() noexcept {
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        if (threads_[i] && threads_[i]->state == ThreadState::kReady) return true;
+    }
+    return false;
+}
+
+uint32_t WasmScheduler::ComputeMinSleepTimeout() noexcept {
+    uint32_t now = PlatformGetTimeMs();
+    uint32_t min_timeout = UINT32_MAX;
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        WasmThreadContext* t = threads_[i];
+        if (t && t->state == ThreadState::kWaiting && t->wait_kind == WaitKind::kSleep) {
+            uint32_t rem = (t->wait_param.wake_time_ms > now)
+                           ? t->wait_param.wake_time_ms - now : 0;
+            if (rem < min_timeout) min_timeout = rem;
+        }
+    }
+    return min_timeout;
+}
+
+void WasmScheduler::PollSleeps() noexcept {
+    uint32_t now = PlatformGetTimeMs();
+    for (std::size_t i = 0; i < kMaxThreads; ++i) {
+        WasmThreadContext* t = threads_[i];
+        if (t && t->state == ThreadState::kWaiting
+               && t->wait_kind == WaitKind::kSleep
+               && now >= t->wait_param.wake_time_ms) {
+            t->state    = ThreadState::kReady;
+            t->wait_kind = WaitKind::kNone;
+        }
     }
 }
 
@@ -133,51 +200,53 @@ WasmResult WasmScheduler::Run() noexcept {
     if (!threads_) return WasmResult::kErrorOutOfMemory;
     while (true) {
         bool any_active = false;
+        bool any_ready  = false;
         for (std::size_t i = 0; i < kMaxThreads; ++i) {
-            if (threads_[i] && threads_[i]->state != ThreadState::kTerminated) {
-                any_active = true;
-                break;
-            }
+            WasmThreadContext* t = threads_[i];
+            if (!t || t->state == ThreadState::kTerminated) continue;
+            any_active = true;
+            if (t->state == ThreadState::kReady) any_ready = true;
         }
         if (!any_active) break;
 
-        WasmResult res = Step();
-        if (res != WasmResult::kOk && res != WasmResult::kYield) return res;
+        if (any_ready) {
+            WasmResult res = Step();
+            if (res != WasmResult::kOk && res != WasmResult::kYield) return res;
+        } else {
+            PollSleeps();
+            if (!HasReadyThread()) {
+                PlatformWaitForActivity(ComputeMinSleepTimeout());
+                PollSleeps();
+            }
+        }
     }
     return WasmResult::kOk;
 }
 
 WasmResult WasmScheduler::Step() noexcept {
-    // Round-robin で Ready なスレッドを探す
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
         if (threads_[idx] && threads_[idx]->state == ThreadState::kReady) {
             current_thread_index_ = idx;
             WasmThreadContext& ctx = *threads_[idx];
             ctx.state = ThreadState::kRunning;
-            
+
             WasmResult res;
             if (ctx.call_stack_top == 0) {
-                // 初回実行。ExecuteInternal を使う場合、引数はスタックに積まれている必要がある。
-                // 現在の CreateThread 実装では引数をサポートしていないため、
-                // 内部関数の開始として func_index を指定する。
-                res = engine_.ExecuteInternal(ctx.start_module, ctx.wait_event_id);
+                res = engine_.ExecuteInternal(ctx.start_module, ctx.start_func_index);
             } else {
-                // 再開（継続実行）。コールスタックは残っているため、モジュールはトップフレームから取得。
                 WasmModuleInstance* resume_mod = const_cast<WasmModuleInstance*>(
                     ctx.call_stack[ctx.call_stack_top - 1].func->module);
                 res = engine_.ExecuteInternal(resume_mod, 0);
             }
 
             if (res == WasmResult::kYield) {
-                // 中断。状態はホストAPI側で kWaiting に変えられている可能性がある
                 if (ctx.state == ThreadState::kRunning) {
                     ctx.state = ThreadState::kReady;
                 }
             } else if (res == WasmResult::kOk) {
                 ctx.state = ThreadState::kTerminated;
             } else {
-                // 実行時エラー。
                 ctx.state = ThreadState::kTerminated;
                 current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
                 return res;
@@ -187,7 +256,7 @@ WasmResult WasmScheduler::Step() noexcept {
             return WasmResult::kOk;
         }
     }
-    return WasmResult::kOk; // 実行可能なスレッドなし
+    return WasmResult::kOk;
 }
 
 #endif // EMBWASM_ENABLE_MULTITHREADING

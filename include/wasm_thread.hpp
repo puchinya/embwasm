@@ -41,8 +41,22 @@ struct WasmFrame {
 enum class ThreadState : uint8_t {
     kReady,      ///< 実行可能状態。スケジューラに選択される待ち。
     kRunning,    ///< 現在実行中。
-    kWaiting,    ///< イベント待ち（`event_wait` により移行）。
+    kWaiting,    ///< 何らかの待機中（WaitKind で詳細を判別）。
     kTerminated  ///< 実行終了。
+};
+
+/// @brief スレッドの待機種別。
+enum class WaitKind : uint8_t {
+    kNone,    ///< 待機なし。
+    kEvent,   ///< WasmEvent 待ち。
+    kNotify,  ///< ThreadNotify 待ち（非同期 I/O 完了通知など）。
+    kSleep,   ///< タイムアウト待ち。
+};
+
+/// @brief 待機パラメータ（WaitKind に応じて使用するフィールドが異なる）。
+union WaitParam {
+    uint32_t event_id;      ///< kEvent: 待機するイベント ID。
+    uint32_t wake_time_ms;  ///< kSleep: 起床する絶対時刻（ms）。
 };
 
 /// @brief スレッドごとの実行コンテキスト。
@@ -67,7 +81,11 @@ struct WasmThreadContext {
     WasmLabel labels_pool[kLabelsPoolSize];
     std::size_t labels_pool_top; ///< 現在の使用済み先頭インデックス。
 
-    uint32_t wait_event_id;        ///< 待機中のイベント ID（kWaiting 時のみ有効）。
+    WaitKind  wait_kind;      ///< 待機種別（state == kWaiting 時のみ有効）。
+    WaitParam wait_param;     ///< 待機パラメータ（wait_kind に応じて使用するフィールドが異なる）。
+    bool      notify_pending; ///< ThreadNotify が ThreadWait より先に届いた場合のフラグ。
+
+    uint32_t start_func_index;     ///< 初回 `ExecuteInternal` に渡す関数インデックス。
     WasmModuleInstance* start_module; ///< 初回 `ExecuteInternal` に渡すモジュールインスタンス。
 
     /// @brief コンテキストを初期状態（`kTerminated`）にリセットします。
@@ -78,6 +96,10 @@ struct WasmThreadContext {
         call_stack_top = 0;
         locals_pool_top = 0;
         labels_pool_top = 0;
+        wait_kind = WaitKind::kNone;
+        wait_param.event_id = 0;
+        notify_pending = false;
+        start_func_index = 0;
         start_module = nullptr;
     }
 };
@@ -135,6 +157,18 @@ public:
     /// @param event_id   待機するイベント ID。
     void WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept;
 
+    /// @brief 指定スレッドを `kNotify` 待機状態（`kWaiting`）に移行します。
+    ///        `notify_pending` が立っていた場合は即 `kReady` に戻します。
+    ///        非同期 I/O 待ちホスト関数から呼ばれます。
+    void ThreadWait(uint32_t thread_id) noexcept;
+
+    /// @brief 指定スレッドの `kNotify` 待機を解除して `kReady` にします。
+    ///        完了ハンドラ（I/O マネージャスレッド）からスタックに結果を積んだ後に呼びます。
+    void ThreadNotify(uint32_t thread_id) noexcept;
+
+    /// @brief 指定スレッドを `duration_ms` ミリ秒スリープさせます。
+    void ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept;
+
     /// @brief すべてのスレッドが終了するまでラウンドロビンで実行します。
     /// @return 正常終了時は kOk。いずれかのスレッドでエラーが発生した場合はそのエラーコード。
     WasmResult Run() noexcept;
@@ -174,6 +208,16 @@ public:
 private:
     /// @brief ラウンドロビンで kReady なスレッドを 1 つ選び 1 ステップ実行します。
     WasmResult Step() noexcept;
+
+    /// @brief kReady 状態のスレッドが 1 つでも存在するか確認します。
+    bool HasReadyThread() noexcept;
+
+    /// @brief kSleep スレッドの次の起床時刻までの残時間（ms）を返します。
+    ///        sleep スレッドが 1 つもない場合は UINT32_MAX を返します。
+    uint32_t ComputeMinSleepTimeout() noexcept;
+
+    /// @brief 起床時刻を過ぎた kSleep スレッドを kReady に移行します。
+    void PollSleeps() noexcept;
 
     WasmEngine& engine_;
     WasmThreadContext** threads_;

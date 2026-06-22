@@ -24,4 +24,25 @@ void RestoreInterrupts(uint32_t primask_val) noexcept {
     ena_dsp();
 }
 
+uint32_t PlatformGetTimeMs() noexcept {
+    SYSTIM tim;
+    get_tim(&tim);
+    return static_cast<uint32_t>(tim);
+}
+
+void PlatformWaitForActivity(uint32_t timeout_ms) noexcept {
+    if (timeout_ms == UINT32_MAX) {
+        slp_tsk();
+    } else {
+        tslp_tsk(static_cast<TMO>(timeout_ms));
+    }
+}
+
+// スケジューラタスク ID（アプリ層で定義する）
+extern ID g_scheduler_task_id;
+
+void PlatformNotifyActivity() noexcept {
+    iwup_tsk(g_scheduler_task_id);
+}
+
 } // namespace embwasm
