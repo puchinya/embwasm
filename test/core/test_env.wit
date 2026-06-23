@@ -5,12 +5,9 @@ package embwasm:test;
 /// @cpp-deinit: embwasm::TestEnvDeinit
 /// @cpp-header: "host_apis.hpp"
 world test-env {
-    /// @cpp-func: embwasm::DummyHostFunc
     import dummy: func();
 
-    /// @cpp-func: embwasm::PrintChar
     import print-char: func(character: s32);
 
-    /// @cpp-func: embwasm::PrintVal
     import print-val: func(val: s32);
 }

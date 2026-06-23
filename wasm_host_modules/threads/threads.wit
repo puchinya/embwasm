@@ -3,15 +3,11 @@ package embwasm:threads;
 /// @cpp-module: threads
 /// @cpp-header: "embwasm_hostmodule_thread.hpp"
 interface threads {
-    /// @cpp-func: embwasm::hostmodules::embwasm::threads::threads::thread_spawn
     thread-spawn: func(name: string) -> s32;
 
-    /// @cpp-func: embwasm::hostmodules::embwasm::threads::threads::thread_yield
     thread-yield: func();
 
-    /// @cpp-func: embwasm::hostmodules::embwasm::threads::threads::event_wait
     event-wait: func(event-id: s32);
 
-    /// @cpp-func: embwasm::hostmodules::embwasm::threads::threads::event_signal
     event-signal: func(event-id: s32);
 }

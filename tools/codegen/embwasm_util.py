@@ -319,6 +319,9 @@ def _parse_wit(wit_path):
     package_name = package_match.group(1) if package_match else ""
     interface_match = re.search(r"interface\s+([\w-]+)\s*{", content)
     interface_name = interface_match.group(1) if interface_match else ""
+    world_match = re.search(r"world\s+([\w-]+)\s*\{", content)
+    world_name = world_match.group(1).replace('-', '_') if world_match else ""
+    iface_or_world = interface_name.replace('-', '_') if interface_name else world_name
 
     if is_interface and package_name and interface_name:
         import_module = f"{package_name}/{interface_name}"
@@ -332,15 +335,13 @@ def _parse_wit(wit_path):
 
     wit_imports = re.findall(r"^///\s*@wit-import:\s*[\"']?([\w./-]+\.wit)[\"']?", content, re.MULTILINE)
 
+    pkg_ns = _wit_package_to_ns(package_name) if package_name else ""
+
     lines = content.splitlines()
-    cpp_func = None
     for line in lines:
         stripped = line.strip()
 
         if stripped.startswith("///"):
-            m = re.search(r"@cpp-func:\s*([\w:]+)", stripped)
-            if m:
-                cpp_func = m.group(1)
             m_mod = re.search(r"@cpp-module:\s*([\w:-]+)", stripped)
             if m_mod:
                 current_module = m_mod.group(1).replace("-", "_")
@@ -360,7 +361,8 @@ def _parse_wit(wit_path):
 
             param_names, param_wit_types, result_wit_types = _parse_wit_sig(sig_part)
 
-            if cpp_func:
+            if pkg_ns and iface_or_world:
+                cpp_func = f"embwasm::hostmodules::{pkg_ns}::{iface_or_world}::{field_name}"
                 apis_flat.append({
                     'module': current_module,
                     'field': field_name,
@@ -372,9 +374,8 @@ def _parse_wit(wit_path):
                     'param_wit_types': param_wit_types,
                     'result_wit_types': result_wit_types,
                 })
-                cpp_func = None
             else:
-                print(f"Warning: No @cpp-func for '{field_name}' in {wit_path}", file=sys.stderr)
+                print(f"Warning: cannot derive cpp_func for '{field_name}' in {wit_path}", file=sys.stderr)
 
     for api in apis_flat:
         if api['module'] == current_module:

@@ -3,9 +3,7 @@ package embwasm:stdio;
 /// @cpp-module: stdio
 /// @cpp-header: "embwasm_hostmodule_stdio.hpp"
 interface stdio {
-    /// @cpp-func: embwasm::hostmodules::embwasm::stdio::stdio::printf
     printf: func(fmt: string, args: list<s32>);
 
-    /// @cpp-func: embwasm::hostmodules::embwasm::stdio::stdio::puts
     puts: func(s: string) -> s32;
 }
