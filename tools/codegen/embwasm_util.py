@@ -307,7 +307,6 @@ def _parse_wit(wit_path):
     apis_flat = []
     headers = []
 
-    current_module = "env"
     module_init = None
     module_deinit = None
 
@@ -322,6 +321,8 @@ def _parse_wit(wit_path):
     world_match = re.search(r"world\s+([\w-]+)\s*\{", content)
     world_name = world_match.group(1).replace('-', '_') if world_match else ""
     iface_or_world = interface_name.replace('-', '_') if interface_name else world_name
+
+    current_module = interface_name.replace('-', '_') if interface_name else "env"
 
     if is_interface and package_name and interface_name:
         import_module = f"{package_name}/{interface_name}"
@@ -342,9 +343,6 @@ def _parse_wit(wit_path):
         stripped = line.strip()
 
         if stripped.startswith("///"):
-            m_mod = re.search(r"@cpp-module:\s*([\w:-]+)", stripped)
-            if m_mod:
-                current_module = m_mod.group(1).replace("-", "_")
             m_init = re.search(r"@cpp-init:\s*([\w::]+)", stripped)
             if m_init:
                 module_init = m_init.group(1)

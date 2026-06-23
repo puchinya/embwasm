@@ -1,6 +1,5 @@
 package embwasm:threads;
 
-/// @cpp-module: threads
 /// @cpp-header: "embwasm_hostmodule_thread.hpp"
 interface threads {
     thread-spawn: func(name: string) -> s32;

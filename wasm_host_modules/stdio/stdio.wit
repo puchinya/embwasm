@@ -1,6 +1,5 @@
 package embwasm:stdio;
 
-/// @cpp-module: stdio
 /// @cpp-header: "embwasm_hostmodule_stdio.hpp"
 interface stdio {
     printf: func(fmt: string, args: list<s32>);
