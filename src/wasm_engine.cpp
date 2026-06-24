@@ -1118,6 +1118,11 @@ namespace embwasm {
         return slot_idx;
     }
 
+    static void SkipLebBytes(const uint8_t*& p, const uint8_t* lim) noexcept {
+        while (p < lim && (*p & 0x80)) ++p;
+        if (p < lim) ++p;
+    }
+
     // =============================================================================
     // 事前検査 (Validate / ValidateFunctionBody)
     // Load() から ParseSections() 完了後に呼ばれる。
@@ -1125,8 +1130,8 @@ namespace embwasm {
     //   1. 全関数の type_index が signature_count_ 内に収まること (型整合性)
     //   2. 各内部関数の total_locals (引数 + ローカル変数) が kMaxLocals 以下であること
     //   3. 各内部関数のバイトコードを線形スキャンし、
-    //      最大ラベルネスト深度が kMaxLabels 以下であること
-    //      最大スタック深度が kWasmStackSize 以下であること
+    //      最大ラベルネスト深度が kWasmValidationMaxLabelDepth 以下であること
+    //      最大スタック深度が kWasmValidationMaxStack 以下であること
     //      local.get/set/tee のインデックスが total_locals 内に収まること
     //      global.get/set のインデックスが global_count_ 内に収まること
     //      call/call_indirect の関数・型インデックスが有効範囲内であること
@@ -1163,8 +1168,78 @@ namespace embwasm {
             int32_t stack_at_entry;
             uint32_t result_count;
         };
-        // kMaxLabels + 1 個確保: 関数ブロック(index 0) + ネスト最大(index 1..kMaxLabels-1)
-        ValLabel val_labels[kMaxLabels + 1];
+        // 事前スキャン: 各オペコードのイミディエイトを正確にスキップしながら
+        // 実際の最大ラベルネスト深度を計測し、プールから最低限確保する。
+        uint32_t pre_top = 1, pre_max = 1; // pre_top = label_top 相当
+        {
+            const uint8_t* p = ip;
+            while (p < limit) {
+                uint8_t b = *p++;
+                switch (b) {
+                    case 0x02: case 0x03: case 0x04: // block/loop/if
+                        SkipLebBytes(p, limit);           // block_type sleb128
+                        if (pre_top >= kWasmValidationMaxLabelDepth)
+                            return WasmResult::kErrorValidationFailed;
+                        ++pre_top;
+                        if (pre_top > pre_max) pre_max = pre_top;
+                        break;
+                    case 0x0B: // end
+                        if (pre_top > 1) --pre_top;
+                        break;
+                    case 0x0C: case 0x0D: case 0x10:
+                    case 0x20: case 0x21: case 0x22:
+                    case 0x23: case 0x24: case 0x25: case 0x26: case 0xD2:
+                        SkipLebBytes(p, limit); break;    // 1 varuint32
+                    case 0x0E: {                      // br_table
+                        uint32_t n = 0, s = 0;
+                        while (p < limit && (*p & 0x80)) { n |= uint32_t(*p++ & 0x7F) << s; s += 7; }
+                        if (p < limit) n |= uint32_t(*p++) << s;
+                        for (uint32_t i = 0; i <= n && p < limit; ++i) SkipLebBytes(p, limit);
+                        break;
+                    }
+                    case 0x11:                        // call_indirect: 2 varuint32
+                        SkipLebBytes(p, limit); SkipLebBytes(p, limit); break;
+                    case 0x1C: {                      // select t*
+                        uint32_t n = 0, s = 0;
+                        while (p < limit && (*p & 0x80)) { n |= uint32_t(*p++ & 0x7F) << s; s += 7; }
+                        if (p < limit) n |= uint32_t(*p++) << s;
+                        if (n <= uint32_t(limit - p)) p += n; else p = limit;
+                        break;
+                    }
+                    case 0x28: case 0x29: case 0x2A: case 0x2B: case 0x2C: case 0x2D:
+                    case 0x2E: case 0x2F: case 0x30: case 0x31: case 0x32: case 0x33:
+                    case 0x34: case 0x35: case 0x36: case 0x37: case 0x38: case 0x39:
+                    case 0x3A: case 0x3B: case 0x3C: case 0x3D: case 0x3E:
+                        SkipLebBytes(p, limit); SkipLebBytes(p, limit); break; // align + offset
+                    case 0x3F: case 0x40:
+                        if (p < limit) ++p; break;    // memory idx (1 byte)
+                    case 0x41: case 0xD0:
+                        SkipLebBytes(p, limit); break;    // varint32
+                    case 0x42:
+                        SkipLebBytes(p, limit); break;    // varint64
+                    case 0x43:
+                        if (uint32_t(limit - p) >= 4) p += 4; else p = limit; break; // f32
+                    case 0x44:
+                        if (uint32_t(limit - p) >= 8) p += 8; else p = limit; break; // f64
+                    case 0xFC: {
+                        uint32_t sub = 0, s = 0;
+                        while (p < limit && (*p & 0x80)) { sub |= uint32_t(*p++ & 0x7F) << s; s += 7; }
+                        if (p < limit) sub |= uint32_t(*p++) << s;
+                        if (sub == 8 || sub == 10 || sub == 12 || sub == 14)
+                            { SkipLebBytes(p, limit); SkipLebBytes(p, limit); }
+                        else if (sub == 9 || sub == 11 || sub == 13 ||
+                                 sub == 15 || sub == 16 || sub == 17)
+                            SkipLebBytes(p, limit);
+                        break;
+                    }
+                    default: break; // イミディエイトなし
+                }
+            }
+        }
+        ValLabel* val_labels = static_cast<ValLabel*>(
+            pool_->Allocate(pre_max * sizeof(ValLabel)));
+        if (!val_labels) return WasmResult::kErrorOutOfMemory;
+        WasmResult result = WasmResult::kOk;
         uint32_t label_top = 1;
         uint32_t max_label_depth = 1;
         val_labels[0] = {0, sig->result_count};
@@ -1199,10 +1274,10 @@ namespace embwasm {
                     } else if (block_type >= -17 && block_type <= -1) {
                         result_count = 1;
                     }
-                    if (label_top >= kMaxLabels) return WasmResult::kErrorValidationFailed;
+                    if (label_top >= kWasmValidationMaxLabelDepth) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     int32_t entry;
                     if (stack_depth < static_cast<int32_t>(param_count)) {
-                        if (!is_unreachable) return WasmResult::kErrorValidationFailed;
+                        if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                         entry = 0;
                     } else {
                         entry = stack_depth - static_cast<int32_t>(param_count);
@@ -1224,10 +1299,10 @@ namespace embwasm {
                     } else if (block_type >= -17 && block_type <= -1) {
                         result_count = 1;
                     }
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     } // 条件値をポップ
-                    if (label_top >= kMaxLabels) return WasmResult::kErrorValidationFailed;
+                    if (label_top >= kWasmValidationMaxLabelDepth) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     val_labels[label_top++] = {stack_depth, result_count};
                     if (label_top > max_label_depth) max_label_depth = label_top;
                     break;
@@ -1253,7 +1328,7 @@ namespace embwasm {
                 case 0x0C: {
                     // br
                     uint32_t label_idx = DecodeVarUint32(ip, limit);
-                    if (label_idx >= label_top) return WasmResult::kErrorValidationFailed;
+                    if (label_idx >= label_top) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     is_unreachable = true;
                     break;
                 }
@@ -1261,8 +1336,8 @@ namespace embwasm {
                 case 0x0D: {
                     // br_if
                     uint32_t label_idx = DecodeVarUint32(ip, limit);
-                    if (label_idx >= label_top) return WasmResult::kErrorValidationFailed;
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (label_idx >= label_top) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     }
                     break;
@@ -1273,9 +1348,9 @@ namespace embwasm {
                     uint32_t target_count = DecodeVarUint32(ip, limit);
                     for (uint32_t i = 0; i <= target_count; ++i) {
                         uint32_t target = DecodeVarUint32(ip, limit);
-                        if (target >= label_top) return WasmResult::kErrorValidationFailed;
+                        if (target >= label_top) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     }
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     }
                     is_unreachable = true;
@@ -1289,12 +1364,12 @@ namespace embwasm {
                 case 0x10: {
                     // call
                     uint32_t fidx = DecodeVarUint32(ip, limit);
-                    if (fidx >= function_count) return WasmResult::kErrorValidationFailed;
+                    if (fidx >= function_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     uint32_t ti = functions[fidx].type_index;
-                    if (ti >= signature_count) return WasmResult::kErrorValidationFailed; {
+                    if (ti >= signature_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; } {
                         int32_t p = static_cast<int32_t>(signatures[ti]->param_count);
                         if (stack_depth < p) {
-                            if (!is_unreachable) return WasmResult::kErrorValidationFailed;
+                            if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                             stack_depth = 0;
                         } else { stack_depth -= p; }
                     }
@@ -1307,18 +1382,18 @@ namespace embwasm {
                     uint32_t type_idx = DecodeVarUint32(ip, limit);
                     uint32_t table_idx = 0;
                     if (ip < limit) table_idx = *ip++;
-                    if (type_idx >= signature_count) return WasmResult::kErrorValidationFailed;
-                    if (table_count == 0 || table_idx >= table_count) return WasmResult::kErrorValidationFailed;
+                    if (type_idx >= signature_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+                    if (table_count == 0 || table_idx >= table_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     // テーブルが必要
-                    if (table_types[table_idx] != WasmType::kFuncRef) return WasmResult::kErrorValidationFailed;
+                    if (table_types[table_idx] != WasmType::kFuncRef) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     // funcrefテーブルが必要
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     } // 要素インデックスをポップ
                     {
                         int32_t p = static_cast<int32_t>(signatures[type_idx]->param_count);
                         if (stack_depth < p) {
-                            if (!is_unreachable) return WasmResult::kErrorValidationFailed;
+                            if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                             stack_depth = 0;
                         } else { stack_depth -= p; }
                     }
@@ -1327,13 +1402,13 @@ namespace embwasm {
                 }
 
                 case 0x1A: // drop
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     }
                     break;
 
                 case 0x1B: // select
-                    if (stack_depth < 2) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 2) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth -= 2;
                     }
                     break;
@@ -1343,7 +1418,7 @@ namespace embwasm {
                     uint32_t tc = DecodeVarUint32(ip, limit);
                     if (tc <= static_cast<uint32_t>(limit - ip)) ip += tc;
                     else ip = limit;
-                    if (stack_depth < 2) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 2) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth -= 2;
                     }
                     break;
@@ -1352,15 +1427,15 @@ namespace embwasm {
                 case 0x20: {
                     // local.get
                     uint32_t lidx = DecodeVarUint32(ip, limit);
-                    if (lidx >= total_locals) return WasmResult::kErrorValidationFailed;
+                    if (lidx >= total_locals) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     stack_depth++;
                     break;
                 }
                 case 0x21: {
                     // local.set
                     uint32_t lidx = DecodeVarUint32(ip, limit);
-                    if (lidx >= total_locals) return WasmResult::kErrorValidationFailed;
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (lidx >= total_locals) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     }
                     break;
@@ -1368,21 +1443,21 @@ namespace embwasm {
                 case 0x22: {
                     // local.tee
                     uint32_t lidx = DecodeVarUint32(ip, limit);
-                    if (lidx >= total_locals) return WasmResult::kErrorValidationFailed;
+                    if (lidx >= total_locals) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     break;
                 }
                 case 0x23: {
                     // global.get
                     uint32_t gidx = DecodeVarUint32(ip, limit);
-                    if (gidx >= global_count) return WasmResult::kErrorValidationFailed;
+                    if (gidx >= global_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     stack_depth++;
                     break;
                 }
                 case 0x24: {
                     // global.set
                     uint32_t gidx = DecodeVarUint32(ip, limit);
-                    if (gidx >= global_count) return WasmResult::kErrorValidationFailed;
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (gidx >= global_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     }
                     break;
@@ -1393,7 +1468,7 @@ namespace embwasm {
                     break;
                 case 0x26: // table.set: pop idx + ref → -2
                     DecodeVarUint32(ip, limit);
-                    if (stack_depth < 2) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 2) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth -= 2;
                     }
                     break;
@@ -1413,7 +1488,7 @@ namespace embwasm {
                 case 0x33:
                 case 0x34:
                 case 0x35: {
-                    if (!has_memory_) return WasmResult::kErrorValidationFailed;
+                    if (!has_memory_) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     uint32_t align = DecodeVarUint32(ip, limit);
                     DecodeVarUint32(ip, limit); // offset
                     // アラインメントは log2(アクセスバイト数) 以下でなければならない
@@ -1426,7 +1501,7 @@ namespace embwasm {
                                                          : (op == 0x2C || op == 0x2D || op == 0x30 || op == 0x31)
                                                                ? 0u
                                                                : 0u;
-                    if (align > max_align) return WasmResult::kErrorValidationFailed;
+                    if (align > max_align) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     break;
                 }
 
@@ -1440,7 +1515,7 @@ namespace embwasm {
                 case 0x3C:
                 case 0x3D:
                 case 0x3E: {
-                    if (!has_memory_) return WasmResult::kErrorValidationFailed;
+                    if (!has_memory_) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     uint32_t align = DecodeVarUint32(ip, limit);
                     DecodeVarUint32(ip, limit);
                     uint32_t max_align = (op == 0x37 || op == 0x39)
@@ -1452,20 +1527,20 @@ namespace embwasm {
                                                          : (op == 0x3A || op == 0x3C)
                                                                ? 0u
                                                                : 0u;
-                    if (align > max_align) return WasmResult::kErrorValidationFailed;
-                    if (stack_depth < 2) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (align > max_align) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+                    if (stack_depth < 2) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth -= 2;
                     }
                     break;
                 }
 
                 case 0x3F: // memory.size: push size → +1
-                    if (!has_memory_) return WasmResult::kErrorValidationFailed;
+                    if (!has_memory_) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     if (ip < limit) ip++;
                     stack_depth++;
                     break;
                 case 0x40: // memory.grow: pop count, push old_size → net 0
-                    if (!has_memory_) return WasmResult::kErrorValidationFailed;
+                    if (!has_memory_) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     if (ip < limit) ip++;
                     break;
 
@@ -1617,7 +1692,7 @@ namespace embwasm {
                 case 0xA4:
                 case 0xA5:
                 case 0xA6: // f64 binary
-                    if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                    if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth--;
                     }
                     break;
@@ -1640,7 +1715,7 @@ namespace embwasm {
                         // memory.init / table.init: 2 immediates, net -3
                         DecodeVarUint32(ip, limit);
                         DecodeVarUint32(ip, limit);
-                        if (stack_depth < 3) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                        if (stack_depth < 3) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                             stack_depth -= 3;
                         }
                     } else if (sub_op == 9 || sub_op == 13) {
@@ -1650,26 +1725,26 @@ namespace embwasm {
                         // memory.copy: 2 immediates (dst_mem, src_mem), net -3
                         DecodeVarUint32(ip, limit);
                         DecodeVarUint32(ip, limit);
-                        if (stack_depth < 3) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                        if (stack_depth < 3) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                             stack_depth -= 3;
                         }
                     } else if (sub_op == 11) {
                         // memory.fill: 1 immediate (mem_idx), net -3
                         DecodeVarUint32(ip, limit);
-                        if (stack_depth < 3) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                        if (stack_depth < 3) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                             stack_depth -= 3;
                         }
                     } else if (sub_op == 14) {
                         // table.copy: 2 immediates, net -3
                         DecodeVarUint32(ip, limit);
                         DecodeVarUint32(ip, limit);
-                        if (stack_depth < 3) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                        if (stack_depth < 3) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                             stack_depth -= 3;
                         }
                     } else if (sub_op == 15) {
                         // table.grow: 1 immediate, pop ref + count push old_size → net -1
                         DecodeVarUint32(ip, limit);
-                        if (stack_depth < 1) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                        if (stack_depth < 1) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                             stack_depth--;
                         }
                     } else if (sub_op == 16) {
@@ -1679,32 +1754,34 @@ namespace embwasm {
                     } else if (sub_op == 17) {
                         // table.fill: 1 immediate, net -3
                         DecodeVarUint32(ip, limit);
-                        if (stack_depth < 3) { if (!is_unreachable) return WasmResult::kErrorValidationFailed; } else {
+                        if (stack_depth < 3) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                             stack_depth -= 3;
                         }
                     } else {
-                        return WasmResult::kErrorValidationFailed;
+                        result = WasmResult::kErrorValidationFailed; goto cleanup;
                     }
                     break;
                 }
 
                 default:
-                    return WasmResult::kErrorValidationFailed;
+                    result = WasmResult::kErrorValidationFailed; goto cleanup;
             }
         }
 
         if (stack_depth > max_stack_depth) max_stack_depth = stack_depth;
 
         // 制限超過チェック (スキャン中に既にチェック済みだが念のため)
-        if (max_label_depth > kMaxLabels) return WasmResult::kErrorValidationFailed;
-        if (max_stack_depth > static_cast<int32_t>(kWasmStackSize))
-            return WasmResult::kErrorValidationFailed;
+        if (max_label_depth > kWasmValidationMaxLabelDepth) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+        if (max_stack_depth > static_cast<int32_t>(kWasmValidationMaxStack))
+            { result = WasmResult::kErrorValidationFailed; goto cleanup; }
 
         // 算出値を関数メンバーに記録
         func.local.max_label_depth = max_label_depth;
         func.local.max_stack_depth = static_cast<uint32_t>(max_stack_depth < 0 ? 0 : max_stack_depth);
 
-        return WasmResult::kOk;
+    cleanup:
+        pool_->Free(val_labels);
+        return result;
     }
 
     WasmResult WasmEngine::Validate(WasmModuleInstance *mod) noexcept {
