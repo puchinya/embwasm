@@ -63,8 +63,11 @@ TEST_F(WasmHostModuleStdioTest, PutsExecution) {
     uint32_t addr = 100;
     std::memcpy(mem_ + addr, msg, len);
 
+    embwasm::WasmValue ctx_stack[16];
     embwasm::WasmThreadContext ctx;
     ctx.Reset();
+    ctx.stack = ctx_stack;
+    ctx.stack_size = 16;
     // WASM pushes ptr then len; dispatch pops len first, then ptr
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(addr));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(len));
@@ -77,6 +80,8 @@ TEST_F(WasmHostModuleStdioTest, PutsExecution) {
 
     // 異常系: 線形メモリ範囲外のポインタ指定
     ctx.Reset();
+    ctx.stack = ctx_stack;
+    ctx.stack_size = 16;
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(mem_size_ - 5));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(10);
 
@@ -99,8 +104,11 @@ TEST_F(WasmHostModuleStdioTest, PrintfExecution) {
     uint32_t list_addr = 400;
     std::memcpy(mem_ + list_addr, list_data, sizeof(list_data));
 
+    embwasm::WasmValue ctx_stack[16];
     embwasm::WasmThreadContext ctx;
     ctx.Reset();
+    ctx.stack = ctx_stack;
+    ctx.stack_size = 16;
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_addr));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_len));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr));
@@ -121,8 +129,11 @@ TEST_F(WasmHostModuleStdioTest, PrintfOmissionAndOOB) {
     uint32_t list_addr = 600;
     std::memcpy(mem_ + list_addr, list_data, sizeof(list_data));
 
+    embwasm::WasmValue ctx_stack[16];
     embwasm::WasmThreadContext ctx;
     ctx.Reset();
+    ctx.stack = ctx_stack;
+    ctx.stack_size = 16;
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_addr));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(fmt_len));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr));
@@ -134,6 +145,8 @@ TEST_F(WasmHostModuleStdioTest, PrintfOmissionAndOOB) {
 
     // 異常系: 線形メモリ範囲外のフォーマット文字列
     ctx.Reset();
+    ctx.stack = ctx_stack;
+    ctx.stack_size = 16;
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(mem_size_ - 2));
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(5);
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(list_addr));
