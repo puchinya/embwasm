@@ -2805,6 +2805,66 @@ namespace embwasm {
         return result;
     }
 
+    // call / call_indirect 共通のフレーム構築ヘルパー。
+    // 成功時は新フレームを call_stack に積み kOk を返す。sp と max_call_stack_depth は更新される。
+    // 失敗時は sp / ctx->stack_top をロールバックしてエラーコードを返す。
+    static WasmResult PushCallFrame(
+        WasmThreadContext *ctx,
+        const WasmFunction *target_func,
+        WasmModuleInstance *target_mod,
+        std::size_t &sp,
+        std::size_t &max_call_stack_depth,
+        WasmResult call_stack_error
+    ) noexcept {
+        if (ctx->call_stack_top >= ctx->call_stack_size)
+            return call_stack_error;
+
+        const WasmTypeSignature *sig = target_mod->signatures[target_func->type_index];
+        uint32_t total_locals = sig->param_count + target_func->local.local_count;
+
+        WasmFrame &new_frame = ctx->call_stack[ctx->call_stack_top++];
+        if (ctx->call_stack_top > max_call_stack_depth)
+            max_call_stack_depth = ctx->call_stack_top;
+        new_frame.func = target_func;
+        new_frame.ip = target_func->local.code_ptr;
+        new_frame.limit = target_func->local.code_ptr + target_func->local.code_size;
+        new_frame.total_locals = total_locals;
+        new_frame.label_stack_top = 0;
+
+        const std::size_t locals_base = sp - sig->param_count;
+        new_frame.locals = ctx->stack + locals_base;
+        ctx->stack_top = locals_base + total_locals;
+        sp = ctx->stack_top;
+        for (uint32_t i = sig->param_count; i < total_locals; ++i)
+            new_frame.locals[i] = WasmValue{};
+
+        if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
+            ctx->stack_top = locals_base + sig->param_count;
+            sp = ctx->stack_top;
+            --ctx->call_stack_top;
+            return WasmResult::kErrorExecuteTrapStackOverflow;
+        }
+
+        new_frame.label_capacity = target_func->local.max_label_depth;
+        if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
+            ctx->stack_top = locals_base + sig->param_count;
+            sp = ctx->stack_top;
+            --ctx->call_stack_top;
+            return WasmResult::kErrorExecuteTrapLabelStackOverflow;
+        }
+        new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
+        ctx->labels_pool_top += new_frame.label_capacity;
+
+        WasmLabel &func_label = new_frame.labels[new_frame.label_stack_top++];
+        func_label.opcode = 0x02; // block
+        func_label.stack_top = locals_base;
+        func_label.param_count = 0;
+        func_label.result_count = sig->result_count;
+        func_label.pc = new_frame.limit;
+
+        return WasmResult::kOk;
+    }
+
     WasmResult WasmEngine::
     ExecuteInternal(WasmModuleInstance *module, uint32_t func_index) noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
@@ -3345,68 +3405,10 @@ namespace embwasm {
                             }
                             if (sp > max_stack_depth_) max_stack_depth_ = sp;
                         } else {
-                            // 内部関数の実行（他モジュールの内部関数も含む）
-                            if (ctx->call_stack_top >= ctx->call_stack_size) {
-                                result = WasmResult::kErrorExecuteTrapStackOverflow;
-                                goto done;
-                            }
-                            const WasmTypeSignature *sig = call_mod->signatures[target_func->type_index];
-                            uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
-
-                            // 遷移前に現在のフレームのIPを書き戻す
                             frame.ip = ip;
-
-                            WasmFrame &new_frame = ctx->call_stack[ctx->call_stack_top++];
-                            if (ctx->call_stack_top > max_call_stack_depth_) {
-                                max_call_stack_depth_ = ctx->call_stack_top;
-                            }
-                            new_frame.func = target_func;
-                            new_frame.ip = target_func->local.code_ptr;
-                            new_frame.limit = target_func->local.code_ptr + target_func->local.code_size;
-                            new_frame.total_locals = target_total_locals;
-                            new_frame.label_stack_top = 0;
-
-                            // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
-                            ctx->stack_top = sp;
-                            const std::size_t locals_base = ctx->stack_top - sig->param_count;
-                            new_frame.locals = ctx->stack + locals_base;
-                            ctx->stack_top = locals_base + target_total_locals;
-                            sp = ctx->stack_top;
-                            // 引数以外のローカル変数のみゼロ初期化
-                            for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
-                                new_frame.locals[i] = WasmValue{};
-                            }
-                            if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
-                                ctx->stack_top = locals_base + sig->param_count;
-                                sp = ctx->stack_top;
-                                --ctx->call_stack_top;
-                                result = WasmResult::kErrorExecuteTrapStackOverflow;
-                                goto done;
-                            }
-
-                            // ラベルプールからスライスを切り出す
-                            new_frame.label_capacity = target_func->local.max_label_depth;
-                            if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
-                                ctx->stack_top = locals_base + sig->param_count;
-                                sp = ctx->stack_top;
-                                --ctx->call_stack_top;
-                                result = WasmResult::kErrorExecuteTrapLabelStackOverflow;
-                                goto done;
-                            }
-                            new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
-                            ctx->labels_pool_top += new_frame.label_capacity;
-
-                            // locals_base をリターン先として設定
-                            {
-                                WasmLabel &func_label = new_frame.labels[new_frame.label_stack_top++];
-                                func_label.opcode = 0x02; // block
-                                func_label.stack_top = locals_base;
-                                func_label.param_count = 0;
-                                func_label.result_count = sig->result_count;
-                                func_label.pc = new_frame.limit;
-                            }
-
-                            ctx->stack_top = sp;
+                            result = PushCallFrame(ctx, target_func, call_mod, sp, max_call_stack_depth_,
+                                                   WasmResult::kErrorExecuteTrapStackOverflow);
+                            if (result != WasmResult::kOk) goto done;
                             goto frame_changed;
                         }
                         break;
@@ -3473,65 +3475,10 @@ namespace embwasm {
                             }
                             if (sp > max_stack_depth_) max_stack_depth_ = sp;
                         } else {
-                            if (ctx->call_stack_top >= ctx->call_stack_size) {
-                                result = WasmResult::kErrorExecuteTrapCallStackOverflow;
-                                goto done;
-                            }
-                            const WasmTypeSignature *sig = target_module->signatures[target_func->type_index];
-                            uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
-
                             frame.ip = ip;
-
-                            WasmFrame &new_frame = ctx->call_stack[ctx->call_stack_top++];
-                            if (ctx->call_stack_top > max_call_stack_depth_)
-                                max_call_stack_depth_ = ctx->call_stack_top;
-                            new_frame.func = target_func;
-                            new_frame.ip = target_func->local.code_ptr;
-                            new_frame.limit = target_func->local.code_ptr + target_func->local.code_size;
-                            new_frame.total_locals = target_total_locals;
-                            new_frame.label_stack_top = 0;
-
-                            // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
-                            ctx->stack_top = sp;
-                            const std::size_t locals_base_i = ctx->stack_top - sig->param_count;
-                            new_frame.locals = ctx->stack + locals_base_i;
-                            ctx->stack_top = locals_base_i + target_total_locals;
-                            sp = ctx->stack_top;
-                            // 引数以外のローカル変数のみゼロ初期化
-                            for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
-                                new_frame.locals[i] = WasmValue{};
-                            }
-                            if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
-                                ctx->stack_top = locals_base_i + sig->param_count;
-                                sp = ctx->stack_top;
-                                --ctx->call_stack_top;
-                                result = WasmResult::kErrorExecuteTrapStackOverflow;
-                                goto done;
-                            }
-
-                            // ラベルプールからスライスを切り出す
-                            new_frame.label_capacity = target_func->local.max_label_depth;
-                            if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
-                                ctx->stack_top = locals_base_i + sig->param_count;
-                                sp = ctx->stack_top;
-                                --ctx->call_stack_top;
-                                result = WasmResult::kErrorExecuteTrapLabelStackOverflow;
-                                goto done;
-                            }
-                            new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
-                            ctx->labels_pool_top += new_frame.label_capacity;
-
-                            // locals_base をリターン先として設定
-                            {
-                                WasmLabel &func_label = new_frame.labels[new_frame.label_stack_top++];
-                                func_label.opcode = 0x02; // block
-                                func_label.stack_top = locals_base_i;
-                                func_label.param_count = 0;
-                                func_label.result_count = sig->result_count;
-                                func_label.pc = new_frame.limit;
-                            }
-
-                            ctx->stack_top = sp;
+                            result = PushCallFrame(ctx, target_func, target_module, sp, max_call_stack_depth_,
+                                                   WasmResult::kErrorExecuteTrapCallStackOverflow);
+                            if (result != WasmResult::kOk) goto done;
                             goto frame_changed;
                         }
                         break;
