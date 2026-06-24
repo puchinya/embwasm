@@ -47,7 +47,6 @@ uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_i
     main.state = ThreadState::kReady;
     main.stack_top = 0;
     main.call_stack_top = 0;
-    main.locals_pool_top = 0;
     main.labels_pool_top = 0;
     main.start_func_index = func_index;
     main.start_module = mod;

@@ -29,7 +29,7 @@ struct WasmFrame {
     const WasmFunction* func; ///< 実行中の関数。
     const uint8_t* ip;        ///< 現在のインストラクションポインタ。
     const uint8_t* limit;     ///< バイトコードの終端ポインタ。
-    WasmValue* locals;        ///< `WasmThreadContext::locals_pool` 内のスライスへのポインタ。
+    WasmValue* locals;        ///< `WasmThreadContext::stack` 内のローカル変数スライスへのポインタ。
     uint32_t total_locals;    ///< 引数＋ローカル変数の合計数。
 
     WasmLabel* labels;            ///< `WasmThreadContext::labels_pool` 内のスライスへのポインタ。
@@ -67,15 +67,13 @@ struct WasmThreadContext {
     uint32_t id;        ///< スレッド ID（1-based）。
     ThreadState state;  ///< 現在の実行状態。
 
-    WasmValue stack[kWasmStackSize]; ///< WASM 演算スタック。
-    std::size_t stack_top;           ///< スタックの現在深さ。
+    /// @brief 統合スタック。演算値とフレームごとのローカル変数を一本の配列で管理します。
+    /// レイアウト: [frame0 locals][frame0 operands][frame1 locals][frame1 operands]...
+    WasmValue stack[kUnifiedStackSize];
+    std::size_t stack_top; ///< スタックの現在深さ（ローカル変数領域を含む）。
 
     WasmFrame call_stack[kWasmCallStackSize]; ///< WASM コールスタック。
     std::size_t call_stack_top;               ///< コールスタックの現在深さ。
-
-    /// @brief 全フレーム共有のローカル変数プール。フレームごとに必要数を切り出します。
-    WasmValue locals_pool[kLocalsPoolSize];
-    std::size_t locals_pool_top; ///< 現在の使用済み先頭インデックス。
 
     /// @brief 全フレーム共有のラベルプール。フレームごとに必要数を切り出します。
     WasmLabel labels_pool[kLabelsPoolSize];
@@ -94,7 +92,6 @@ struct WasmThreadContext {
         state = ThreadState::kTerminated;
         stack_top = 0;
         call_stack_top = 0;
-        locals_pool_top = 0;
         labels_pool_top = 0;
         wait_kind = WaitKind::kNone;
         wait_param.event_id = 0;

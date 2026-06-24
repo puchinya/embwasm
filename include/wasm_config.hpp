@@ -46,8 +46,11 @@ constexpr std::size_t kMaxLocals = 32;
 /// @brief ロード時にパースできる最大ローカル変数宣言数。`kMaxLocals` より大きく設定できます。
 constexpr std::size_t kMaxLocalDecls = 64;
 
-/// @brief ローカル変数プールの総サイズ（全コールフレーム共有・`WasmThreadContext` 内に静的確保）。
+/// @brief ローカル変数プールの最大サイズ（全コールフレーム合計）。
 constexpr std::size_t kLocalsPoolSize = kWasmCallStackSize * kMaxLocals; // = 512
+
+/// @brief 統合スタックの総サイズ（ローカル変数領域 + 演算スタック領域）。`WasmThreadContext::stack` に使用。
+constexpr std::size_t kUnifiedStackSize = kLocalsPoolSize + kWasmStackSize; // = 576
 
 /// @brief 1 関数内の制御ブロック（`block` / `loop` / `if`）の最大ネスト数。
 constexpr std::size_t kMaxLabels = 32;

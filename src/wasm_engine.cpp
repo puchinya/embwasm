@@ -2795,21 +2795,22 @@ namespace embwasm {
                 frame.total_locals = total_locals;
                 frame.label_stack_top = 0;
 
-                // ローカル変数プールからスライスを切り出す
-                if (ctx->locals_pool_top + total_locals > kLocalsPoolSize) {
-                    --ctx->call_stack_top;
-                    return WasmResult::kErrorOutOfMemory;
+                // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
+                if (ctx->stack_top < sig.param_count) {
+                    return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                 }
-                frame.locals = ctx->locals_pool + ctx->locals_pool_top;
-                ctx->locals_pool_top += total_locals;
-                for (uint32_t i = 0; i < total_locals; ++i) {
+                const std::size_t locals_base = ctx->stack_top - sig.param_count;
+                frame.locals = ctx->stack + locals_base;
+                ctx->stack_top = locals_base + total_locals;
+                // 引数以外のローカル変数のみゼロ初期化
+                for (uint32_t i = sig.param_count; i < total_locals; ++i) {
                     frame.locals[i] = WasmValue{};
                 }
 
                 // ラベルプールからスライスを切り出す
                 frame.label_capacity = initial_func->local.max_label_depth;
                 if (ctx->labels_pool_top + frame.label_capacity > kLabelsPoolSize) {
-                    ctx->locals_pool_top -= total_locals;
+                    ctx->stack_top = locals_base + sig.param_count;
                     --ctx->call_stack_top;
                     return WasmResult::kErrorExecuteTrapLabelStackOverflow;
                 }
@@ -2820,18 +2821,10 @@ namespace embwasm {
                 {
                     WasmLabel &func_label = frame.labels[frame.label_stack_top++];
                     func_label.opcode = 0x02; // block
-                    func_label.stack_top = 0;
+                    func_label.stack_top = locals_base;
                     func_label.param_count = 0;
                     func_label.result_count = sig.result_count;
                     func_label.pc = frame.limit;
-                }
-
-                // 引数をスタックからポップし、ローカル変数の前半部分に格納 (LIFOのため逆順)
-                if (ctx->stack_top < sig.param_count) {
-                    return OnTrap(WasmResult::kErrorExecuteRuntimeError);
-                }
-                for (uint32_t i = 0; i < sig.param_count; ++i) {
-                    frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
                 }
             }
         }
@@ -3245,8 +3238,8 @@ namespace embwasm {
                             break;
                         }
                         // 関数の終了 (end で label_stack_top == 0、または return)
+                        // locals はフレームの func_label.stack_top への巻き戻しで自動解放される
                         ctx->labels_pool_top -= frame.label_capacity;
-                        ctx->locals_pool_top -= frame.total_locals;
                         if (ctx->call_stack_top > 0) {
                             --ctx->call_stack_top;
                             goto frame_changed;
@@ -3300,22 +3293,16 @@ namespace embwasm {
                             new_frame.total_locals = target_total_locals;
                             new_frame.label_stack_top = 0;
 
-                            // ローカル変数プールからスライスを切り出す
-                            if (ctx->locals_pool_top + target_total_locals > kLocalsPoolSize) {
-                                --ctx->call_stack_top;
-                                return WasmResult::kErrorOutOfMemory;
-                            }
-                            new_frame.locals = ctx->locals_pool + ctx->locals_pool_top;
-                            ctx->locals_pool_top += target_total_locals;
-                            for (uint32_t i = 0; i < target_total_locals; ++i) {
+                            // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
+                            const std::size_t locals_base = ctx->stack_top - sig.param_count;
+                            new_frame.locals = ctx->stack + locals_base;
+                            ctx->stack_top = locals_base + target_total_locals;
+                            // 引数以外のローカル変数のみゼロ初期化
+                            for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
-
-                            for (uint32_t i = 0; i < sig.param_count; ++i) {
-                                new_frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
-                            }
-                            if (ctx->stack_top + target_func->local.max_stack_depth > kWasmStackSize) {
-                                ctx->locals_pool_top -= target_total_locals;
+                            if (ctx->stack_top + target_func->local.max_stack_depth > kUnifiedStackSize) {
+                                ctx->stack_top = locals_base + sig.param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
                             }
@@ -3323,18 +3310,18 @@ namespace embwasm {
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
                             if (ctx->labels_pool_top + new_frame.label_capacity > kLabelsPoolSize) {
-                                ctx->locals_pool_top -= target_total_locals;
+                                ctx->stack_top = locals_base + sig.param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapLabelStackOverflow;
                             }
                             new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
                             ctx->labels_pool_top += new_frame.label_capacity;
 
-                            // 引数ポップ後のstack_topを関数ベースとして設定
+                            // locals_base をリターン先として設定
                             {
                                 WasmLabel &func_label = new_frame.labels[new_frame.label_stack_top++];
                                 func_label.opcode = 0x02; // block
-                                func_label.stack_top = ctx->stack_top;
+                                func_label.stack_top = locals_base;
                                 func_label.param_count = 0;
                                 func_label.result_count = sig.result_count;
                                 func_label.pc = new_frame.limit;
@@ -3406,22 +3393,16 @@ namespace embwasm {
                             new_frame.total_locals = target_total_locals;
                             new_frame.label_stack_top = 0;
 
-                            // ローカル変数プールからスライスを切り出す
-                            if (ctx->locals_pool_top + target_total_locals > kLocalsPoolSize) {
-                                --ctx->call_stack_top;
-                                return WasmResult::kErrorOutOfMemory;
-                            }
-                            new_frame.locals = ctx->locals_pool + ctx->locals_pool_top;
-                            ctx->locals_pool_top += target_total_locals;
-                            for (uint32_t i = 0; i < target_total_locals; ++i) {
+                            // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
+                            const std::size_t locals_base_i = ctx->stack_top - sig.param_count;
+                            new_frame.locals = ctx->stack + locals_base_i;
+                            ctx->stack_top = locals_base_i + target_total_locals;
+                            // 引数以外のローカル変数のみゼロ初期化
+                            for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
-
-                            for (uint32_t i = 0; i < sig.param_count; ++i) {
-                                new_frame.locals[sig.param_count - 1 - i] = ctx->stack[--ctx->stack_top];
-                            }
-                            if (ctx->stack_top + target_func->local.max_stack_depth > kWasmStackSize) {
-                                ctx->locals_pool_top -= target_total_locals;
+                            if (ctx->stack_top + target_func->local.max_stack_depth > kUnifiedStackSize) {
+                                ctx->stack_top = locals_base_i + sig.param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
                             }
@@ -3429,18 +3410,18 @@ namespace embwasm {
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
                             if (ctx->labels_pool_top + new_frame.label_capacity > kLabelsPoolSize) {
-                                ctx->locals_pool_top -= target_total_locals;
+                                ctx->stack_top = locals_base_i + sig.param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapLabelStackOverflow;
                             }
                             new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
                             ctx->labels_pool_top += new_frame.label_capacity;
 
-                            // 引数ポップ後のstack_topを関数ベースとして設定
+                            // locals_base をリターン先として設定
                             {
                                 WasmLabel &func_label = new_frame.labels[new_frame.label_stack_top++];
                                 func_label.opcode = 0x02; // block
-                                func_label.stack_top = ctx->stack_top;
+                                func_label.stack_top = locals_base_i;
                                 func_label.param_count = 0;
                                 func_label.result_count = sig.result_count;
                                 func_label.pc = new_frame.limit;
@@ -5008,10 +4989,10 @@ namespace embwasm {
             }
 
             // 関数の末尾に達した場合は暗黙のリターン
+            // locals は func_label.stack_top への巻き戻しで自動解放される
             frame.ip = ip;
             if (ctx->call_stack_top > 0) {
                 ctx->labels_pool_top -= frame.label_capacity;
-                ctx->locals_pool_top -= frame.total_locals;
                 --ctx->call_stack_top;
             }
 
