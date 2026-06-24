@@ -3204,21 +3204,11 @@ namespace embwasm {
                             uint32_t arity = (target_label.opcode == 0x03)
                                                  ? target_label.param_count
                                                  : target_label.result_count;
-                            WasmValue saved_vals[128] = {};
-                            if (arity > 128) arity = 128; // 安全のための上限
-
-                            for (uint32_t i = 0; i < arity; ++i) {
-                                if (sp > 0) {
-                                    saved_vals[arity - 1 - i] = stack[--sp];
-                                }
-                            }
-
+                            const std::size_t src = sp - arity;
                             sp = target_label.stack_top;
-
-                            // 退避した値を再びプッシュする
-                            for (uint32_t i = 0; i < arity; ++i) {
-                                stack[sp++] = saved_vals[i];
-                            }
+                            if (arity > 0)
+                                std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                            sp += arity;
 
                             // label.pc は:
                             //   block/if の場合: end の次のバイト（end 後）を指す
@@ -3267,21 +3257,11 @@ namespace embwasm {
                         uint32_t arity = (target_label.opcode == 0x03)
                                              ? target_label.param_count
                                              : target_label.result_count;
-                        WasmValue saved_vals[128] = {};
-                        if (arity > 128) arity = 128; // 安全のための上限
-
-                        for (uint32_t i = 0; i < arity; ++i) {
-                            if (sp > 0) {
-                                saved_vals[arity - 1 - i] = stack[--sp];
-                            }
-                        }
-
+                        const std::size_t src = sp - arity;
                         sp = target_label.stack_top;
-
-                        // 退避した値を再びプッシュする
-                        for (uint32_t i = 0; i < arity; ++i) {
-                            stack[sp++] = saved_vals[i];
-                        }
+                        if (arity > 0)
+                            std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                        sp += arity;
 
                         ip = target_label.pc;
                         frame.ip = ip;
@@ -3301,20 +3281,11 @@ namespace embwasm {
                             WasmLabel &label = frame.labels[frame.label_stack_top - 1];
                             uint32_t arity = label.result_count;
 
-                            // 結果の値を退避 (LIFOのため逆順)
-                            WasmValue saved_vals[128] = {};
-                            if (arity > 128) arity = 128;
-                            for (uint32_t i = 0; i < arity; ++i) {
-                                saved_vals[arity - 1 - i] = stack[--sp];
-                            }
-
-                            // スタックポインタをブロック開始時の位置に戻す
+                            const std::size_t src = sp - arity;
                             sp = label.stack_top;
-
-                            // 退避した結果の値を再びプッシュする
-                            for (uint32_t i = 0; i < arity; ++i) {
-                                stack[sp++] = saved_vals[i];
-                            }
+                            if (arity > 0)
+                                std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                            sp += arity;
 
                             frame.label_stack_top--;
                             break;
