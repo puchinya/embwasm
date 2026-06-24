@@ -9,6 +9,7 @@
 // =============================================================================
 
 #include "wasm_engine.hpp"
+#include "wasm_limits.hpp"
 #include "wasm_platform.hpp"
 #include <cstring>
 #include <cmath>
@@ -16,10 +17,12 @@
 
 namespace embwasm {
 
-    bool WasmTypeSignature::Equals(const WasmTypeSignature *x, const WasmTypeSignature *y) {
-        return x->param_count == y->param_count && x->result_count == y->result_count &&
-            std::equal(x->params, x->params + x->param_count, y->params) &&
-            std::equal(x->results, x->results + x->result_count, y->results);
+    bool WasmTypeSignature::Equals(const WasmTypeSignature *x, const WasmTypeSignature *y) noexcept {
+        if (x->param_count != y->param_count || x->result_count != y->result_count) return false;
+        uint32_t words = WordCount(x->param_count + x->result_count);
+        for (uint32_t i = 0; i < words; ++i)
+            if (x->data.u32[i] != y->data.u32[i]) return false;
+        return true;
     }
 
     // =============================================================================
@@ -473,7 +476,7 @@ namespace embwasm {
                             entry.field_name, entry.field_name_len);
                         if (host_id != HostFunctionId::kInvalid) {
                             if (entry.desc.func.type_index < mod->signature_count &&
-                                !ValidateHostFunctionType(host_id, &mod->signatures[entry.desc.func.type_index])) {
+                                !ValidateHostFunctionType(host_id, mod->signatures[entry.desc.func.type_index])) {
                                 result = WasmResult::kErrorLinking;
                                 break;
                             }
@@ -494,9 +497,9 @@ namespace embwasm {
                                 bool type_ok = (imp_tidx < mod->signature_count &&
                                                 src_tidx < src_mod->signature_count);
                                 if (type_ok) {
-                                    const WasmTypeSignature& isig = mod->signatures[imp_tidx];
-                                    const WasmTypeSignature& ssig = src_mod->signatures[src_tidx];
-                                    type_ok = WasmTypeSignature::Equals(&isig, &ssig);
+                                    const WasmTypeSignature* isig = mod->signatures[imp_tidx];
+                                    const WasmTypeSignature* ssig = src_mod->signatures[src_tidx];
+                                    type_ok = WasmTypeSignature::Equals(isig, ssig);
                                 }
                                 if (type_ok) func.import.resolved_func = rfunc;
                                 else result = WasmResult::kErrorLinking;
@@ -1129,7 +1132,7 @@ namespace embwasm {
 
     WasmResult WasmEngine::ValidateFunctionBody(WasmModuleInstance *mod, uint32_t func_idx) noexcept {
         if (!mod) return WasmResult::kErrorInvalidArgument;
-        WasmTypeSignature *signatures = mod->signatures;
+        WasmTypeSignature **signatures = mod->signatures;
         std::size_t signature_count = mod->signature_count;
         WasmFunction *functions = mod->functions;
         std::size_t function_count = mod->function_count;
@@ -1142,9 +1145,9 @@ namespace embwasm {
         if (func.kind != WasmFunctionKind::kLocal) return WasmResult::kOk;
 
         if (func.type_index >= signature_count) return WasmResult::kErrorValidationFailed;
-        const WasmTypeSignature &sig = signatures[func.type_index];
+        const WasmTypeSignature *sig = signatures[func.type_index];
 
-        uint32_t total_locals = sig.param_count + func.local.local_count;
+        uint32_t total_locals = sig->param_count + func.local.local_count;
         // total_locals の上限チェックはここでは行わない。
         // Engine全体で共有 Locals プールをフレームごとに切り出す設計へ移行予定のため。
 
@@ -1161,7 +1164,7 @@ namespace embwasm {
         ValLabel val_labels[kMaxLabels + 1];
         uint32_t label_top = 1;
         uint32_t max_label_depth = 1;
-        val_labels[0] = {0, sig.result_count};
+        val_labels[0] = {0, sig->result_count};
 
         int32_t stack_depth = 0;
         int32_t max_stack_depth = 0;
@@ -1187,8 +1190,8 @@ namespace embwasm {
                     if (block_type >= 0) {
                         uint32_t bt = static_cast<uint32_t>(block_type);
                         if (bt < signature_count) {
-                            param_count = signatures[bt].param_count;
-                            result_count = signatures[bt].result_count;
+                            param_count = signatures[bt]->param_count;
+                            result_count = signatures[bt]->result_count;
                         }
                     } else if (block_type >= -17 && block_type <= -1) {
                         result_count = 1;
@@ -1213,7 +1216,7 @@ namespace embwasm {
                     if (block_type >= 0) {
                         uint32_t bt = static_cast<uint32_t>(block_type);
                         if (bt < signature_count) {
-                            result_count = signatures[bt].result_count;
+                            result_count = signatures[bt]->result_count;
                         }
                     } else if (block_type >= -17 && block_type <= -1) {
                         result_count = 1;
@@ -1286,13 +1289,13 @@ namespace embwasm {
                     if (fidx >= function_count) return WasmResult::kErrorValidationFailed;
                     uint32_t ti = functions[fidx].type_index;
                     if (ti >= signature_count) return WasmResult::kErrorValidationFailed; {
-                        int32_t p = static_cast<int32_t>(signatures[ti].param_count);
+                        int32_t p = static_cast<int32_t>(signatures[ti]->param_count);
                         if (stack_depth < p) {
                             if (!is_unreachable) return WasmResult::kErrorValidationFailed;
                             stack_depth = 0;
                         } else { stack_depth -= p; }
                     }
-                    stack_depth += static_cast<int32_t>(signatures[ti].result_count);
+                    stack_depth += static_cast<int32_t>(signatures[ti]->result_count);
                     break;
                 }
 
@@ -1310,13 +1313,13 @@ namespace embwasm {
                         stack_depth--;
                     } // 要素インデックスをポップ
                     {
-                        int32_t p = static_cast<int32_t>(signatures[type_idx].param_count);
+                        int32_t p = static_cast<int32_t>(signatures[type_idx]->param_count);
                         if (stack_depth < p) {
                             if (!is_unreachable) return WasmResult::kErrorValidationFailed;
                             stack_depth = 0;
                         } else { stack_depth -= p; }
                     }
-                    stack_depth += static_cast<int32_t>(signatures[type_idx].result_count);
+                    stack_depth += static_cast<int32_t>(signatures[type_idx]->result_count);
                     break;
                 }
 
@@ -1703,7 +1706,7 @@ namespace embwasm {
 
     WasmResult WasmEngine::Validate(WasmModuleInstance *mod) noexcept {
         if (!mod) return WasmResult::kErrorInvalidArgument;
-        WasmTypeSignature *signatures = mod->signatures;
+        WasmTypeSignature **signatures = mod->signatures;
         std::size_t signature_count = mod->signature_count;
         WasmFunction *functions = mod->functions;
         std::size_t function_count = mod->function_count;
@@ -1770,8 +1773,8 @@ namespace embwasm {
             if (ti >= signature_count) {
                 return WasmResult::kErrorValidationFailed;
             }
-            const WasmTypeSignature &sig = signatures[ti];
-            if (sig.param_count != 0 || sig.result_count != 0) {
+            const WasmTypeSignature *sig = signatures[ti];
+            if (sig->param_count != 0 || sig->result_count != 0) {
                 return WasmResult::kErrorValidationFailed;
             }
         }
@@ -1878,10 +1881,10 @@ namespace embwasm {
 
         mod->signature_count = counts.type_count;
         mod->signatures = (counts.type_count > 0)
-            ? static_cast<WasmTypeSignature *>(pool_->Allocate(counts.type_count * sizeof(WasmTypeSignature)))
+            ? static_cast<WasmTypeSignature **>(pool_->Allocate(counts.type_count * sizeof(WasmTypeSignature *)))
             : nullptr;
         if (counts.type_count > 0 && !mod->signatures) return WasmResult::kErrorOutOfMemory;
-        if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature));
+        if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature *));
 
         mod->function_count = counts.func_count;
         mod->functions = (counts.func_count > 0)
@@ -2011,7 +2014,7 @@ namespace embwasm {
         // =========================================================
         // Pass 2: セクションを充填する。
         // =========================================================
-        WasmTypeSignature *signatures_ = mod->signatures;
+        WasmTypeSignature **signatures_ = mod->signatures;
         std::size_t sig_idx = 0;
         WasmFunction *functions = mod->functions;
         std::size_t func_idx = 0;
@@ -2061,32 +2064,38 @@ namespace embwasm {
                         }
 
                         uint32_t param_count = DecodeVarUint32(ptr, section_end);
-                        if (param_count > WasmTypeSignature::kMaxParams) {
-                            return WasmResult::kErrorOutOfMemory;
+                        if (param_count > kWasmMaxParamCount) {
+                            return WasmResult::kErrorValidationFailed;
                         }
-
-                        WasmTypeSignature sig = {};
-                        sig.param_count = param_count;
-
+                        const uint8_t *params_start = ptr;
                         for (uint32_t p = 0; p < param_count; ++p) {
                             if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                            sig.params[p] = static_cast<WasmType>(*ptr++);
+                            ++ptr;
                         }
 
                         uint32_t result_count = DecodeVarUint32(ptr, section_end);
-                        if (result_count > WasmTypeSignature::kMaxResults) {
-                            return WasmResult::kErrorOutOfMemory;
+                        if (result_count > kWasmMaxResultCount) {
+                            return WasmResult::kErrorValidationFailed;
                         }
-                        sig.result_count = result_count;
-
+                        const uint8_t *results_start = ptr;
                         for (uint32_t r = 0; r < result_count; ++r) {
                             if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                            sig.results[r] = static_cast<WasmType>(*ptr++);
+                            ++ptr;
                         }
 
                         if (sig_idx >= mod->signature_count) {
                             return WasmResult::kErrorOutOfMemory;
                         }
+                        std::size_t sig_size = WasmTypeSignature::ByteSize(param_count, result_count);
+                        auto *sig = static_cast<WasmTypeSignature *>(pool_->Allocate(sig_size));
+                        if (!sig) return WasmResult::kErrorOutOfMemory;
+                        std::memset(sig, 0, sig_size);
+                        sig->param_count = static_cast<uint16_t>(param_count);
+                        sig->result_count = static_cast<uint16_t>(result_count);
+                        for (uint32_t p = 0; p < param_count; ++p)
+                            sig->SetParam(p, static_cast<WasmType>(params_start[p]));
+                        for (uint32_t r = 0; r < result_count; ++r)
+                            sig->SetResult(r, static_cast<WasmType>(results_start[r]));
                         signatures_[sig_idx++] = sig;
                     }
                     break;
@@ -2598,12 +2607,12 @@ namespace embwasm {
 
         if (res == WasmResult::kOk) {
             const WasmFunction &func = mod->functions[func_idx];
-            uint32_t actual_result_count = mod->signatures[func.type_index].result_count;
+            uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
 
             if (result_count > actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
             if (exec_ctx->stack_top < actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
 
-            WasmValue temp_results[WasmTypeSignature::kMaxResults];
+            WasmValue temp_results[kWasmMaxResultCount];
             for (uint32_t i = 0; i < actual_result_count; ++i) {
                 temp_results[actual_result_count - 1 - i] = exec_ctx->stack[--exec_ctx->stack_top];
             }
@@ -2635,7 +2644,7 @@ namespace embwasm {
 
         if (res == WasmResult::kOk) {
             const WasmFunction &func = mod->functions[func_idx];
-            uint32_t actual_result_count = mod->signatures[func.type_index].result_count;
+            uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
 
             if (result_count > actual_result_count) {
                 ctx_ = nullptr;
@@ -2646,7 +2655,7 @@ namespace embwasm {
                 return WasmResult::kErrorExecuteRuntimeError;
             }
 
-            WasmValue temp_results[WasmTypeSignature::kMaxResults];
+            WasmValue temp_results[kWasmMaxResultCount];
             for (uint32_t i = 0; i < actual_result_count; ++i) {
                 temp_results[actual_result_count - 1 - i] = default_ctx.stack[--default_ctx.stack_top];
             }
@@ -2712,7 +2721,7 @@ namespace embwasm {
         if (func_idx == -1) return 0;
         const WasmFunction &func = mod->functions[func_idx];
         if (func.type_index < mod->signature_count) {
-            return mod->signatures[func.type_index].result_count;
+            return mod->signatures[func.type_index]->result_count;
         }
         return 0;
     }
@@ -2746,7 +2755,7 @@ namespace embwasm {
         WasmValue *stack = ctx->stack;
 
         // module のエイリアス
-        WasmTypeSignature *signatures = module->signatures;
+        WasmTypeSignature **signatures = module->signatures;
         std::size_t signature_count = module->signature_count;
         WasmFunction *functions = module->functions;
         std::size_t function_count = module->function_count;
@@ -2782,8 +2791,8 @@ namespace embwasm {
 
             // 内部関数の最初のフレームをコールスタックに積む
             {
-                const WasmTypeSignature &sig = signatures[initial_func->type_index];
-                uint32_t total_locals = sig.param_count + initial_func->local.local_count;
+                const WasmTypeSignature *sig = signatures[initial_func->type_index];
+                uint32_t total_locals = sig->param_count + initial_func->local.local_count;
 
                 WasmFrame &frame = ctx->call_stack[ctx->call_stack_top++];
                 if (ctx->call_stack_top > max_call_stack_depth_) {
@@ -2796,21 +2805,21 @@ namespace embwasm {
                 frame.label_stack_top = 0;
 
                 // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
-                if (ctx->stack_top < sig.param_count) {
+                if (ctx->stack_top < sig->param_count) {
                     return OnTrap(WasmResult::kErrorExecuteRuntimeError);
                 }
-                const std::size_t locals_base = ctx->stack_top - sig.param_count;
+                const std::size_t locals_base = ctx->stack_top - sig->param_count;
                 frame.locals = ctx->stack + locals_base;
                 ctx->stack_top = locals_base + total_locals;
                 // 引数以外のローカル変数のみゼロ初期化
-                for (uint32_t i = sig.param_count; i < total_locals; ++i) {
+                for (uint32_t i = sig->param_count; i < total_locals; ++i) {
                     frame.locals[i] = WasmValue{};
                 }
 
                 // ラベルプールからスライスを切り出す
                 frame.label_capacity = initial_func->local.max_label_depth;
                 if (ctx->labels_pool_top + frame.label_capacity > kLabelsPoolSize) {
-                    ctx->stack_top = locals_base + sig.param_count;
+                    ctx->stack_top = locals_base + sig->param_count;
                     --ctx->call_stack_top;
                     return WasmResult::kErrorExecuteTrapLabelStackOverflow;
                 }
@@ -2823,7 +2832,7 @@ namespace embwasm {
                     func_label.opcode = 0x02; // block
                     func_label.stack_top = locals_base;
                     func_label.param_count = 0;
-                    func_label.result_count = sig.result_count;
+                    func_label.result_count = sig->result_count;
                     func_label.pc = frame.limit;
                 }
             }
@@ -2879,8 +2888,8 @@ namespace embwasm {
                         uint32_t result_count = 0;
                         if (block_type >= 0) {
                             if (static_cast<uint32_t>(block_type) < signature_count) {
-                                param_count = signatures[block_type].param_count;
-                                result_count = signatures[block_type].result_count;
+                                param_count = signatures[block_type]->param_count;
+                                result_count = signatures[block_type]->result_count;
                             }
                         } else if (block_type >= -17 && block_type <= -1) {
                             // -1=i32, -2=i64, -3=f32, -4=f64, -16=funcref, -17=externref, etc.
@@ -2991,7 +3000,7 @@ namespace embwasm {
                         uint32_t result_count = 0;
                         if (block_type >= 0) {
                             if (static_cast<uint32_t>(block_type) < signature_count) {
-                                result_count = signatures[block_type].result_count;
+                                result_count = signatures[block_type]->result_count;
                             }
                         } else if (block_type >= -17 && block_type <= -1) {
                             result_count = 1;
@@ -3277,8 +3286,8 @@ namespace embwasm {
                             if (ctx->call_stack_top >= kWasmCallStackSize) {
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
                             }
-                            const WasmTypeSignature &sig = call_mod->signatures[target_func->type_index];
-                            uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
+                            const WasmTypeSignature *sig = call_mod->signatures[target_func->type_index];
+                            uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
 
                             // 遷移前に現在のフレームのIPを書き戻す
                             frame.ip = ip;
@@ -3294,15 +3303,15 @@ namespace embwasm {
                             new_frame.label_stack_top = 0;
 
                             // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
-                            const std::size_t locals_base = ctx->stack_top - sig.param_count;
+                            const std::size_t locals_base = ctx->stack_top - sig->param_count;
                             new_frame.locals = ctx->stack + locals_base;
                             ctx->stack_top = locals_base + target_total_locals;
                             // 引数以外のローカル変数のみゼロ初期化
-                            for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
+                            for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
                             if (ctx->stack_top + target_func->local.max_stack_depth > kUnifiedStackSize) {
-                                ctx->stack_top = locals_base + sig.param_count;
+                                ctx->stack_top = locals_base + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
                             }
@@ -3310,7 +3319,7 @@ namespace embwasm {
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
                             if (ctx->labels_pool_top + new_frame.label_capacity > kLabelsPoolSize) {
-                                ctx->stack_top = locals_base + sig.param_count;
+                                ctx->stack_top = locals_base + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapLabelStackOverflow;
                             }
@@ -3323,7 +3332,7 @@ namespace embwasm {
                                 func_label.opcode = 0x02; // block
                                 func_label.stack_top = locals_base;
                                 func_label.param_count = 0;
-                                func_label.result_count = sig.result_count;
+                                func_label.result_count = sig->result_count;
                                 func_label.pc = new_frame.limit;
                             }
 
@@ -3351,8 +3360,8 @@ namespace embwasm {
                         const WasmFunction *target_func = &target_module->functions[target_idx];
                         // 型シグネチャ検証: モジュールが異なる場合は同一インデックスでも構造比較が必要
                         if (target_func->type_index != type_idx || target_module != current_mod) {
-                            const WasmTypeSignature *sa = &target_module->signatures[target_func->type_index];
-                            const WasmTypeSignature *sb = &signatures[type_idx];
+                            const WasmTypeSignature *sa = target_module->signatures[target_func->type_index];
+                            const WasmTypeSignature *sb = signatures[type_idx];
                             if (!WasmTypeSignature::Equals(sa, sb)) {
                                 return OnTrap(WasmResult::kErrorExecuteTrapIndirectCallSignatureMismatch);
                             }
@@ -3379,8 +3388,8 @@ namespace embwasm {
                             if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         } else {
                             if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorExecuteTrapCallStackOverflow;
-                            const WasmTypeSignature &sig = target_module->signatures[target_func->type_index];
-                            uint32_t target_total_locals = sig.param_count + target_func->local.local_count;
+                            const WasmTypeSignature *sig = target_module->signatures[target_func->type_index];
+                            uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
 
                             frame.ip = ip;
 
@@ -3394,15 +3403,15 @@ namespace embwasm {
                             new_frame.label_stack_top = 0;
 
                             // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
-                            const std::size_t locals_base_i = ctx->stack_top - sig.param_count;
+                            const std::size_t locals_base_i = ctx->stack_top - sig->param_count;
                             new_frame.locals = ctx->stack + locals_base_i;
                             ctx->stack_top = locals_base_i + target_total_locals;
                             // 引数以外のローカル変数のみゼロ初期化
-                            for (uint32_t i = sig.param_count; i < target_total_locals; ++i) {
+                            for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
                             if (ctx->stack_top + target_func->local.max_stack_depth > kUnifiedStackSize) {
-                                ctx->stack_top = locals_base_i + sig.param_count;
+                                ctx->stack_top = locals_base_i + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
                             }
@@ -3410,7 +3419,7 @@ namespace embwasm {
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
                             if (ctx->labels_pool_top + new_frame.label_capacity > kLabelsPoolSize) {
-                                ctx->stack_top = locals_base_i + sig.param_count;
+                                ctx->stack_top = locals_base_i + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapLabelStackOverflow;
                             }
@@ -3423,7 +3432,7 @@ namespace embwasm {
                                 func_label.opcode = 0x02; // block
                                 func_label.stack_top = locals_base_i;
                                 func_label.param_count = 0;
-                                func_label.result_count = sig.result_count;
+                                func_label.result_count = sig->result_count;
                                 func_label.pc = new_frame.limit;
                             }
 

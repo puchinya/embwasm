@@ -1189,9 +1189,9 @@ def _gen_validate_case(api: dict, const_name: str) -> str:
 
     checks = []
     for idx, wt in enumerate(wasm_params):
-        checks.append(f'sig->params[{idx}] == {_WASM_TYPE_CPP[wt]}')
+        checks.append(f'sig->GetParam({idx}) == {_WASM_TYPE_CPP[wt]}')
     for idx, wt in enumerate(wasm_results):
-        checks.append(f'sig->results[{idx}] == {_WASM_TYPE_CPP[wt]}')
+        checks.append(f'sig->GetResult({idx}) == {_WASM_TYPE_CPP[wt]}')
 
     if checks:
         lines.append(f'{i}    return {" && ".join(checks)};')

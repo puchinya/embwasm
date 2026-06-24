@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 #include <vector>
 #include "wasm_types.hpp"
+#include "wasm_limits.hpp"
 #include "wasm_memory_pool.hpp"
 #include "wasm_api.hpp"
 #include "wasm_engine.hpp"
@@ -121,7 +122,7 @@ TEST(WasmEngineTest, LoadErrors) {
 
     // 7. 型の引数制限超え -> kErrorOutOfMemory
     {
-        uint32_t num_params = static_cast<uint32_t>(embwasm::WasmTypeSignature::kMaxParams) + 1;
+        uint32_t num_params = static_cast<uint32_t>(embwasm::kWasmMaxParamCount) + 1;
         std::vector<uint8_t> count_bytes;
         {
             uint32_t v = num_params;
@@ -155,12 +156,12 @@ TEST(WasmEngineTest, LoadErrors) {
         };
         too_many_params_wasm.insert(too_many_params_wasm.end(), sec_len_bytes.begin(), sec_len_bytes.end());
         too_many_params_wasm.insert(too_many_params_wasm.end(), type_body.begin(), type_body.end());
-        EXPECT_EQ(static_cast<embwasm::WasmResult>(engine.LoadModule(too_many_params_wasm.data(), too_many_params_wasm.size())), embwasm::WasmResult::kErrorOutOfMemory);
+        EXPECT_EQ(static_cast<embwasm::WasmResult>(engine.LoadModule(too_many_params_wasm.data(), too_many_params_wasm.size())), embwasm::WasmResult::kErrorValidationFailed);
     }
 
-    // 8. 型の戻り値制限超え -> kErrorOutOfMemory
+    // 8. 型の戻り値制限超え -> kErrorValidationFailed
     {
-        uint32_t num_results = static_cast<uint32_t>(embwasm::WasmTypeSignature::kMaxResults) + 1;
+        uint32_t num_results = static_cast<uint32_t>(embwasm::kWasmMaxResultCount) + 1;
         std::vector<uint8_t> count_bytes;
         {
             uint32_t v = num_results;
@@ -194,6 +195,6 @@ TEST(WasmEngineTest, LoadErrors) {
         };
         too_many_results_wasm.insert(too_many_results_wasm.end(), sec_len_bytes.begin(), sec_len_bytes.end());
         too_many_results_wasm.insert(too_many_results_wasm.end(), type_body.begin(), type_body.end());
-        EXPECT_EQ(static_cast<embwasm::WasmResult>(engine.LoadModule(too_many_results_wasm.data(), too_many_results_wasm.size())), embwasm::WasmResult::kErrorOutOfMemory);
+        EXPECT_EQ(static_cast<embwasm::WasmResult>(engine.LoadModule(too_many_results_wasm.data(), too_many_results_wasm.size())), embwasm::WasmResult::kErrorValidationFailed);
     }
 }

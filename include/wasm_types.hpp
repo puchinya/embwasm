@@ -135,18 +135,33 @@ typedef WasmResult (*HostFunction)(const WasmValue* args, uint32_t arg_count, Wa
 
 /// @brief WASM 関数シグネチャ（引数型リスト＋戻り値型リスト）。
 ///
-/// 静的配列で保持し、動的メモリを使用しません。
+/// params→results の順に可変長配列として保持する。プールから ByteSize() 分確保して使用する。
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wzero-length-array"
+#endif
 struct WasmTypeSignature {
-    static constexpr std::size_t kMaxParams = 128;  ///< 引数の最大数。
-    static constexpr std::size_t kMaxResults = 128; ///< 戻り値の最大数。
+    uint16_t param_count;  ///< 実際の引数数。
+    uint16_t result_count; ///< 実際の戻り値数。
+    union {
+        uint32_t u32[0];   ///< 4 バイト単位のワード比較用。
+        WasmType types[0]; ///< 個別型アクセス用（params→results の順）。
+    } data;
 
-    uint32_t param_count;          ///< 実際の引数数。
-    uint32_t result_count;         ///< 実際の戻り値数。
-    WasmType params[kMaxParams];   ///< 引数の型リスト。
-    WasmType results[kMaxResults]; ///< 戻り値の型リスト。
+    WasmType GetParam(uint32_t i)  const noexcept { return data.types[i]; }
+    WasmType GetResult(uint32_t i) const noexcept { return data.types[param_count + i]; }
+    void SetParam(uint32_t i, WasmType t) noexcept { data.types[i] = t; }
+    void SetResult(uint32_t i, WasmType t) noexcept { data.types[param_count + i] = t; }
 
-    static bool Equals(const WasmTypeSignature *x, const WasmTypeSignature *y);
+    static uint32_t    WordCount(uint32_t total) noexcept { return (total + 3) >> 2; }
+    static std::size_t ByteSize(uint32_t pc, uint32_t rc) noexcept {
+        return sizeof(WasmTypeSignature) + WordCount(pc + rc) * sizeof(uint32_t);
+    }
+    static bool Equals(const WasmTypeSignature *x, const WasmTypeSignature *y) noexcept;
 };
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 /// @brief WASM インポートエントリ。
 struct WasmImportEntry {

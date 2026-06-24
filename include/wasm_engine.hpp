@@ -80,7 +80,7 @@ struct WasmModuleInstance {
     char name[64];          ///< モジュール名。
     std::size_t name_len;   ///< モジュール名の長さ。
 
-    WasmTypeSignature* signatures;   ///< 型シグネチャ配列（プールから確保）。
+    WasmTypeSignature** signatures;  ///< 型シグネチャのポインタ配列（各要素はプールから可変長確保）。
     std::size_t signature_count;
 
     WasmFunction* functions;         ///< 関数配列（プールから確保）。
