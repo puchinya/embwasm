@@ -3005,7 +3005,7 @@ namespace embwasm {
                                 } else if (s_op == 0x11) {
                                     DecodeVarUint32(search_ptr, limit);
                                     if (search_ptr < limit) search_ptr++;
-                                } else if (s_op >= 0x20 && s_op <= 0x24) {
+                                } else if (s_op >= 0x20 && s_op <= 0x26) {
                                     DecodeVarUint32(search_ptr, limit);
                                 } else if (s_op >= 0x28 && s_op <= 0x3E) {
                                     DecodeVarUint32(search_ptr, limit);
@@ -3113,7 +3113,7 @@ namespace embwasm {
                             } else if (s_op == 0x11) {
                                 DecodeVarUint32(search_ptr, limit);
                                 if (search_ptr < limit) search_ptr++;
-                            } else if (s_op >= 0x20 && s_op <= 0x24) {
+                            } else if (s_op >= 0x20 && s_op <= 0x26) {
                                 DecodeVarUint32(search_ptr, limit);
                             } else if (s_op >= 0x28 && s_op <= 0x3E) {
                                 DecodeVarUint32(search_ptr, limit);
@@ -3289,6 +3289,16 @@ namespace embwasm {
 
                             frame.label_stack_top--;
                             break;
+                        }
+                        // return (0x0F): 関数外側ブロックラベルでスタックを巻き戻す
+                        if (op == 0x0F) {
+                            WasmLabel &func_label = frame.labels[0];
+                            uint32_t arity = func_label.result_count;
+                            const std::size_t src = sp - arity;
+                            sp = func_label.stack_top;
+                            if (arity > 0)
+                                std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                            sp += arity;
                         }
                         // 関数の終了 (end で label_stack_top == 0、または return)
                         // locals はフレームの func_label.stack_top への巻き戻しで自動解放される
@@ -4034,8 +4044,10 @@ namespace embwasm {
                                     result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                                     goto done;
                                 }
-                                if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) return
-                                        OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
+                                if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
+                                    goto done;
+                                }
                                 res = a.value.i32 / b.value.i32;
                                 break;
                             case 0x6E:
@@ -4495,8 +4507,10 @@ namespace embwasm {
                             result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
                             goto done;
                         }
-                        if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) return
-                                OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
+                        if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
+                            goto done;
+                        }
                         int64_t res = a.value.i64 / b.value.i64;
                         stack[sp++].value.i64 = res;
                         break;
