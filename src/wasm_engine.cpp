@@ -2816,8 +2816,8 @@ namespace embwasm {
             return WasmResult::kErrorInvalidArgument;
         }
 
-        // 既存のコードとの互換性のためのエイリアス
-        std::size_t &stack_top_ = ctx->stack_top;
+        std::size_t sp = ctx->stack_top;  // local stack pointer (synced to ctx at call/return/yield)
+        WasmResult result = WasmResult::kOk;
         WasmValue *stack = ctx->stack;
 
         // module のエイリアス
@@ -2936,12 +2936,14 @@ namespace embwasm {
             const uint8_t *ip = frame.ip;
             const uint8_t *limit = frame.limit;
             WasmValue *locals = frame.locals;
+            sp = ctx->stack_top;  // フレーム切り替え後に ctx から再読み込み
 
             while (ip < limit) {
                 uint8_t op = *ip++;
                 switch (op) {
                     case 0x00: // unreachable
-                        return WasmResult::kErrorExecuteTrapUnreachable;
+                        result = WasmResult::kErrorExecuteTrapUnreachable;
+                        goto done;
 
                     case 0x01: // nop
                         break;
@@ -2968,7 +2970,7 @@ namespace embwasm {
 
                         WasmLabel &label = frame.labels[frame.label_stack_top++];
                         label.opcode = op;
-                        label.stack_top = stack_top_ - param_count;
+                        label.stack_top = sp - param_count;
                         label.param_count = param_count;
                         label.result_count = result_count;
 
@@ -3072,11 +3074,11 @@ namespace embwasm {
                             result_count = 1;
                         }
 
-                        int32_t cond = stack[--stack_top_].value.i32;
+                        int32_t cond = stack[--sp].value.i32;
 
                         WasmLabel &label = frame.labels[frame.label_stack_top++];
                         label.opcode = 0x04;
-                        label.stack_top = stack_top_;
+                        label.stack_top = sp;
                         label.param_count = 0;
                         label.result_count = result_count;
 
@@ -3175,7 +3177,10 @@ namespace embwasm {
                     case 0x05: {
                         // else
                         // if ブロックの実行が終わって else に到達した場合は end までジャンプ
-                        if (frame.label_stack_top == 0) return OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                        if (frame.label_stack_top == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                            goto done;
+                        }
                         ip = frame.labels[frame.label_stack_top - 1].pc;
                         frame.label_stack_top--; // if ブロックのラベルをポップする
                         break;
@@ -3187,7 +3192,7 @@ namespace embwasm {
                         uint32_t label_idx = DecodeVarUint32(ip, limit);
                         bool jump = true;
                         if (op == 0x0D) {
-                            jump = (stack[--stack_top_].value.i32 != 0);
+                            jump = (stack[--sp].value.i32 != 0);
                         }
 
                         if (jump) {
@@ -3203,16 +3208,16 @@ namespace embwasm {
                             if (arity > 128) arity = 128; // 安全のための上限
 
                             for (uint32_t i = 0; i < arity; ++i) {
-                                if (stack_top_ > 0) {
-                                    saved_vals[arity - 1 - i] = stack[--stack_top_];
+                                if (sp > 0) {
+                                    saved_vals[arity - 1 - i] = stack[--sp];
                                 }
                             }
 
-                            stack_top_ = target_label.stack_top;
+                            sp = target_label.stack_top;
 
                             // 退避した値を再びプッシュする
                             for (uint32_t i = 0; i < arity; ++i) {
-                                stack[stack_top_++] = saved_vals[i];
+                                stack[sp++] = saved_vals[i];
                             }
 
                             // label.pc は:
@@ -3229,6 +3234,7 @@ namespace embwasm {
                                 frame.label_stack_top -= (label_idx + 1);
                             }
 
+                            ctx->stack_top = sp;
                             goto frame_changed; // ip を更新したのでループを抜ける
                         }
                         break;
@@ -3237,7 +3243,7 @@ namespace embwasm {
                     case 0x0E: {
                         // br_table
                         uint32_t target_count = DecodeVarUint32(ip, limit);
-                        uint32_t idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
+                        uint32_t idx = static_cast<uint32_t>(stack[--sp].value.i32);
 
                         uint32_t chosen_label_idx = 0;
                         bool found = false;
@@ -3265,16 +3271,16 @@ namespace embwasm {
                         if (arity > 128) arity = 128; // 安全のための上限
 
                         for (uint32_t i = 0; i < arity; ++i) {
-                            if (stack_top_ > 0) {
-                                saved_vals[arity - 1 - i] = stack[--stack_top_];
+                            if (sp > 0) {
+                                saved_vals[arity - 1 - i] = stack[--sp];
                             }
                         }
 
-                        stack_top_ = target_label.stack_top;
+                        sp = target_label.stack_top;
 
                         // 退避した値を再びプッシュする
                         for (uint32_t i = 0; i < arity; ++i) {
-                            stack[stack_top_++] = saved_vals[i];
+                            stack[sp++] = saved_vals[i];
                         }
 
                         ip = target_label.pc;
@@ -3285,6 +3291,7 @@ namespace embwasm {
                         } else {
                             frame.label_stack_top -= (chosen_label_idx + 1);
                         }
+                        ctx->stack_top = sp;
                         goto frame_changed;
                     }
 
@@ -3298,15 +3305,15 @@ namespace embwasm {
                             WasmValue saved_vals[128] = {};
                             if (arity > 128) arity = 128;
                             for (uint32_t i = 0; i < arity; ++i) {
-                                saved_vals[arity - 1 - i] = stack[--stack_top_];
+                                saved_vals[arity - 1 - i] = stack[--sp];
                             }
 
                             // スタックポインタをブロック開始時の位置に戻す
-                            stack_top_ = label.stack_top;
+                            sp = label.stack_top;
 
                             // 退避した結果の値を再びプッシュする
                             for (uint32_t i = 0; i < arity; ++i) {
-                                stack[stack_top_++] = saved_vals[i];
+                                stack[sp++] = saved_vals[i];
                             }
 
                             frame.label_stack_top--;
@@ -3315,11 +3322,13 @@ namespace embwasm {
                         // 関数の終了 (end で label_stack_top == 0、または return)
                         // locals はフレームの func_label.stack_top への巻き戻しで自動解放される
                         ctx->labels_pool_top -= frame.label_capacity;
+                        ctx->stack_top = sp;
                         if (ctx->call_stack_top > 0) {
                             --ctx->call_stack_top;
                             goto frame_changed;
                         } else {
-                            return WasmResult::kOk;
+                            result = WasmResult::kOk;
+                            goto done;
                         }
 
                     case 0x10: {
@@ -3333,24 +3342,32 @@ namespace embwasm {
                             WasmModuleInstance *rm = nullptr;
                             const WasmFunction *rf = nullptr;
                             if (!ResolveWasmImportChain(this, target_func, rm, rf)) {
-                                return WasmResult::kErrorFunctionNotFound;
+                                result = WasmResult::kErrorFunctionNotFound;
+                                goto done;
                             }
                             call_mod = rm;
                             target_func = rf;
                         }
 
                         if (target_func->kind == WasmFunctionKind::kHost) {
+                            ctx->stack_top = sp;
                             WasmResult res = DispatchHostFunction(*this, target_func->host.host_func_id, ctx);
+                            sp = ctx->stack_top;
                             if (res == WasmResult::kYield) {
                                 frame.ip = ip;
-                                return WasmResult::kYield;
+                                result = WasmResult::kYield;
+                                goto done;
                             }
-                            if (res != WasmResult::kOk) return res;
-                            if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
+                            if (res != WasmResult::kOk) {
+                                result = res;
+                                goto done;
+                            }
+                            if (sp > max_stack_depth_) max_stack_depth_ = sp;
                         } else {
                             // 内部関数の実行（他モジュールの内部関数も含む）
                             if (ctx->call_stack_top >= ctx->call_stack_size) {
-                                return WasmResult::kErrorExecuteTrapStackOverflow;
+                                result = WasmResult::kErrorExecuteTrapStackOverflow;
+                                goto done;
                             }
                             const WasmTypeSignature *sig = call_mod->signatures[target_func->type_index];
                             uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
@@ -3369,25 +3386,31 @@ namespace embwasm {
                             new_frame.label_stack_top = 0;
 
                             // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
+                            ctx->stack_top = sp;
                             const std::size_t locals_base = ctx->stack_top - sig->param_count;
                             new_frame.locals = ctx->stack + locals_base;
                             ctx->stack_top = locals_base + target_total_locals;
+                            sp = ctx->stack_top;
                             // 引数以外のローカル変数のみゼロ初期化
                             for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
                             if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
                                 ctx->stack_top = locals_base + sig->param_count;
+                                sp = ctx->stack_top;
                                 --ctx->call_stack_top;
-                                return WasmResult::kErrorExecuteTrapStackOverflow;
+                                result = WasmResult::kErrorExecuteTrapStackOverflow;
+                                goto done;
                             }
 
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
                             if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
                                 ctx->stack_top = locals_base + sig->param_count;
+                                sp = ctx->stack_top;
                                 --ctx->call_stack_top;
-                                return WasmResult::kErrorExecuteTrapLabelStackOverflow;
+                                result = WasmResult::kErrorExecuteTrapLabelStackOverflow;
+                                goto done;
                             }
                             new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
                             ctx->labels_pool_top += new_frame.label_capacity;
@@ -3402,6 +3425,7 @@ namespace embwasm {
                                 func_label.pc = new_frame.limit;
                             }
 
+                            ctx->stack_top = sp;
                             goto frame_changed;
                         }
                         break;
@@ -3411,17 +3435,24 @@ namespace embwasm {
                         uint32_t type_idx = DecodeVarUint32(ip, limit);
                         uint32_t table_idx = *ip++;
 
-                        uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
+                        uint32_t elem_idx = static_cast<uint32_t>(stack[--sp].value.i32);
 
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                            return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                            result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                            goto done;
                         }
                         uint32_t ref_val = tables[table_idx][elem_idx];
-                        if (ref_val == 0xFFFFFFFF) return OnTrap(WasmResult::kErrorExecuteTrapTableUninitializedElement);
+                        if (ref_val == 0xFFFFFFFF) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapTableUninitializedElement);
+                            goto done;
+                        }
                         WasmModuleInstance *target_module = nullptr;
                         uint32_t target_idx = 0xFFFFFFFF;
                         DecodeFuncRef(ref_val, this, current_mod, target_module, target_idx);
-                        if (!target_module || target_idx >= target_module->function_count) return OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                        if (!target_module || target_idx >= target_module->function_count) {
+                            result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                            goto done;
+                        }
 
                         const WasmFunction *target_func = &target_module->functions[target_idx];
                         // 型シグネチャ検証: モジュールが異なる場合は同一インデックスでも構造比較が必要
@@ -3429,7 +3460,8 @@ namespace embwasm {
                             const WasmTypeSignature *sa = target_module->signatures[target_func->type_index];
                             const WasmTypeSignature *sb = signatures[type_idx];
                             if (!WasmTypeSignature::Equals(sa, sb)) {
-                                return OnTrap(WasmResult::kErrorExecuteTrapIndirectCallSignatureMismatch);
+                                result = OnTrap(WasmResult::kErrorExecuteTrapIndirectCallSignatureMismatch);
+                                goto done;
                             }
                         }
 
@@ -3438,22 +3470,32 @@ namespace embwasm {
                             WasmModuleInstance *rm = nullptr;
                             const WasmFunction *rf = nullptr;
                             if (!ResolveWasmImportChain(this, target_func, rm, rf)) {
-                                return OnTrap(WasmResult::kErrorFunctionNotFound);
+                                result = OnTrap(WasmResult::kErrorFunctionNotFound);
+                                goto done;
                             }
                             target_module = rm;
                             target_func = rf;
                         }
 
                         if (target_func->kind == WasmFunctionKind::kHost) {
+                            ctx->stack_top = sp;
                             WasmResult res = DispatchHostFunction(*this, target_func->host.host_func_id, ctx);
+                            sp = ctx->stack_top;
                             if (res == WasmResult::kYield) {
                                 frame.ip = ip;
-                                return WasmResult::kYield;
+                                result = WasmResult::kYield;
+                                goto done;
                             }
-                            if (res != WasmResult::kOk) return res;
-                            if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
+                            if (res != WasmResult::kOk) {
+                                result = res;
+                                goto done;
+                            }
+                            if (sp > max_stack_depth_) max_stack_depth_ = sp;
                         } else {
-                            if (ctx->call_stack_top >= ctx->call_stack_size) return WasmResult::kErrorExecuteTrapCallStackOverflow;
+                            if (ctx->call_stack_top >= ctx->call_stack_size) {
+                                result = WasmResult::kErrorExecuteTrapCallStackOverflow;
+                                goto done;
+                            }
                             const WasmTypeSignature *sig = target_module->signatures[target_func->type_index];
                             uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
 
@@ -3469,25 +3511,31 @@ namespace embwasm {
                             new_frame.label_stack_top = 0;
 
                             // 統合スタックにローカル変数領域を確保（引数は既に正しい位置にある）
+                            ctx->stack_top = sp;
                             const std::size_t locals_base_i = ctx->stack_top - sig->param_count;
                             new_frame.locals = ctx->stack + locals_base_i;
                             ctx->stack_top = locals_base_i + target_total_locals;
+                            sp = ctx->stack_top;
                             // 引数以外のローカル変数のみゼロ初期化
                             for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
                             if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
                                 ctx->stack_top = locals_base_i + sig->param_count;
+                                sp = ctx->stack_top;
                                 --ctx->call_stack_top;
-                                return WasmResult::kErrorExecuteTrapStackOverflow;
+                                result = WasmResult::kErrorExecuteTrapStackOverflow;
+                                goto done;
                             }
 
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
                             if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
                                 ctx->stack_top = locals_base_i + sig->param_count;
+                                sp = ctx->stack_top;
                                 --ctx->call_stack_top;
-                                return WasmResult::kErrorExecuteTrapLabelStackOverflow;
+                                result = WasmResult::kErrorExecuteTrapLabelStackOverflow;
+                                goto done;
                             }
                             new_frame.labels = ctx->labels_pool + ctx->labels_pool_top;
                             ctx->labels_pool_top += new_frame.label_capacity;
@@ -3502,6 +3550,7 @@ namespace embwasm {
                                 func_label.pc = new_frame.limit;
                             }
 
+                            ctx->stack_top = sp;
                             goto frame_changed;
                         }
                         break;
@@ -3509,76 +3558,84 @@ namespace embwasm {
 
                     case 0x1A: {
                         // drop
-                        --stack_top_;
+                        --sp;
                         break;
                     }
 
                     case 0x1B: {
                         // select
-                        int32_t cond = stack[--stack_top_].value.i32;
-                        WasmValue val2 = stack[--stack_top_];
-                        WasmValue val1 = stack[--stack_top_];
-                        stack[stack_top_++] = (cond != 0) ? val1 : val2;
+                        int32_t cond = stack[--sp].value.i32;
+                        WasmValue val2 = stack[--sp];
+                        WasmValue val1 = stack[--sp];
+                        stack[sp++] = (cond != 0) ? val1 : val2;
                         break;
                     }
 
                     case 0x1C: {
                         // select (t*)
-                        if (ip >= limit) return OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                        if (ip >= limit) {
+                            result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                            goto done;
+                        }
                         uint32_t type_count = DecodeVarUint32(ip, limit);
                         if (type_count > static_cast<std::size_t>(limit - ip)) {
-                            return OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                            result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                            goto done;
                         }
                         ip += type_count;
-                        int32_t cond = stack[--stack_top_].value.i32;
-                        WasmValue val2 = stack[--stack_top_];
-                        WasmValue val1 = stack[--stack_top_];
-                        stack[stack_top_++] = (cond != 0) ? val1 : val2;
+                        int32_t cond = stack[--sp].value.i32;
+                        WasmValue val2 = stack[--sp];
+                        WasmValue val1 = stack[--sp];
+                        stack[sp++] = (cond != 0) ? val1 : val2;
                         break;
                     }
 
                     case 0x20: {
                         // local.get <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
-                        stack[stack_top_++] = locals[local_idx];
+                        stack[sp++] = locals[local_idx];
                         break;
                     }
 
                     case 0x21: {
                         // local.set <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
-                        locals[local_idx] = stack[--stack_top_];
+                        locals[local_idx] = stack[--sp];
                         break;
                     }
 
                     case 0x22: {
                         // local.tee <local_idx>
                         uint32_t local_idx = DecodeVarUint32(ip, limit);
-                        locals[local_idx] = stack[stack_top_ - 1]; // ポップせずにコピー
+                        locals[local_idx] = stack[sp - 1]; // ポップせずにコピー
                         break;
                     }
 
                     case 0x23: {
                         // global.get <global_idx>
                         uint32_t idx = DecodeVarUint32(ip, limit);
-                        stack[stack_top_++] = globals[idx].value;
+                        stack[sp++] = globals[idx].value;
                         break;
                     }
 
                     case 0x24: {
                         // global.set <global_idx>
                         uint32_t idx = DecodeVarUint32(ip, limit);
-                        if (!globals[idx].is_mutable) return OnTrap(WasmResult::kErrorExecuteTrapGlobalImmutable);
-                        globals[idx].value = stack[--stack_top_];
+                        if (!globals[idx].is_mutable) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapGlobalImmutable);
+                            goto done;
+                        }
+                        globals[idx].value = stack[--sp];
                         break;
                     }
 
                     case 0x25: {
                         // table.get
                         uint32_t table_idx = DecodeVarUint32(ip, limit);
-                        uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
+                        uint32_t elem_idx = static_cast<uint32_t>(stack[--sp].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                            return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                            result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                            goto done;
                         }
                         uint32_t target_idx = tables[table_idx][elem_idx];
 
@@ -3588,17 +3645,18 @@ namespace embwasm {
                         } else {
                             ref_val.value.i64 = static_cast<int64_t>(target_idx);
                         }
-                        stack[stack_top_++] = ref_val;
+                        stack[sp++] = ref_val;
                         break;
                     }
 
                     case 0x26: {
                         // table.set
                         uint32_t table_idx = DecodeVarUint32(ip, limit);
-                        WasmValue val = stack[--stack_top_];
-                        uint32_t elem_idx = static_cast<uint32_t>(stack[--stack_top_].value.i32);
+                        WasmValue val = stack[--sp];
+                        uint32_t elem_idx = static_cast<uint32_t>(stack[--sp].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
-                            return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                            result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                            goto done;
                         }
                         uint32_t target_idx = 0xFFFFFFFF;
                         if (val.value.i64 != -1) {
@@ -3629,7 +3687,7 @@ namespace embwasm {
                         /* uint32_t align = */
                         DecodeVarUint32(ip, limit);
                         uint32_t offset = DecodeVarUint32(ip, limit);
-                        uint32_t base = static_cast<uint32_t>(stack[--stack_top_].value.i32);
+                        uint32_t base = static_cast<uint32_t>(stack[--sp].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
                         std::size_t size = 0;
@@ -3655,7 +3713,10 @@ namespace embwasm {
                         }
                         if (op == 0x2E || op == 0x2F || op == 0x32 || op == 0x33) size = 2;
 
-                        if (!linear_memory_ptr || addr + size > linear_memory_size) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                        if (!linear_memory_ptr || addr + size > linear_memory_size) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                            goto done;
+                        }
 
                         WasmValue result_val;
                         result_val.value.i64 = 0;
@@ -3700,7 +3761,7 @@ namespace embwasm {
                             std::memcpy(&v, &linear_memory_ptr[addr], 4);
                             result_val.value.i64 = static_cast<int64_t>(v);
                         }
-                        stack[stack_top_++] = result_val;
+                        stack[sp++] = result_val;
                         break;
                     }
 
@@ -3717,8 +3778,8 @@ namespace embwasm {
                         /* uint32_t align = */
                         DecodeVarUint32(ip, limit);
                         uint32_t offset = DecodeVarUint32(ip, limit);
-                        WasmValue val = stack[--stack_top_];
-                        uint32_t base = static_cast<uint32_t>(stack[--stack_top_].value.i32);
+                        WasmValue val = stack[--sp];
+                        uint32_t base = static_cast<uint32_t>(stack[--sp].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
                         std::size_t size = 0;
@@ -3738,7 +3799,8 @@ namespace embwasm {
                                 break;
                         }
                         if (!linear_memory_ptr || addr + size > linear_memory_size) {
-                            return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                            result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                            goto done;
                         }
                         if (op == 0x36) {
                             std::memcpy(&linear_memory_ptr[addr], &val.value.i32, 4);
@@ -3768,34 +3830,34 @@ namespace embwasm {
                     case 0x41: {
                         // i32.const <value>
                         int32_t val = DecodeVarInt32(ip, limit);
-                        stack[stack_top_++].value.i32 = val;
+                        stack[sp++].value.i32 = val;
                         break;
                     }
 
                     case 0x42: {
                         // i64.const <value>
                         int64_t val = DecodeVarInt64(ip, limit);
-                        stack[stack_top_++].value.i64 = val;
+                        stack[sp++].value.i64 = val;
                         break;
                     }
 
                     case 0x43: {
                         // f32.const <value>
-                        std::memcpy(&stack[stack_top_++].value.f32, ip, 4);
+                        std::memcpy(&stack[sp++].value.f32, ip, 4);
                         ip += 4;
                         break;
                     }
 
                     case 0x44: {
                         // f64.const <value>
-                        std::memcpy(&stack[stack_top_++].value.f64, ip, 8);
+                        std::memcpy(&stack[sp++].value.f64, ip, 8);
                         ip += 8;
                         break;
                     }
 
                     case 0x45: {
                         // i32.eqz
-                        stack[stack_top_ - 1].value.i32 = (stack[stack_top_ - 1].value.i32 == 0) ? 1 : 0;
+                        stack[sp - 1].value.i32 = (stack[sp - 1].value.i32 == 0) ? 1 : 0;
                         break;
                     }
 
@@ -3811,8 +3873,8 @@ namespace embwasm {
                     case 0x4E: // i32.ge_s
                     case 0x4F: {
                         // i32.ge_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3845,14 +3907,14 @@ namespace embwasm {
                                                  : 0;
                                 break;
                         }
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
                     case 0x50: {
                         // i64.eqz
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.i32 = (val.value.i64 == 0) ? 1 : 0;
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.i32 = (val.value.i64 == 0) ? 1 : 0;
                         break;
                     }
 
@@ -3867,8 +3929,8 @@ namespace embwasm {
                     case 0x59: // i64.ge_s
                     case 0x5A: {
                         // i64.ge_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3901,7 +3963,7 @@ namespace embwasm {
                                                  : 0;
                                 break;
                         }
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
@@ -3912,8 +3974,8 @@ namespace embwasm {
                     case 0x5F: // f32.le
                     case 0x60: {
                         // f32.ge
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3930,7 +3992,7 @@ namespace embwasm {
                             case 0x60: res = (a.value.f32 >= b.value.f32) ? 1 : 0;
                                 break;
                         }
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
@@ -3941,8 +4003,8 @@ namespace embwasm {
                     case 0x65: // f64.le
                     case 0x66: {
                         // f64.ge
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3959,15 +4021,15 @@ namespace embwasm {
                             case 0x66: res = (a.value.f64 >= b.value.f64) ? 1 : 0;
                                 break;
                         }
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
                     case 0x67: {
                         // i32.clz
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
 
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountLeadingZeros32(
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(CountLeadingZeros32(
                             static_cast<uint32_t>(val.value.i32)));
                         break;
                     }
@@ -3985,8 +4047,8 @@ namespace embwasm {
                     case 0x75: // i32.shr_s
                     case 0x76: {
                         // i32.shr_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
 
                         int32_t res = 0;
                         switch (op) {
@@ -3997,13 +4059,19 @@ namespace embwasm {
                             case 0x6C: res = a.value.i32 * b.value.i32;
                                 break;
                             case 0x6D:
-                                if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                                if (b.value.i32 == 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                                    goto done;
+                                }
                                 if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) return
                                         OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
                                 res = a.value.i32 / b.value.i32;
                                 break;
                             case 0x6E:
-                                if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                                if (b.value.i32 == 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                                    goto done;
+                                }
                                 res = static_cast<int32_t>(
                                     static_cast<uint32_t>(a.value.i32) / static_cast<uint32_t>(b.value.i32));
                                 break;
@@ -4021,7 +4089,7 @@ namespace embwasm {
                                            static_cast<uint32_t>(a.value.i32) >> (b.value.i32 & 31));
                                 break;
                         }
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
@@ -4036,8 +4104,8 @@ namespace embwasm {
                     case 0x87: // i64.shr_s
                     case 0x88: {
                         // i64.shr_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
 
                         int64_t res = 0;
                         switch (op) {
@@ -4061,7 +4129,7 @@ namespace embwasm {
                                            static_cast<uint64_t>(a.value.i64) >> (b.value.i64 & 63));
                                 break;
                         }
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
@@ -4071,8 +4139,8 @@ namespace embwasm {
                     case 0x94: // f32.mul
                     case 0x95: {
                         // f32.div
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         float res = 0;
                         switch (op) {
                             case 0x92: res = a.value.f32 + b.value.f32;
@@ -4086,7 +4154,7 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f32 = res;
-                        stack[stack_top_++] = result_val;
+                        stack[sp++] = result_val;
                         break;
                     }
 
@@ -4095,8 +4163,8 @@ namespace embwasm {
                     case 0xA2: // f64.mul
                     case 0xA3: {
                         // f64.div
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         double res = 0;
                         switch (op) {
                             case 0xA0: res = a.value.f64 + b.value.f64;
@@ -4110,88 +4178,112 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f64 = res;
-                        stack[stack_top_++] = result_val;
+                        stack[sp++] = result_val;
                         break;
                     }
 
                     case 0xA7: {
                         // i32.wrap_i64
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(val.value.i64 & 0xFFFFFFFFULL);
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(val.value.i64 & 0xFFFFFFFFULL);
                         break;
                     }
 
                     case 0xA8: { // i32.trunc_f32_s
-                        float f = stack[stack_top_ - 1].value.f32;
+                        float f = stack[sp - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f < -2147483648.0f || f >= 2147483648.0f)
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(f);
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(f);
                         break;
                     }
                     case 0xA9: { // i32.trunc_f32_u
-                        float f = stack[stack_top_ - 1].value.f32;
+                        float f = stack[sp - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f <= -1.0f || f >= 4294967296.0f)
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<uint32_t>(f));
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(static_cast<uint32_t>(f));
                         break;
                     }
                     case 0xAA: { // i32.trunc_f64_s
-                        double d = stack[stack_top_ - 1].value.f64;
+                        double d = stack[sp - 1].value.f64;
                         if (!(d > -2147483649.0 && d < 2147483648.0))
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(d);
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(d);
                         break;
                     }
                     case 0xAB: { // i32.trunc_f64_u
-                        double d = stack[stack_top_ - 1].value.f64;
+                        double d = stack[sp - 1].value.f64;
                         if (!(d > -1.0 && d < 4294967296.0))
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<uint32_t>(d));
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(static_cast<uint32_t>(d));
                         break;
                     }
 
                     case 0xAC: {
                         // i64.extend_i32_s
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.i64 = 0;
-                        stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(val.value.i32);
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.i64 = 0;
+                        stack[sp - 1].value.i64 = static_cast<int64_t>(val.value.i32);
                         break;
                     }
 
                     case 0xAD: {
                         // i64.extend_i32_u
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.i64 = 0;
-                        stack[stack_top_ - 1].value.i64 = static_cast<uint64_t>(static_cast<uint32_t>(val.value.i32));
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.i64 = 0;
+                        stack[sp - 1].value.i64 = static_cast<uint64_t>(static_cast<uint32_t>(val.value.i32));
                         break;
                     }
 
                     case 0xAE: { // i64.trunc_f32_s
-                        float f = stack[stack_top_ - 1].value.f32;
+                        float f = stack[sp - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f < -9223372036854775808.0f || f >= 9223372036854775808.0f)
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(f);
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i64 = static_cast<int64_t>(f);
                         break;
                     }
                     case 0xAF: { // i64.trunc_f32_u
-                        float f = stack[stack_top_ - 1].value.f32;
+                        float f = stack[sp - 1].value.f32;
                         if (std::isnan(f) || std::isinf(f) || f <= -1.0f || f >= 18446744073709551616.0f)
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(static_cast<uint64_t>(f));
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i64 = static_cast<int64_t>(static_cast<uint64_t>(f));
                         break;
                     }
                     case 0xB0: { // i64.trunc_f64_s
-                        double d = stack[stack_top_ - 1].value.f64;
+                        double d = stack[sp - 1].value.f64;
                         if (std::isnan(d) || std::isinf(d) || d < -9223372036854775808.0 || d >= 9223372036854775808.0)
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(d);
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i64 = static_cast<int64_t>(d);
                         break;
                     }
                     case 0xB1: { // i64.trunc_f64_u
-                        double d = stack[stack_top_ - 1].value.f64;
+                        double d = stack[sp - 1].value.f64;
                         if (!(d > -1.0 && d < 18446744073709551616.0))
-                            return OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
-                        stack[stack_top_ - 1].value.i64 = static_cast<int64_t>(static_cast<uint64_t>(d));
+                        {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapInvalidConversionToInteger);
+                            goto done;
+                        }
+                        stack[sp - 1].value.i64 = static_cast<int64_t>(static_cast<uint64_t>(d));
                         break;
                     }
 
@@ -4200,7 +4292,7 @@ namespace embwasm {
                     case 0xB4: // f32.convert_i64_s
                     case 0xB5: {
                         // f32.convert_i64_u
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         WasmValue res_val;
                         if (op == 0xB2) {
                             res_val.value.f32 = static_cast<float>(val.value.i32);
@@ -4211,15 +4303,15 @@ namespace embwasm {
                         } else {
                             res_val.value.f32 = static_cast<float>(static_cast<uint64_t>(val.value.i64));
                         }
-                        stack[stack_top_ - 1] = res_val;
+                        stack[sp - 1] = res_val;
                         break;
                     }
 
                     case 0xB6: {
                         // f32.demote_f64
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.f32 = 0;
-                        stack[stack_top_ - 1].value.f32 = static_cast<float>(val.value.f64);
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.f32 = 0;
+                        stack[sp - 1].value.f32 = static_cast<float>(val.value.f64);
                         break;
                     }
 
@@ -4228,7 +4320,7 @@ namespace embwasm {
                     case 0xB9: // f64.convert_i64_s
                     case 0xBA: {
                         // f64.convert_i64_u
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         WasmValue res_val;
                         if (op == 0xB7) {
                             res_val.value.f64 = static_cast<double>(val.value.i32);
@@ -4239,15 +4331,15 @@ namespace embwasm {
                         } else {
                             res_val.value.f64 = static_cast<double>(static_cast<uint64_t>(val.value.i64));
                         }
-                        stack[stack_top_ - 1] = res_val;
+                        stack[sp - 1] = res_val;
                         break;
                     }
 
                     case 0xBB: {
                         // f64.promote_f32
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.f64 = 0;
-                        stack[stack_top_ - 1].value.f64 = static_cast<double>(val.value.f32);
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.f64 = 0;
+                        stack[sp - 1].value.f64 = static_cast<double>(val.value.f32);
                         break;
                     }
 
@@ -4256,7 +4348,7 @@ namespace embwasm {
                         uint8_t reserved = *ip++;
                         (void) reserved;
                         int32_t pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
-                        stack[stack_top_++].value.i32 = pages;
+                        stack[sp++].value.i32 = pages;
                         break;
                     }
 
@@ -4264,10 +4356,10 @@ namespace embwasm {
                         // memory.grow
                         uint8_t reserved = *ip++;
                         (void) reserved;
-                        uint32_t delta_pages = static_cast<uint32_t>(stack[stack_top_ - 1].value.i32);
+                        uint32_t delta_pages = static_cast<uint32_t>(stack[sp - 1].value.i32);
                         int32_t prev_pages = static_cast<int32_t>((linear_memory_size + 65535) / 65536);
                         if (delta_pages == 0) {
-                            stack[stack_top_ - 1].value.i32 = prev_pages;
+                            stack[sp - 1].value.i32 = prev_pages;
                             break;
                         }
                         uint64_t new_pages = static_cast<uint64_t>(prev_pages) + delta_pages;
@@ -4275,7 +4367,7 @@ namespace embwasm {
                                                   (new_pages > max_linear_memory_pages);
                         uint64_t new_size_bytes = new_pages * 65536;
                         if (new_pages > 65536 || exceeds_module_max || new_size_bytes > kMaxLinearMemorySize) {
-                            stack[stack_top_ - 1].value.i32 = -1;
+                            stack[sp - 1].value.i32 = -1;
                         } else if (new_size_bytes <= linear_memory_capacity) {
                             // 既存バッファ内に収まる場合
                             std::memset(linear_memory_ptr + linear_memory_size, 0,
@@ -4288,7 +4380,7 @@ namespace embwasm {
                                     modules_[_m]->linear_memory_size = static_cast<std::size_t>(new_size_bytes);
                                 }
                             }
-                            stack[stack_top_ - 1].value.i32 = prev_pages;
+                            stack[sp - 1].value.i32 = prev_pages;
                         } else {
                             // 容量不足: ダブリング戦略で再確保してデータをコピー
                             std::size_t new_cap = (linear_memory_capacity > 0)
@@ -4299,7 +4391,7 @@ namespace embwasm {
                             if (new_cap > kMaxLinearMemorySize) new_cap = kMaxLinearMemorySize;
                             uint8_t *new_mem = static_cast<uint8_t *>(pool_->Allocate(new_cap));
                             if (!new_mem) {
-                                stack[stack_top_ - 1].value.i32 = -1;
+                                stack[sp - 1].value.i32 = -1;
                             } else {
                                 if (linear_memory_ptr && linear_memory_size > 0) {
                                     std::memcpy(new_mem, linear_memory_ptr, linear_memory_size);
@@ -4325,7 +4417,7 @@ namespace embwasm {
                                 if (old_mem) {
                                     pool_->Free(old_mem);
                                 }
-                                stack[stack_top_ - 1].value.i32 = prev_pages;
+                                stack[sp - 1].value.i32 = prev_pages;
                             }
                         }
                         break;
@@ -4333,159 +4425,177 @@ namespace embwasm {
 
                     case 0x68: {
                         // i32.ctz
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(CountTrailingZeros32(
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(CountTrailingZeros32(
                             static_cast<uint32_t>(val.value.i32)));
                         break;
                     }
 
                     case 0x69: {
                         // i32.popcnt
-                        WasmValue val = stack[stack_top_ - 1];
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(PopCount32(
+                        WasmValue val = stack[sp - 1];
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(PopCount32(
                             static_cast<uint32_t>(val.value.i32)));
                         break;
                     }
 
                     case 0x6F: {
                         // i32.rem_s
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
-                        if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
+                        if (b.value.i32 == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                            goto done;
+                        }
                         int32_t res = 0;
                         if (a.value.i32 == static_cast<int32_t>(0x80000000) && b.value.i32 == -1) {
                             res = 0;
                         } else {
                             res = a.value.i32 % b.value.i32;
                         }
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
                     case 0x70: {
                         // i32.rem_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
-                        if (b.value.i32 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
+                        if (b.value.i32 == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                            goto done;
+                        }
                         uint32_t ua = static_cast<uint32_t>(a.value.i32);
                         uint32_t ub = static_cast<uint32_t>(b.value.i32);
                         int32_t res = static_cast<int32_t>(ua % ub);
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
                     case 0x77: {
                         // i32.rotl
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         int32_t res = static_cast<int32_t>(Rotl32(static_cast<uint32_t>(a.value.i32),
                                                                   static_cast<uint32_t>(b.value.i32)));
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
                     case 0x78: {
                         // i32.rotr
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         int32_t res = static_cast<int32_t>(Rotr32(static_cast<uint32_t>(a.value.i32),
                                                                   static_cast<uint32_t>(b.value.i32)));
-                        stack[stack_top_++].value.i32 = res;
+                        stack[sp++].value.i32 = res;
                         break;
                     }
 
                     case 0x79: {
                         // i64.clz
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         int64_t res = static_cast<int64_t>(CountLeadingZeros64(static_cast<uint64_t>(val.value.i64)));
-                        stack[stack_top_ - 1].value.i64 = res;
+                        stack[sp - 1].value.i64 = res;
                         break;
                     }
 
                     case 0x7A: {
                         // i64.ctz
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         int64_t res = static_cast<int64_t>(CountTrailingZeros64(static_cast<uint64_t>(val.value.i64)));
-                        stack[stack_top_ - 1].value.i64 = res;
+                        stack[sp - 1].value.i64 = res;
                         break;
                     }
 
                     case 0x7B: {
                         // i64.popcnt
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         int64_t res = static_cast<int64_t>(PopCount64(static_cast<uint64_t>(val.value.i64)));
-                        stack[stack_top_ - 1].value.i64 = res;
+                        stack[sp - 1].value.i64 = res;
                         break;
                     }
 
                     case 0x7F: {
                         // i64.div_s
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
+                        if (b.value.i64 == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                            goto done;
+                        }
                         if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) return
                                 OnTrap(WasmResult::kErrorExecuteTrapIntegerOverflow);
                         int64_t res = a.value.i64 / b.value.i64;
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
                     case 0x80: {
                         // i64.div_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
+                        if (b.value.i64 == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                            goto done;
+                        }
                         uint64_t ua = static_cast<uint64_t>(a.value.i64);
                         uint64_t ub = static_cast<uint64_t>(b.value.i64);
                         int64_t res = static_cast<int64_t>(ua / ub);
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
                     case 0x81: {
                         // i64.rem_s
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
+                        if (b.value.i64 == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                            goto done;
+                        }
                         int64_t res = 0;
                         if (a.value.i64 == static_cast<int64_t>(0x8000000000000000ULL) && b.value.i64 == -1) {
                             res = 0;
                         } else {
                             res = a.value.i64 % b.value.i64;
                         }
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
                     case 0x82: {
                         // i64.rem_u
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
-                        if (b.value.i64 == 0) return OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
+                        if (b.value.i64 == 0) {
+                            result = OnTrap(WasmResult::kErrorExecuteTrapIntegerDivideByZero);
+                            goto done;
+                        }
                         uint64_t ua = static_cast<uint64_t>(a.value.i64);
                         uint64_t ub = static_cast<uint64_t>(b.value.i64);
                         int64_t res = static_cast<int64_t>(ua % ub);
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
                     case 0x89: {
                         // i64.rotl
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         int64_t res = static_cast<int64_t>(Rotl64(static_cast<uint64_t>(a.value.i64),
                                                                   static_cast<uint64_t>(b.value.i64)));
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
                     case 0x8A: {
                         // i64.rotr
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         int64_t res = static_cast<int64_t>(Rotr64(static_cast<uint64_t>(a.value.i64),
                                                                   static_cast<uint64_t>(b.value.i64)));
-                        stack[stack_top_++].value.i64 = res;
+                        stack[sp++].value.i64 = res;
                         break;
                     }
 
@@ -4497,7 +4607,7 @@ namespace embwasm {
                     case 0x90: // f32.nearest
                     case 0x91: {
                         // f32.sqrt
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         float res = 0.0f;
                         switch (op) {
                             case 0x8B: res = std::fabs(val.value.f32);
@@ -4515,8 +4625,8 @@ namespace embwasm {
                             case 0x91: res = std::sqrt(val.value.f32);
                                 break;
                         }
-                        stack[stack_top_ - 1].value.f32 = 0;
-                        stack[stack_top_ - 1].value.f32 = res;
+                        stack[sp - 1].value.f32 = 0;
+                        stack[sp - 1].value.f32 = res;
                         break;
                     }
 
@@ -4524,8 +4634,8 @@ namespace embwasm {
                     case 0x97: // f32.max
                     case 0x98: {
                         // f32.copysign
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         float res = 0.0f;
                         if (op == 0x96) {
                             // min
@@ -4551,7 +4661,7 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f32 = res;
-                        stack[stack_top_++] = result_val;
+                        stack[sp++] = result_val;
                         break;
                     }
 
@@ -4563,7 +4673,7 @@ namespace embwasm {
                     case 0x9E: // f64.nearest
                     case 0x9F: {
                         // f64.sqrt
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         double res = 0.0;
                         switch (op) {
                             case 0x99: res = std::fabs(val.value.f64);
@@ -4581,8 +4691,8 @@ namespace embwasm {
                             case 0x9F: res = std::sqrt(val.value.f64);
                                 break;
                         }
-                        stack[stack_top_ - 1].value.f64 = 0;
-                        stack[stack_top_ - 1].value.f64 = res;
+                        stack[sp - 1].value.f64 = 0;
+                        stack[sp - 1].value.f64 = res;
                         break;
                     }
 
@@ -4590,8 +4700,8 @@ namespace embwasm {
                     case 0xA5: // f64.max
                     case 0xA6: {
                         // f64.copysign
-                        WasmValue b = stack[--stack_top_];
-                        WasmValue a = stack[--stack_top_];
+                        WasmValue b = stack[--sp];
+                        WasmValue a = stack[--sp];
                         double res = 0.0;
                         if (op == 0xA4) {
                             // min
@@ -4617,80 +4727,80 @@ namespace embwasm {
                         }
                         WasmValue result_val;
                         result_val.value.f64 = res;
-                        stack[stack_top_++] = result_val;
+                        stack[sp++] = result_val;
                         break;
                     }
 
                     case 0xBC: {
                         // i32.reinterpret_f32
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         int32_t bits;
                         std::memcpy(&bits, &val.value.f32, 4);
-                        stack[stack_top_ - 1].value.i32 = bits;
+                        stack[sp - 1].value.i32 = bits;
                         break;
                     }
 
                     case 0xBD: {
                         // i64.reinterpret_f64
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         int64_t bits;
                         std::memcpy(&bits, &val.value.f64, 8);
-                        stack[stack_top_ - 1].value.i64 = bits;
+                        stack[sp - 1].value.i64 = bits;
                         break;
                     }
 
                     case 0xBE: {
                         // f32.reinterpret_i32
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         float bits;
                         std::memcpy(&bits, &val.value.i32, 4);
-                        stack[stack_top_ - 1].value.f32 = 0;
-                        stack[stack_top_ - 1].value.f32 = bits;
+                        stack[sp - 1].value.f32 = 0;
+                        stack[sp - 1].value.f32 = bits;
                         break;
                     }
 
                     case 0xBF: {
                         // f64.reinterpret_i64
-                        WasmValue val = stack[stack_top_ - 1];
+                        WasmValue val = stack[sp - 1];
                         double bits;
                         std::memcpy(&bits, &val.value.i64, 8);
-                        stack[stack_top_ - 1].value.f64 = 0;
-                        stack[stack_top_ - 1].value.f64 = bits;
+                        stack[sp - 1].value.f64 = 0;
+                        stack[sp - 1].value.f64 = bits;
                         break;
                     }
 
                     // Sign extension opcodes (sign extension proposal)
                     case 0xC0: {
                         // i32.extend8_s
-                        int32_t v = stack[stack_top_ - 1].value.i32;
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int8_t>(v & 0xFF));
+                        int32_t v = stack[sp - 1].value.i32;
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(static_cast<int8_t>(v & 0xFF));
                         break;
                     }
                     case 0xC1: {
                         // i32.extend16_s
-                        int32_t v = stack[stack_top_ - 1].value.i32;
-                        stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(static_cast<int16_t>(v & 0xFFFF));
+                        int32_t v = stack[sp - 1].value.i32;
+                        stack[sp - 1].value.i32 = static_cast<int32_t>(static_cast<int16_t>(v & 0xFFFF));
                         break;
                     }
                     case 0xC2: {
                         // i64.extend8_s
-                        int64_t v = stack[stack_top_ - 1].value.i64;
+                        int64_t v = stack[sp - 1].value.i64;
                         int64_t res = static_cast<int64_t>(static_cast<int8_t>(v & 0xFF));
-                        stack[stack_top_ - 1].value.i64 = res;
+                        stack[sp - 1].value.i64 = res;
                         break;
                     }
                     case 0xC3: {
                         // i64.extend16_s
-                        int64_t v = stack[stack_top_ - 1].value.i64;
+                        int64_t v = stack[sp - 1].value.i64;
                         int64_t res = static_cast<int64_t>(static_cast<int16_t>(v & 0xFFFF));
-                        stack[stack_top_ - 1].value.i64 = res;
+                        stack[sp - 1].value.i64 = res;
                         break;
                     }
                     case 0xC4: {
                         // i64.extend32_s
-                        int64_t v = stack[stack_top_ - 1].value.i64;
+                        int64_t v = stack[sp - 1].value.i64;
                         int64_t res = static_cast<int64_t>(static_cast<int32_t>(v & 0xFFFFFFFFULL));
-                        stack[stack_top_ - 1].value.i64 = res;
+                        stack[sp - 1].value.i64 = res;
                         break;
                     }
 
@@ -4700,14 +4810,14 @@ namespace embwasm {
                         (void) heap_type;
                         WasmValue ref_val = {};
                         ref_val.value.i64 = -1;
-                        stack[stack_top_++] = ref_val;
+                        stack[sp++] = ref_val;
                         break;
                     }
 
                     // ref.is_null (0xD1)
                     case 0xD1: {
-                        int64_t ptr_val = stack[--stack_top_].value.i64;
-                        stack[stack_top_++].value.i32 = ptr_val == -1 ? 1 : 0;
+                        int64_t ptr_val = stack[--sp].value.i64;
+                        stack[sp++].value.i32 = ptr_val == -1 ? 1 : 0;
                         break;
                     }
 
@@ -4716,7 +4826,7 @@ namespace embwasm {
                         uint32_t func_idx = DecodeVarUint32(ip, limit);
                         WasmValue ref_val = {};
                         ref_val.value.i64 = static_cast<int64_t>(func_idx);
-                        stack[stack_top_++] = ref_val;
+                        stack[sp++] = ref_val;
                         break;
                     }
 
@@ -4726,108 +4836,116 @@ namespace embwasm {
                         switch (sub_op) {
                             case 0: {
                                 // i32.trunc_sat_f32_s
-                                float fv = stack[stack_top_ - 1].value.f32;
+                                float fv = stack[sp - 1].value.f32;
                                 int32_t res;
                                 if (std::isnan(fv)) { res = 0; } else if (fv >= 2147483648.0f) {
                                     res = static_cast<int32_t>(2147483647);
                                 } else if (fv < -2147483648.0f) { res = static_cast<int32_t>(0x80000000U); } else {
                                     res = static_cast<int32_t>(fv);
                                 }
-                                stack[stack_top_ - 1].value.i32 = res;
+                                stack[sp - 1].value.i32 = res;
                                 break;
                             }
                             case 1: {
                                 // i32.trunc_sat_f32_u
-                                float fv = stack[stack_top_ - 1].value.f32;
+                                float fv = stack[sp - 1].value.f32;
                                 uint32_t res;
                                 if (std::isnan(fv) || fv < 0.0f) { res = 0; } else if (fv >= 4294967296.0f) {
                                     res = 0xFFFFFFFFU;
                                 } else { res = static_cast<uint32_t>(fv); }
-                                stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(res);
+                                stack[sp - 1].value.i32 = static_cast<int32_t>(res);
                                 break;
                             }
                             case 2: {
                                 // i32.trunc_sat_f64_s
-                                double dv = stack[stack_top_ - 1].value.f64;
+                                double dv = stack[sp - 1].value.f64;
                                 int32_t res;
                                 if (std::isnan(dv)) { res = 0; } else if (dv >= 2147483648.0) {
                                     res = static_cast<int32_t>(2147483647);
                                 } else if (dv < -2147483648.0) { res = static_cast<int32_t>(0x80000000U); } else {
                                     res = static_cast<int32_t>(dv);
                                 }
-                                stack[stack_top_ - 1].value.i32 = res;
+                                stack[sp - 1].value.i32 = res;
                                 break;
                             }
                             case 3: {
                                 // i32.trunc_sat_f64_u
-                                double dv = stack[stack_top_ - 1].value.f64;
+                                double dv = stack[sp - 1].value.f64;
                                 uint32_t res;
                                 if (std::isnan(dv) || dv < 0.0) { res = 0; } else if (dv >= 4294967296.0) {
                                     res = 0xFFFFFFFFU;
                                 } else { res = static_cast<uint32_t>(dv); }
-                                stack[stack_top_ - 1].value.i32 = static_cast<int32_t>(res);
+                                stack[sp - 1].value.i32 = static_cast<int32_t>(res);
                                 break;
                             }
                             case 4: {
                                 // i64.trunc_sat_f32_s
-                                float fv = stack[stack_top_ - 1].value.f32;
+                                float fv = stack[sp - 1].value.f32;
                                 int64_t res;
                                 if (std::isnan(fv)) { res = 0; } else if (fv >= 9223372036854775808.0f) {
                                     res = static_cast<int64_t>(0x7FFFFFFFFFFFFFFFLL);
                                 } else if (fv < -9223372036854775808.0f) {
                                     res = static_cast<int64_t>(0x8000000000000000ULL);
                                 } else { res = static_cast<int64_t>(fv); }
-                                stack[stack_top_ - 1].value.i64 = res;
+                                stack[sp - 1].value.i64 = res;
                                 break;
                             }
                             case 5: {
                                 // i64.trunc_sat_f32_u
-                                float fv = stack[stack_top_ - 1].value.f32;
+                                float fv = stack[sp - 1].value.f32;
                                 int64_t res;
                                 if (std::isnan(fv) || fv < 0.0f) { res = 0; } else if (fv >= 18446744073709551616.0f) {
                                     res = static_cast<int64_t>(0xFFFFFFFFFFFFFFFFULL);
                                 } else { res = static_cast<int64_t>(static_cast<uint64_t>(fv)); }
-                                stack[stack_top_ - 1].value.i64 = res;
+                                stack[sp - 1].value.i64 = res;
                                 break;
                             }
                             case 6: {
                                 // i64.trunc_sat_f64_s
-                                double dv = stack[stack_top_ - 1].value.f64;
+                                double dv = stack[sp - 1].value.f64;
                                 int64_t res;
                                 if (std::isnan(dv)) { res = 0; } else if (dv >= 9223372036854775808.0) {
                                     res = static_cast<int64_t>(0x7FFFFFFFFFFFFFFFLL);
                                 } else if (dv < -9223372036854775808.0) {
                                     res = static_cast<int64_t>(0x8000000000000000ULL);
                                 } else { res = static_cast<int64_t>(dv); }
-                                stack[stack_top_ - 1].value.i64 = res;
+                                stack[sp - 1].value.i64 = res;
                                 break;
                             }
                             case 7: {
                                 // i64.trunc_sat_f64_u
-                                double dv = stack[stack_top_ - 1].value.f64;
+                                double dv = stack[sp - 1].value.f64;
                                 int64_t res;
                                 if (std::isnan(dv) || dv < 0.0) { res = 0; } else if (dv >= 18446744073709551616.0) {
                                     res = static_cast<int64_t>(0xFFFFFFFFFFFFFFFFULL);
                                 } else { res = static_cast<int64_t>(static_cast<uint64_t>(dv)); }
-                                stack[stack_top_ - 1].value.i64 = res;
+                                stack[sp - 1].value.i64 = res;
                                 break;
                             }
                             case 8: {
                                 // memory.init
                                 uint32_t data_idx = DecodeVarUint32(ip, limit);
                                 ip++; // memory index (0)
-                                int32_t n = stack[--stack_top_].value.i32;
-                                int32_t s = stack[--stack_top_].value.i32;
-                                int32_t d = stack[--stack_top_].value.i32;
+                                int32_t n = stack[--sp].value.i32;
+                                int32_t s = stack[--sp].value.i32;
+                                int32_t d = stack[--sp].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
-                                if (data_idx >= data_segment_count) return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                if (n < 0 || s < 0 || d < 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    goto done;
+                                }
+                                if (data_idx >= data_segment_count) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    goto done;
+                                }
                                 uint32_t dseg_size = data_segment_dropped[data_idx] ? 0 : data_segment_sizes[data_idx];
                                 if (static_cast<uint64_t>(s) + n > dseg_size) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    goto done;
                                 }
                                 if (static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    goto done;
                                 }
                                 if (n == 0) break;
                                 if (linear_memory_ptr && data_segments[data_idx]) {
@@ -4838,7 +4956,10 @@ namespace embwasm {
                             case 9: {
                                 // data.drop
                                 uint32_t data_idx = DecodeVarUint32(ip, limit);
-                                if (data_idx >= data_segment_count) return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                if (data_idx >= data_segment_count) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    goto done;
+                                }
                                 data_segment_dropped[data_idx] = true;
                                 data_segments[data_idx] = nullptr;
                                 data_segment_sizes[data_idx] = 0;
@@ -4848,14 +4969,18 @@ namespace embwasm {
                                 // memory.copy
                                 ip++; // dst memory (0)
                                 ip++; // src memory (0)
-                                int32_t n = stack[--stack_top_].value.i32;
-                                int32_t s = stack[--stack_top_].value.i32;
-                                int32_t d = stack[--stack_top_].value.i32;
+                                int32_t n = stack[--sp].value.i32;
+                                int32_t s = stack[--sp].value.i32;
+                                int32_t d = stack[--sp].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                if (n < 0 || s < 0 || d < 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    goto done;
+                                }
                                 if (static_cast<uint64_t>(s) + n > linear_memory_size ||
                                     static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    goto done;
                                 }
                                 if (n == 0) break;
                                 if (linear_memory_ptr) {
@@ -4866,13 +4991,17 @@ namespace embwasm {
                             case 11: {
                                 // memory.fill
                                 ip++; // memory (0)
-                                int32_t n = stack[--stack_top_].value.i32;
-                                int32_t val = stack[--stack_top_].value.i32;
-                                int32_t d = stack[--stack_top_].value.i32;
+                                int32_t n = stack[--sp].value.i32;
+                                int32_t val = stack[--sp].value.i32;
+                                int32_t d = stack[--sp].value.i32;
 
-                                if (n < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                if (n < 0 || d < 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    goto done;
+                                }
                                 if (static_cast<uint64_t>(d) + n > linear_memory_size) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
+                                    goto done;
                                 }
                                 if (n == 0) break;
                                 if (linear_memory_ptr) {
@@ -4884,24 +5013,31 @@ namespace embwasm {
                                 // table.init
                                 uint32_t elem_idx = DecodeVarUint32(ip, limit);
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                int32_t n = stack[--stack_top_].value.i32;
-                                int32_t s = stack[--stack_top_].value.i32;
-                                int32_t d = stack[--stack_top_].value.i32;
+                                int32_t n = stack[--sp].value.i32;
+                                int32_t s = stack[--sp].value.i32;
+                                int32_t d = stack[--sp].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                if (n < 0 || s < 0 || d < 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
+                                }
                                 if (elem_idx >= elem_segment_count) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    goto done;
                                 }
                                 if (table_idx >= table_count) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
                                 }
                                 uint32_t eseg_size = elem_segment_dropped[elem_idx] ? 0 : elem_segment_sizes[elem_idx];
                                 if (static_cast<uint64_t>(s) + n > eseg_size) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    goto done;
                                 }
 
                                 if (static_cast<uint64_t>(d) + n > table_sizes[table_idx]) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
                                 }
                                 if (n == 0) break;
                                 uint32_t *tbl = tables[table_idx];
@@ -4919,7 +5055,10 @@ namespace embwasm {
                             case 13: {
                                 // elem.drop
                                 uint32_t elem_idx = DecodeVarUint32(ip, limit);
-                                if (elem_idx >= elem_segment_count) return OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                if (elem_idx >= elem_segment_count) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
+                                    goto done;
+                                }
                                 elem_segment_dropped[elem_idx] = true;
                                 if (elem_segments[elem_idx]) {
                                     pool_->Free(elem_segments[elem_idx]);
@@ -4932,17 +5071,22 @@ namespace embwasm {
                                 // table.copy
                                 uint32_t dst_table = DecodeVarUint32(ip, limit);
                                 uint32_t src_table = DecodeVarUint32(ip, limit);
-                                int32_t n = stack[--stack_top_].value.i32;
-                                int32_t s = stack[--stack_top_].value.i32;
-                                int32_t d = stack[--stack_top_].value.i32;
+                                int32_t n = stack[--sp].value.i32;
+                                int32_t s = stack[--sp].value.i32;
+                                int32_t d = stack[--sp].value.i32;
 
-                                if (n < 0 || s < 0 || d < 0) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                if (n < 0 || s < 0 || d < 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
+                                }
                                 if (dst_table >= table_count || src_table >= table_count) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
                                 }
                                 if (static_cast<uint64_t>(s) + n > table_sizes[src_table] ||
                                     static_cast<uint64_t>(d) + n > table_sizes[dst_table]) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
                                 }
                                 if (n == 0) break;
                                 uint32_t *tbl_dst = tables[dst_table];
@@ -4955,29 +5099,32 @@ namespace embwasm {
                             case 15: {
                                 // table.grow
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                int32_t n = stack[--stack_top_].value.i32;
-                                WasmValue init_val = stack[--stack_top_];
+                                int32_t n = stack[--sp].value.i32;
+                                WasmValue init_val = stack[--sp];
 
-                                if (table_idx >= table_count) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                if (table_idx >= table_count) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
+                                }
                                 if (n < 0) {
-                                    stack[stack_top_++].value.i32 = -1;
+                                    stack[sp++].value.i32 = -1;
                                     break;
                                 }
                                 if (n == 0) {
-                                    stack[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
+                                    stack[sp++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                                     break;
                                 }
 
                                 uint32_t old_size = table_sizes[table_idx];
                                 uint64_t new_size = static_cast<uint64_t>(old_size) + n;
                                 if (new_size > table_max_sizes[table_idx]) {
-                                    stack[stack_top_++].value.i32 = -1;
+                                    stack[sp++].value.i32 = -1;
                                     break;
                                 }
                                 uint32_t *new_tbl = static_cast<uint32_t *>(pool_->
                                     Allocate(new_size * sizeof(uint32_t)));
                                 if (!new_tbl) {
-                                    stack[stack_top_++].value.i32 = -1;
+                                    stack[sp++].value.i32 = -1;
                                     break;
                                 }
 
@@ -5012,27 +5159,34 @@ namespace embwasm {
                                     }
                                 }
 
-                                stack[stack_top_++].value.i32 = static_cast<int32_t>(old_size);
+                                stack[sp++].value.i32 = static_cast<int32_t>(old_size);
                                 break;
                             }
                             case 16: {
                                 // table.size
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                if (table_idx >= table_count) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
-                                stack[stack_top_++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
+                                if (table_idx >= table_count) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
+                                }
+                                stack[sp++].value.i32 = static_cast<int32_t>(table_sizes[table_idx]);
                                 break;
                             }
                             case 17: {
                                 // table.fill
                                 uint32_t table_idx = DecodeVarUint32(ip, limit);
-                                int32_t n = stack[--stack_top_].value.i32;
-                                WasmValue val = stack[--stack_top_];
-                                int32_t idx = stack[--stack_top_].value.i32;
+                                int32_t n = stack[--sp].value.i32;
+                                WasmValue val = stack[--sp];
+                                int32_t idx = stack[--sp].value.i32;
 
-                                if (n < 0 || idx < 0) return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                if (n < 0 || idx < 0) {
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
+                                }
                                 if (table_idx >= table_count || static_cast<uint64_t>(idx) + n > table_sizes[
                                         table_idx]) {
-                                    return OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
+                                    goto done;
                                 }
                                 if (n == 0) break;
                                 uint32_t *tbl = tables[table_idx];
@@ -5052,19 +5206,22 @@ namespace embwasm {
                                 break;
                             }
                             default:
-                                return OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                                result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                                goto done;
                         }
                         break;
                     }
 
                     default:
                         // 未対応のオペコード
-                        return OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                        result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
+                        goto done;
                 }
             }
 
             // 関数の末尾に達した場合は暗黙のリターン
             // locals は func_label.stack_top への巻き戻しで自動解放される
+            ctx->stack_top = sp;
             frame.ip = ip;
             if (ctx->call_stack_top > 0) {
                 ctx->labels_pool_top -= frame.label_capacity;
@@ -5072,11 +5229,18 @@ namespace embwasm {
             }
 
         frame_changed:
-            if (ctx->call_stack_top == 0) return WasmResult::kOk;
+            if (ctx->call_stack_top == 0) {
+                result = WasmResult::kOk;
+                goto done;
+            }
             continue;
         }
 
-        return WasmResult::kOk;
+        result = WasmResult::kOk;
+
+    done:
+        ctx->stack_top = sp;
+        return result;
     }
 
     void *WasmEngine::GetModuleUserData(HostModuleId module_id) const noexcept {
