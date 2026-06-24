@@ -23,7 +23,6 @@ struct WasmLocalFunction {
     const uint8_t* code_ptr;   ///< バイトコードの先頭ポインタ（ROM を指す）。
     uint32_t code_size;        ///< バイトコードのバイト数。
     uint32_t local_count;      ///< 引数を除くローカル変数数。
-    const WasmType* local_types; ///< ローカル変数の型リスト。
     uint32_t max_label_depth;  ///< `Validate()` で算出した最大ラベルスタック深度（関数ブロック含む）。
     uint32_t max_stack_depth;  ///< `Validate()` で算出した最大データスタック深度。
 };

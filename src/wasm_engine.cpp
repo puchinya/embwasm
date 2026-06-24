@@ -813,16 +813,6 @@ namespace embwasm {
     void WasmEngine::FreeModuleInstance(WasmModuleInstance *mod) noexcept {
         if (!pool_ || !mod || !mod->is_active) return;
 
-        // 各内部関数のローカル変数型配列を解放する。
-        // WasmImportFunction.module_name/field_name は ROM を指す（プール確保なし）ので解放不要。
-        if (mod->functions) {
-            for (std::size_t i = 0; i < mod->function_count; ++i) {
-                if (mod->functions[i].kind == WasmFunctionKind::kLocal && mod->functions[i].local.local_types) {
-                    pool_->Free(const_cast<WasmType *>(mod->functions[i].local.local_types));
-                }
-            }
-        }
-
         // elem_segments 内のデータを解放
         for (std::size_t i = 0; i < mod->elem_segment_count; ++i) {
             if (mod->elem_segments && mod->elem_segments[i]) {
@@ -2541,19 +2531,9 @@ namespace embwasm {
                             return WasmResult::kErrorParseOthers;
                         }
 
-                        WasmType *local_types = nullptr;
-                        if (local_count > 0) {
-                            local_types = static_cast<WasmType *>(pool_->Allocate(local_count * sizeof(WasmType)));
-                            if (!local_types) {
-                                return WasmResult::kErrorOutOfMemory;
-                            }
-                            std::memcpy(local_types, temp_types, local_count * sizeof(WasmType));
-                        }
-
                         functions[code_func_idx].local.code_ptr = ptr;
                         functions[code_func_idx].local.code_size = static_cast<uint32_t>(body_end - ptr);
                         functions[code_func_idx].local.local_count = local_count;
-                        functions[code_func_idx].local.local_types = local_types;
 
                         ptr = body_end;
                     }
