@@ -409,6 +409,7 @@ namespace embwasm {
           max_call_stack_depth_(0), max_stack_depth_(0),
           user_data_(nullptr),
           module_user_datas_(nullptr) {
+        InitListNode(&name_aliases_);
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             modules_[i] = nullptr;
         }
@@ -995,6 +996,7 @@ namespace embwasm {
             }
         }
         name_alias_count_ = 0;
+        InitListNode(&name_aliases_);
         last_loaded_id_ = -1;
     }
 
@@ -1017,20 +1019,21 @@ namespace embwasm {
         }
         if (!mod) return;
 
-        for (std::size_t i = 0; i < name_alias_count_; ++i) {
-            if (StrEq(name_aliases_[i].alias, name_aliases_[i].alias_len, alias_name, alias_name_len)) {
-                name_aliases_[i].module = mod;
+        for (ListNode* n = name_aliases_.next; n != &name_aliases_; n = n->next) {
+            NameAlias* a = reinterpret_cast<NameAlias*>(n);
+            if (StrEq(a->alias, a->alias_len, alias_name, alias_name_len)) {
+                a->module = mod;
                 return;
             }
         }
-        if (name_alias_count_ >= kMaxAliases) return;
-        std::size_t alen = alias_name_len < sizeof(name_aliases_[0].alias) - 1
-                               ? alias_name_len
-                               : sizeof(name_aliases_[0].alias) - 1;
-        std::memcpy(name_aliases_[name_alias_count_].alias, alias_name, alen);
-        name_aliases_[name_alias_count_].alias[alen] = '\0';
-        name_aliases_[name_alias_count_].alias_len = alen;
-        name_aliases_[name_alias_count_].module = mod;
+        std::size_t alen = alias_name_len;
+        auto* entry = static_cast<NameAlias*>(pool_->Allocate(sizeof(NameAlias) + alen));
+        if (!entry) return;
+        std::memcpy(entry->alias, alias_name, alen);
+        entry->alias[alen] = '\0';
+        entry->alias_len = alen;
+        entry->module = mod;
+        AddLastListNode(&name_aliases_, &entry->node);
         ++name_alias_count_;
     }
 
@@ -2661,10 +2664,9 @@ namespace embwasm {
 
     WasmModuleInstance *WasmEngine::GetModuleInstance(const char *name, std::size_t name_len) noexcept {
         if (!name) return GetModuleInstanceById(last_loaded_id_);
-        for (std::size_t i = 0; i < name_alias_count_; ++i) {
-            if (StrEq(name_aliases_[i].alias, name_aliases_[i].alias_len, name, name_len)) {
-                return name_aliases_[i].module;
-            }
+        for (ListNode* n = name_aliases_.next; n != &name_aliases_; n = n->next) {
+            const NameAlias* a = reinterpret_cast<const NameAlias*>(n);
+            if (StrEq(a->alias, a->alias_len, name, name_len)) return a->module;
         }
         for (std::size_t i = kMaxModules; i-- > 0;) {
             if (modules_[i] && modules_[i]->is_active &&
@@ -2677,10 +2679,9 @@ namespace embwasm {
 
     const WasmModuleInstance *WasmEngine::GetModuleInstance(const char *name, std::size_t name_len) const noexcept {
         if (!name) return GetModuleInstanceById(last_loaded_id_);
-        for (std::size_t i = 0; i < name_alias_count_; ++i) {
-            if (StrEq(name_aliases_[i].alias, name_aliases_[i].alias_len, name, name_len)) {
-                return name_aliases_[i].module;
-            }
+        for (const ListNode* n = name_aliases_.next; n != &name_aliases_; n = n->next) {
+            const NameAlias* a = reinterpret_cast<const NameAlias*>(n);
+            if (StrEq(a->alias, a->alias_len, name, name_len)) return a->module;
         }
         for (std::size_t i = kMaxModules; i-- > 0;) {
             if (modules_[i] && modules_[i]->is_active &&

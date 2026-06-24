@@ -92,6 +92,37 @@ static inline bool IsError(WasmResult result) {
     return static_cast<int32_t>(result) < 0;
 }
 
+/// @brief リンクリストの要素の基底型。
+///
+struct ListNode {
+    ListNode *next;
+    ListNode *prev;
+};
+
+static inline void InitListNode(ListNode *node) {
+    node->next = node;
+    node->prev = node;
+}
+
+static inline void AddLastListNode(ListNode *list, ListNode *node) {
+    node->next = list;
+    node->prev = list->prev;
+    list->prev->next = node;
+    list->prev = node;
+}
+
+static inline void AddFirstListNode(ListNode *list, ListNode *node) {
+    node->next = list->next;
+    node->prev = list;
+    list->next->prev = node;
+    list->next = node;
+}
+
+static inline void RemoveListNode(ListNode *node) {
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+}
+
 /// @brief ホスト関数のシグネチャ型。
 ///
 /// 例外無効（`-fno-exceptions`）のため、実行結果を WasmResult で返し、値は results 引数に格納します。

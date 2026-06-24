@@ -357,12 +357,12 @@ private:
     WasmResult OnTrap(WasmResult result) noexcept;
 
     struct NameAlias {
-        char alias[64];
+        ListNode node;
         std::size_t alias_len;
         WasmModuleInstance* module;
+        char alias[1];
     };
-    static constexpr std::size_t kMaxAliases = 32;
-    NameAlias name_aliases_[kMaxAliases];
+    ListNode name_aliases_;
     std::size_t name_alias_count_;
 
     WasmMemoryPool* pool_;
