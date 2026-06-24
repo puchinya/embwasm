@@ -69,14 +69,17 @@ struct WasmThreadContext {
     /// @brief 統合スタック。演算値とフレームごとのローカル変数を一本の配列で管理します。
     /// レイアウト: [frame0 locals][frame0 operands][frame1 locals][frame1 operands]...
     WasmValue stack[kUnifiedStackSize];
-    std::size_t stack_top; ///< スタックの現在深さ（ローカル変数領域を含む）。
+    std::size_t stack_size; ///< 実行時有効上限（WasmEngineConfig で設定）。
+    std::size_t stack_top;  ///< スタックの現在深さ（ローカル変数領域を含む）。
 
     WasmFrame call_stack[kWasmCallStackSize]; ///< WASM コールスタック。
-    std::size_t call_stack_top;               ///< コールスタックの現在深さ。
+    std::size_t call_stack_size; ///< 実行時有効上限（WasmEngineConfig で設定）。
+    std::size_t call_stack_top;  ///< コールスタックの現在深さ。
 
     /// @brief 全フレーム共有のラベルプール。フレームごとに必要数を切り出します。
     WasmLabel labels_pool[kLabelsPoolSize];
-    std::size_t labels_pool_top; ///< 現在の使用済み先頭インデックス。
+    std::size_t labels_pool_size; ///< 実行時有効上限（WasmEngineConfig で設定）。
+    std::size_t labels_pool_top;  ///< 現在の使用済み先頭インデックス。
 
     WaitKind  wait_kind;      ///< 待機種別（state == kWaiting 時のみ有効）。
     WaitParam wait_param;     ///< 待機パラメータ（wait_kind に応じて使用するフィールドが異なる）。

@@ -422,9 +422,10 @@ namespace embwasm {
         Deinit();
     }
 
-    void WasmEngine::Init(WasmMemoryPool &pool) noexcept {
+    void WasmEngine::Init(WasmMemoryPool &pool, const WasmEngineConfig &config) noexcept {
         Deinit();
 
+        config_ = config;
         pool_ = &pool;
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             modules_[i] = nullptr;
@@ -794,6 +795,9 @@ namespace embwasm {
                 res = scheduler_.Run();
 #else
                 WasmThreadContext start_ctx;
+                start_ctx.stack_size       = config_.stack_size;
+                start_ctx.call_stack_size  = config_.call_stack_size;
+                start_ctx.labels_pool_size = config_.labels_pool_size;
                 start_ctx.Reset();
                 start_ctx.state = ThreadState::kRunning;
                 start_ctx.stack_top = 0;
@@ -2606,6 +2610,9 @@ namespace embwasm {
         return res;
 #else
         WasmThreadContext default_ctx;
+        default_ctx.stack_size       = config_.stack_size;
+        default_ctx.call_stack_size  = config_.call_stack_size;
+        default_ctx.labels_pool_size = config_.labels_pool_size;
         default_ctx.Reset();
         default_ctx.state = ThreadState::kRunning;
         default_ctx.stack_top = 0;
@@ -2798,7 +2805,7 @@ namespace embwasm {
 
                 // ラベルプールからスライスを切り出す
                 frame.label_capacity = initial_func->local.max_label_depth;
-                if (ctx->labels_pool_top + frame.label_capacity > kLabelsPoolSize) {
+                if (ctx->labels_pool_top + frame.label_capacity > ctx->labels_pool_size) {
                     ctx->stack_top = locals_base + sig->param_count;
                     --ctx->call_stack_top;
                     return WasmResult::kErrorExecuteTrapLabelStackOverflow;
@@ -3263,7 +3270,7 @@ namespace embwasm {
                             if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         } else {
                             // 内部関数の実行（他モジュールの内部関数も含む）
-                            if (ctx->call_stack_top >= kWasmCallStackSize) {
+                            if (ctx->call_stack_top >= ctx->call_stack_size) {
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
                             }
                             const WasmTypeSignature *sig = call_mod->signatures[target_func->type_index];
@@ -3290,7 +3297,7 @@ namespace embwasm {
                             for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
-                            if (ctx->stack_top + target_func->local.max_stack_depth > kUnifiedStackSize) {
+                            if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
                                 ctx->stack_top = locals_base + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
@@ -3298,7 +3305,7 @@ namespace embwasm {
 
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
-                            if (ctx->labels_pool_top + new_frame.label_capacity > kLabelsPoolSize) {
+                            if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
                                 ctx->stack_top = locals_base + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapLabelStackOverflow;
@@ -3367,7 +3374,7 @@ namespace embwasm {
                             if (res != WasmResult::kOk) return res;
                             if (ctx->stack_top > max_stack_depth_) max_stack_depth_ = ctx->stack_top;
                         } else {
-                            if (ctx->call_stack_top >= kWasmCallStackSize) return WasmResult::kErrorExecuteTrapCallStackOverflow;
+                            if (ctx->call_stack_top >= ctx->call_stack_size) return WasmResult::kErrorExecuteTrapCallStackOverflow;
                             const WasmTypeSignature *sig = target_module->signatures[target_func->type_index];
                             uint32_t target_total_locals = sig->param_count + target_func->local.local_count;
 
@@ -3390,7 +3397,7 @@ namespace embwasm {
                             for (uint32_t i = sig->param_count; i < target_total_locals; ++i) {
                                 new_frame.locals[i] = WasmValue{};
                             }
-                            if (ctx->stack_top + target_func->local.max_stack_depth > kUnifiedStackSize) {
+                            if (ctx->stack_top + target_func->local.max_stack_depth > ctx->stack_size) {
                                 ctx->stack_top = locals_base_i + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapStackOverflow;
@@ -3398,7 +3405,7 @@ namespace embwasm {
 
                             // ラベルプールからスライスを切り出す
                             new_frame.label_capacity = target_func->local.max_label_depth;
-                            if (ctx->labels_pool_top + new_frame.label_capacity > kLabelsPoolSize) {
+                            if (ctx->labels_pool_top + new_frame.label_capacity > ctx->labels_pool_size) {
                                 ctx->stack_top = locals_base_i + sig->param_count;
                                 --ctx->call_stack_top;
                                 return WasmResult::kErrorExecuteTrapLabelStackOverflow;

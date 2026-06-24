@@ -26,6 +26,12 @@ void WasmScheduler::Init() noexcept {
     void* main_ctx = pool->Allocate(sizeof(WasmThreadContext));
     if (!main_ctx) return;
     threads_[kMainThreadIndex] = static_cast<WasmThreadContext*>(main_ctx);
+    {
+        const WasmEngineConfig& cfg = engine_.GetConfig();
+        threads_[kMainThreadIndex]->stack_size       = cfg.stack_size;
+        threads_[kMainThreadIndex]->call_stack_size  = cfg.call_stack_size;
+        threads_[kMainThreadIndex]->labels_pool_size = cfg.labels_pool_size;
+    }
     threads_[kMainThreadIndex]->Reset();
     threads_[kMainThreadIndex]->id = static_cast<uint32_t>(kMainThreadIndex + 1);
 }
@@ -63,6 +69,12 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
                 void* allocated = pool->Allocate(sizeof(WasmThreadContext));
                 if (!allocated) return 0;
                 threads_[i] = static_cast<WasmThreadContext*>(allocated);
+                {
+                    const WasmEngineConfig& cfg = engine_.GetConfig();
+                    threads_[i]->stack_size       = cfg.stack_size;
+                    threads_[i]->call_stack_size  = cfg.call_stack_size;
+                    threads_[i]->labels_pool_size = cfg.labels_pool_size;
+                }
                 threads_[i]->Reset();
                 threads_[i]->id = static_cast<uint32_t>(i + 1);
             }

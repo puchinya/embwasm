@@ -8,6 +8,13 @@
 
 namespace embwasm {
 
+/// @brief WasmEngine 初期化設定。Init() の第2引数として渡す。
+struct WasmEngineConfig {
+    std::size_t stack_size       = kUnifiedStackSize;
+    std::size_t call_stack_size  = kWasmCallStackSize;
+    std::size_t labels_pool_size = kLabelsPoolSize;
+};
+
 struct WasmModuleInstance;
 struct WasmFunction;
 
@@ -167,8 +174,9 @@ public:
     ~WasmEngine() noexcept;
 
     /// @brief エンジンを初期化します。使用前に必ず呼んでください。
-    /// @param pool  エンジンが使用するメモリプール。
-    void Init(WasmMemoryPool& pool) noexcept;
+    /// @param pool    エンジンが使用するメモリプール。
+    /// @param config  実行時設定（省略時はデフォルト値）。
+    void Init(WasmMemoryPool& pool, const WasmEngineConfig& config = WasmEngineConfig{}) noexcept;
 
     /// @brief エンジンを終了し、すべてのリソースを解放します。
     void Deinit() noexcept;
@@ -321,6 +329,9 @@ public:
     /// @brief エンジンが使用するメモリプールへのポインタを返します。
     WasmMemoryPool* GetMemoryPool() const noexcept { return pool_; }
 
+    /// @brief 現在の実行時設定を返します。
+    const WasmEngineConfig& GetConfig() const noexcept { return config_; }
+
     /// @brief モジュール名でモジュールインスタンスを検索します。
     WasmModuleInstance* GetModuleInstance(const char* name, std::size_t name_len) noexcept;
     /// @brief モジュール名でモジュールインスタンスを検索します（const 版）。
@@ -364,6 +375,7 @@ private:
     ListNode name_aliases_;
     std::size_t name_alias_count_;
 
+    WasmEngineConfig config_;
     WasmMemoryPool* pool_;
     WasmModuleInstance* modules_[kMaxModules];
 
