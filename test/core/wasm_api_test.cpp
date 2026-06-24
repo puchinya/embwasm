@@ -34,7 +34,13 @@ TEST(WasmApiStaticTest, AllFunctions) {
     embwasm::WasmEngine engine;
     engine.Init(pool);
 
+    embwasm::WasmValue    local_stack[32]      = {};
+    embwasm::WasmFrame    local_call_stack[16] = {};
+    embwasm::WasmLabel    local_labels[16]     = {};
     embwasm::WasmThreadContext ctx;
+    ctx.stack            = local_stack;       ctx.stack_size       = 32;
+    ctx.call_stack       = local_call_stack;  ctx.call_stack_size  = 16;
+    ctx.labels_pool      = local_labels;      ctx.labels_pool_size = 16;
     ctx.Reset();
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(99);
 
@@ -88,7 +94,13 @@ TEST(WasmApiStaticTest, StdioPrintfAndPuts) {
     uint32_t str_addr = 100;
     std::memcpy(mem + str_addr, test_str, str_len);
 
+    embwasm::WasmValue    local_stack2[32]      = {};
+    embwasm::WasmFrame    local_call_stack2[16] = {};
+    embwasm::WasmLabel    local_labels2[16]     = {};
     embwasm::WasmThreadContext ctx;
+    ctx.stack            = local_stack2;       ctx.stack_size       = 32;
+    ctx.call_stack       = local_call_stack2;  ctx.call_stack_size  = 16;
+    ctx.labels_pool      = local_labels2;      ctx.labels_pool_size = 16;
     ctx.Reset();
     // WASM pushes ptr then len; dispatch pops len first, then ptr
     ctx.stack[ctx.stack_top++] = embwasm::WasmValue::FromI32(static_cast<int32_t>(str_addr));

@@ -432,7 +432,17 @@ namespace embwasm {
         }
 
 #if !EMBWASM_ENABLE_MULTITHREADING
-        ctx_ = nullptr;
+        ctx_ = static_cast<WasmThreadContext*>(pool_->Allocate(sizeof(WasmThreadContext)));
+        if (ctx_) {
+            ctx_->stack       = static_cast<WasmValue*>(pool_->Allocate(config_.stack_size * sizeof(WasmValue)));
+            ctx_->call_stack  = static_cast<WasmFrame*>(pool_->Allocate(config_.call_stack_size * sizeof(WasmFrame)));
+            ctx_->labels_pool = static_cast<WasmLabel*>(pool_->Allocate(config_.labels_pool_size * sizeof(WasmLabel)));
+            ctx_->stack_size       = config_.stack_size;
+            ctx_->call_stack_size  = config_.call_stack_size;
+            ctx_->labels_pool_size = config_.labels_pool_size;
+            ctx_->id = 1;
+            ctx_->Reset();
+        }
 #endif
         last_loaded_id_ = -1;
         max_call_stack_depth_ = 0;
@@ -794,17 +804,16 @@ namespace embwasm {
                 if (tid == 0) return WasmResult::kErrorOutOfMemory;
                 res = scheduler_.Run();
 #else
-                WasmThreadContext start_ctx;
-                start_ctx.stack_size       = config_.stack_size;
-                start_ctx.call_stack_size  = config_.call_stack_size;
-                start_ctx.labels_pool_size = config_.labels_pool_size;
-                start_ctx.Reset();
-                start_ctx.state = ThreadState::kRunning;
-                start_ctx.stack_top = 0;
-                start_ctx.call_stack_top = 0;
-                ctx_ = &start_ctx;
-                res = ExecuteInternal(mod, static_cast<uint32_t>(mod->start_function_index));
-                ctx_ = nullptr;
+                if (ctx_) {
+                    ctx_->Reset();
+                    ctx_->state = ThreadState::kRunning;
+                    ctx_->stack_top = 0;
+                    ctx_->call_stack_top = 0;
+                    res = ExecuteInternal(mod, static_cast<uint32_t>(mod->start_function_index));
+                    ctx_->state = ThreadState::kTerminated;
+                } else {
+                    res = WasmResult::kErrorOutOfMemory;
+                }
 #endif
                 if (res != WasmResult::kOk) return res;
             }
@@ -2609,22 +2618,17 @@ namespace embwasm {
 
         return res;
 #else
-        WasmThreadContext default_ctx;
-        default_ctx.stack_size       = config_.stack_size;
-        default_ctx.call_stack_size  = config_.call_stack_size;
-        default_ctx.labels_pool_size = config_.labels_pool_size;
-        default_ctx.Reset();
-        default_ctx.state = ThreadState::kRunning;
-        default_ctx.stack_top = 0;
-        default_ctx.call_stack_top = 0;
-        ctx_ = &default_ctx;
+        if (!ctx_) return WasmResult::kErrorOutOfMemory;
+        ctx_->Reset();
+        ctx_->state = ThreadState::kRunning;
+        ctx_->stack_top = 0;
+        ctx_->call_stack_top = 0;
 
         for (uint32_t i = 0; i < arg_count; ++i) {
-            if (default_ctx.stack_top >= kWasmStackSize) {
-                ctx_ = nullptr;
+            if (ctx_->stack_top >= ctx_->stack_size) {
                 return WasmResult::kErrorExecuteTrapStackOverflow;
             }
-            default_ctx.stack[default_ctx.stack_top++] = args[i];
+            ctx_->stack[ctx_->stack_top++] = args[i];
         }
 
         WasmResult res = ExecuteInternal(mod, static_cast<uint32_t>(func_idx));
@@ -2634,17 +2638,15 @@ namespace embwasm {
             uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
 
             if (result_count > actual_result_count) {
-                ctx_ = nullptr;
                 return WasmResult::kErrorExecuteRuntimeError;
             }
-            if (default_ctx.stack_top < actual_result_count) {
-                ctx_ = nullptr;
+            if (ctx_->stack_top < actual_result_count) {
                 return WasmResult::kErrorExecuteRuntimeError;
             }
 
             WasmValue temp_results[kWasmMaxResultCount];
             for (uint32_t i = 0; i < actual_result_count; ++i) {
-                temp_results[actual_result_count - 1 - i] = default_ctx.stack[--default_ctx.stack_top];
+                temp_results[actual_result_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
             }
 
             uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
@@ -2653,7 +2655,7 @@ namespace embwasm {
             }
         }
 
-        ctx_ = nullptr;
+        ctx_->state = ThreadState::kTerminated;
         return res;
 #endif
     }
