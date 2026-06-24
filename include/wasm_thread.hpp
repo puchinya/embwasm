@@ -17,8 +17,8 @@ struct WasmLabel {
     const uint8_t* pc;      ///< ジャンプ先 IP。`block`/`if` は `end` の次、`loop` はループ先頭。
     std::size_t stack_top;  ///< ブロック進入時のデータスタック高さ（`br` 時にここまで巻き戻す）。
     uint8_t opcode;         ///< ブロック種別（0x02: block, 0x03: loop, 0x04: if）。
-    uint32_t param_count;   ///< ブロックのパラメータ数。
-    uint32_t result_count;  ///< ブロックの結果数。
+    uint16_t param_count;   ///< ブロックのパラメータ数。
+    uint16_t result_count;  ///< ブロックの結果数。
 };
 
 /// @brief WASM 関数呼び出し 1 フレームの実行コンテキスト。
@@ -31,7 +31,6 @@ struct WasmFrame {
     const uint8_t* limit;     ///< バイトコードの終端ポインタ。
     WasmValue* locals;        ///< `WasmThreadContext::stack` 内のローカル変数スライスへのポインタ。
     uint32_t total_locals;    ///< 引数＋ローカル変数の合計数。
-
     WasmLabel* labels;            ///< `WasmThreadContext::labels_pool` 内のスライスへのポインタ。
     uint32_t label_capacity;      ///< このフレームに割り当てたラベルスロット数。
     std::size_t label_stack_top;  ///< ラベルスタックの現在深さ。
