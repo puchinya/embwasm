@@ -34,4 +34,26 @@ wasm_api_static.cpp
 wasm_api.h
 .juine/
 .gemini/
+
+# ==========================================
+# Claude Code (.claude) ホワイトリスト設定
+# ==========================================
+
+# 1. 一旦 .claude ディレクトリ全体をすべて無視（ブラックリスト化）
 .claude/
+
+# 2. ディレクトリの走査を有効にするため、ディレクトリ自体は除外対象から外す
+!.claude/**/
+
+# 3. 【ホワイトリスト】Gitで管理・共有したい設定ファイルだけを許可
+# プロジェクト固有のカスタムルールや指示書（ある場合）
+!.claude/settings.json
+!.claude/commands/
+!.claude/hooks/
+
+# 4. 【念押し】生成される一時ファイル、ログ、会話履歴、キャッシュは絶対に無視
+.claude/hooks/local/
+.claude/commands/local/
+.claude/logs/
+.claude/*.log
+.claude/audit-*.log

@@ -326,10 +326,6 @@ namespace embwasm {
         m.memory_min_pages = 0;
         m.is_memory_shared = false;
         m.memory_is_imported = false;
-        m.memory_import_module = nullptr;
-        m.memory_import_module_len = 0;
-        m.memory_import_field = nullptr;
-        m.memory_import_field_len = 0;
         m.tables = nullptr;
         m.table_sizes = nullptr;
         m.table_max_sizes = nullptr;

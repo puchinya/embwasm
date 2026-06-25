@@ -120,10 +120,6 @@ struct WasmModuleInstance {
     uint32_t memory_min_pages;              ///< メモリ初期ページ数（インスタンス化前に有効）。
     bool is_memory_shared;
     bool memory_is_imported;               ///< メモリがインポート由来の場合 true。
-    const char* memory_import_module;      ///< メモリインポートのモジュール名（バイナリを指す）。
-    std::size_t memory_import_module_len;
-    const char* memory_import_field;       ///< メモリインポートのフィールド名（バイナリを指す）。
-    std::size_t memory_import_field_len;
 
     uint32_t** tables;
     std::size_t* table_sizes;
