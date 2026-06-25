@@ -3035,38 +3035,67 @@ namespace embwasm {
         WasmResult result = WasmResult::kOk;
         WasmValue *stack = ctx->stack;
 
+        // [Opt 1] モジュール切り替え時のみエイリアスを更新するため外側で宣言
+        // linear_memory_* は memory.grow で変化しうるため毎回リロードし除外
+        WasmModuleInstance   *loaded_mod          = nullptr;
+        WasmTypeSignature   **signatures           = nullptr;
+        std::size_t           signature_count      = 0;
+        WasmFunction         *functions            = nullptr;
+        WasmGlobal           *globals              = nullptr;
+        uint32_t            **tables               = nullptr;
+        std::size_t          *table_sizes          = nullptr;
+        uint32_t             *table_max_sizes      = nullptr;
+        WasmType             *table_types          = nullptr;
+        std::size_t           table_count          = 0;
+        const uint8_t       **data_segments        = nullptr;
+        uint32_t             *data_segment_sizes   = nullptr;
+        bool                 *data_segment_dropped = nullptr;
+        std::size_t           data_segment_count   = 0;
+        uint32_t            **elem_segments        = nullptr;
+        uint32_t             *elem_segment_sizes   = nullptr;
+        bool                 *elem_segment_dropped = nullptr;
+        std::size_t           elem_segment_count   = 0;
+
         // コールスタックが空になるまで実行ループを回す
         while (ctx->call_stack_top > 0) {
             WasmFrame &frame = ctx->call_stack[ctx->call_stack_top - 1];
             WasmModuleInstance *current_mod = const_cast<WasmModuleInstance *>(frame.func->module);
 
-            WasmTypeSignature **signatures = current_mod->signatures;
-            std::size_t signature_count = current_mod->signature_count;
-            WasmFunction *functions = current_mod->functions;
-            WasmGlobal *globals = current_mod->globals;
-            uint8_t *linear_memory_ptr = current_mod->linear_memory_ptr;
-            std::size_t linear_memory_size = current_mod->linear_memory_size;
-            std::size_t linear_memory_capacity = current_mod->linear_memory_capacity;
-            uint32_t max_linear_memory_pages = current_mod->max_linear_memory_pages;
-            uint32_t **tables = current_mod->tables;
-            std::size_t *table_sizes = current_mod->table_sizes;
-            uint32_t *table_max_sizes = current_mod->table_max_sizes;
-            WasmType *table_types = current_mod->table_types;
-            std::size_t table_count = current_mod->table_count;
-            const uint8_t **data_segments = current_mod->data_segments;
-            uint32_t *data_segment_sizes = current_mod->data_segment_sizes;
-            bool *data_segment_dropped = current_mod->data_segment_dropped;
-            std::size_t data_segment_count = current_mod->data_segment_count;
-            uint32_t **elem_segments = current_mod->elem_segments;
-            uint32_t *elem_segment_sizes = current_mod->elem_segment_sizes;
-            bool *elem_segment_dropped = current_mod->elem_segment_dropped;
-            std::size_t elem_segment_count = current_mod->elem_segment_count;
+            if (current_mod != loaded_mod) {
+                signatures           = current_mod->signatures;
+                signature_count      = current_mod->signature_count;
+                functions            = current_mod->functions;
+                globals              = current_mod->globals;
+                tables               = current_mod->tables;
+                table_sizes          = current_mod->table_sizes;
+                table_max_sizes      = current_mod->table_max_sizes;
+                table_types          = current_mod->table_types;
+                table_count          = current_mod->table_count;
+                data_segments        = current_mod->data_segments;
+                data_segment_sizes   = current_mod->data_segment_sizes;
+                data_segment_dropped = current_mod->data_segment_dropped;
+                data_segment_count   = current_mod->data_segment_count;
+                elem_segments        = current_mod->elem_segments;
+                elem_segment_sizes   = current_mod->elem_segment_sizes;
+                elem_segment_dropped = current_mod->elem_segment_dropped;
+                elem_segment_count   = current_mod->elem_segment_count;
+                loaded_mod = current_mod;
+            }
+            // linear_memory_* は memory.grow で変化しうるため毎回リロード
+            uint8_t    *linear_memory_ptr       = current_mod->linear_memory_ptr;
+            std::size_t linear_memory_size       = current_mod->linear_memory_size;
+            std::size_t linear_memory_capacity   = current_mod->linear_memory_capacity;
+            uint32_t    max_linear_memory_pages  = current_mod->max_linear_memory_pages;
 
-            // 高速化のため、現在実行中のフレーム状態（IP、LIMIT、ローカル変数）をローカル変数にキャッシュ
-            const uint8_t *ip = frame.ip;
+            // フレーム状態をローカル変数にキャッシュ
+            const uint8_t *ip    = frame.ip;
             const uint8_t *limit = frame.limit;
-            WasmValue *locals = frame.locals;
-            sp = ctx->stack_top;  // フレーム切り替え後に ctx から再読み込み
+            WasmValue     *locals = frame.locals;
+            sp = ctx->stack_top;
+            // [Opt 4] label_stack_top キャッシュ（フレーム遷移前に frame へ同期する）
+            std::size_t label_top = frame.label_stack_top;
+            // [Opt 6] block/if ジャンプテーブル参照用に code_ptr をキャッシュ
+            const uint8_t *code_base = frame.func->local.code_ptr;
 
             while (ip < limit) {
                 uint8_t op = *ip++;
@@ -3098,7 +3127,7 @@ namespace embwasm {
                             result_count = 0;
                         }
 
-                        WasmLabel &label = frame.labels[frame.label_stack_top++];
+                        WasmLabel &label = frame.labels[label_top++];
                         label.opcode = op;
                         label.stack_top = sp - param_count;
                         label.param_count = param_count;
@@ -3108,8 +3137,8 @@ namespace embwasm {
                             // block: 事前計算済みジャンプテーブルから end 位置を O(log N) で取得
                             const BlockJumpEntry *e = FindBlockJump(
                                 frame.func->local,
-                                static_cast<uint32_t>(ip - frame.func->local.code_ptr));
-                            label.pc = e ? frame.func->local.code_ptr + e->end_offset : limit;
+                                static_cast<uint32_t>(ip - code_base));
+                            label.pc = e ? code_base + e->end_offset : limit;
                         } else {
                             // loop: br 0 でループ先頭に戻る。ip は block_type の次を指す。
                             label.pc = ip;
@@ -3131,7 +3160,7 @@ namespace embwasm {
 
                         int32_t cond = stack[--sp].value.i32;
 
-                        WasmLabel &label = frame.labels[frame.label_stack_top++];
+                        WasmLabel &label = frame.labels[label_top++];
                         label.opcode = 0x04;
                         label.stack_top = sp;
                         label.param_count = 0;
@@ -3140,12 +3169,12 @@ namespace embwasm {
                         // 事前計算済みジャンプテーブルから else/end 位置を O(log N) で取得
                         const BlockJumpEntry *e = FindBlockJump(
                             frame.func->local,
-                            static_cast<uint32_t>(ip - frame.func->local.code_ptr));
+                            static_cast<uint32_t>(ip - code_base));
                         const uint8_t *else_ptr = nullptr;
                         if (e) {
-                            label.pc = frame.func->local.code_ptr + e->end_offset;
+                            label.pc = code_base + e->end_offset;
                             if (e->else_offset != 0)
-                                else_ptr = frame.func->local.code_ptr + e->else_offset;
+                                else_ptr = code_base + e->else_offset;
                         } else {
                             label.pc = limit;
                         }
@@ -3156,7 +3185,7 @@ namespace embwasm {
                                 ip = else_ptr;
                             } else {
                                 ip = label.pc;
-                                frame.label_stack_top--;
+                                label_top--;
                             }
                         }
                         break;
@@ -3165,12 +3194,12 @@ namespace embwasm {
                     case 0x05: {
                         // else
                         // if ブロックの実行が終わって else に到達した場合は end までジャンプ
-                        if (frame.label_stack_top == 0) {
+                        if (label_top == 0) {
                             result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
                             goto done;
                         }
-                        ip = frame.labels[frame.label_stack_top - 1].pc;
-                        frame.label_stack_top--; // if ブロックのラベルをポップする
+                        ip = frame.labels[label_top - 1].pc;
+                        label_top--; // if ブロックのラベルをポップする
                         break;
                     }
 
@@ -3184,11 +3213,9 @@ namespace embwasm {
                         }
 
                         if (jump) {
-                            WasmLabel &target_label = frame.labels[frame.label_stack_top - 1 - label_idx];
+                            WasmLabel &target_label = frame.labels[label_top - 1 - label_idx];
 
                             // データスタックの巻き戻し (Unwind)
-                            // target_label.arity個のパラメータ（結果）を退避し、
-                            // スタックを巻き戻したあとに再びプッシュする
                             uint32_t arity = (target_label.opcode == 0x03)
                                                  ? target_label.param_count
                                                  : target_label.result_count;
@@ -3198,22 +3225,18 @@ namespace embwasm {
                                 std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
                             sp += arity;
 
-                            // label.pc は:
-                            //   block/if の場合: end の次のバイト（end 後）を指す
-                            //   loop の場合: ループ本体の先頭を指す
                             ip = target_label.pc;
                             frame.ip = ip;
 
                             if (target_label.opcode == 0x03) {
-                                // loop の場合はループ先頭に戻るため、loop ラベル自体はポップせず、それより内側のラベルのみポップする
-                                frame.label_stack_top -= label_idx;
+                                label_top -= label_idx;
                             } else {
-                                // block / if の場合はブロックを抜けるため、そのラベルも含めてポップする
-                                frame.label_stack_top -= (label_idx + 1);
+                                label_top -= (label_idx + 1);
                             }
 
                             ctx->stack_top = sp;
-                            goto frame_changed; // ip を更新したのでループを抜ける
+                            frame.label_stack_top = label_top;  // [Opt 4] 同期
+                            goto frame_changed;
                         }
                         break;
                     }
@@ -3237,11 +3260,9 @@ namespace embwasm {
                             chosen_label_idx = default_target;
                         }
 
-                        WasmLabel &target_label = frame.labels[frame.label_stack_top - 1 - chosen_label_idx];
+                        WasmLabel &target_label = frame.labels[label_top - 1 - chosen_label_idx];
 
                         // データスタックの巻き戻し (Unwind)
-                        // target_label.arity個のパラメータ（結果）を退避し、
-                        // スタックを巻き戻したあとに再びプッシュする
                         uint32_t arity = (target_label.opcode == 0x03)
                                              ? target_label.param_count
                                              : target_label.result_count;
@@ -3255,18 +3276,19 @@ namespace embwasm {
                         frame.ip = ip;
 
                         if (target_label.opcode == 0x03) {
-                            frame.label_stack_top -= chosen_label_idx;
+                            label_top -= chosen_label_idx;
                         } else {
-                            frame.label_stack_top -= (chosen_label_idx + 1);
+                            label_top -= (chosen_label_idx + 1);
                         }
                         ctx->stack_top = sp;
+                        frame.label_stack_top = label_top;  // [Opt 4] 同期
                         goto frame_changed;
                     }
 
                     case 0x0F: // return
                     case 0x0B: // end
-                        if (op == 0x0B && frame.label_stack_top > 0) {
-                            WasmLabel &label = frame.labels[frame.label_stack_top - 1];
+                        if (op == 0x0B && label_top > 0) {
+                            WasmLabel &label = frame.labels[label_top - 1];
                             uint32_t arity = label.result_count;
 
                             const std::size_t src = sp - arity;
@@ -3275,7 +3297,7 @@ namespace embwasm {
                                 std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
                             sp += arity;
 
-                            frame.label_stack_top--;
+                            label_top--;
                             break;
                         }
                         // return (0x0F): 関数外側ブロックラベルでスタックを巻き戻す
@@ -3324,6 +3346,7 @@ namespace embwasm {
                             sp = ctx->stack_top;
                             if (res == WasmResult::kYield) {
                                 frame.ip = ip;
+                                frame.label_stack_top = label_top;  // [Opt 4] 同期
                                 result = WasmResult::kYield;
                                 goto done;
                             }
@@ -3334,6 +3357,7 @@ namespace embwasm {
                             if (sp > max_stack_depth_) max_stack_depth_ = sp;
                         } else {
                             frame.ip = ip;
+                            frame.label_stack_top = label_top;  // [Opt 4] 同期
                             result = PushCallFrame(ctx, target_func, call_mod, sp, max_call_stack_depth_,
                                                    WasmResult::kErrorExecuteTrapStackOverflow);
                             if (result != WasmResult::kOk) goto done;
@@ -3394,6 +3418,7 @@ namespace embwasm {
                             sp = ctx->stack_top;
                             if (res == WasmResult::kYield) {
                                 frame.ip = ip;
+                                frame.label_stack_top = label_top;  // [Opt 4] 同期
                                 result = WasmResult::kYield;
                                 goto done;
                             }
@@ -3404,6 +3429,7 @@ namespace embwasm {
                             if (sp > max_stack_depth_) max_stack_depth_ = sp;
                         } else {
                             frame.ip = ip;
+                            frame.label_stack_top = label_top;  // [Opt 4] 同期
                             result = PushCallFrame(ctx, target_func, target_module, sp, max_call_stack_depth_,
                                                    WasmResult::kErrorExecuteTrapCallStackOverflow);
                             if (result != WasmResult::kOk) goto done;
