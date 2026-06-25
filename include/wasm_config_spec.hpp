@@ -21,9 +21,6 @@ constexpr std::size_t kMaxModules = 512;
 // WASM関数呼び出しの最大深度（コールスタックサイズ）
 constexpr std::size_t kWasmCallStackSize = 256;
 
-// ロード時にパースできる最大ローカル変数宣言数（kMaxLocalsより大きくできる）
-constexpr std::size_t kMaxLocalDecls = 2048;
-
 // 統合スタックの総サイズ（ローカル変数領域 + 演算スタック領域）
 constexpr std::size_t kUnifiedStackSize = 33280;
 

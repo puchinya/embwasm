@@ -2256,16 +2256,12 @@ namespace embwasm {
             const uint8_t* body_end    = ptr + body_size;
             uint32_t       local_decls = DecodeVarUint32(ptr, body_end);
             uint32_t       local_count = 0;
-            WasmType temp_types[kMaxLocalDecls];
             for (uint32_t j = 0; j < local_decls; ++j) {
-                uint32_t count    = DecodeVarUint32(ptr, body_end);
+                uint32_t count = DecodeVarUint32(ptr, body_end);
                 if (ptr >= body_end) return WasmResult::kErrorParseOthers;
-                uint8_t  type_val = *ptr++;
-                WasmType type     = static_cast<WasmType>(type_val);
-                for (uint32_t c = 0; c < count; ++c) {
-                    if (local_count >= kMaxLocalDecls) return WasmResult::kErrorOutOfMemory;
-                    temp_types[local_count++] = type;
-                }
+                ++ptr; // type byte (値は不要、カウントのみ使用)
+                if (count > kWasmValidationMaxLocals - local_count) return WasmResult::kErrorOutOfMemory;
+                local_count += count;
             }
             uint32_t code_func_idx = ctx.code_index_offset + i;
             if (code_func_idx >= ctx.mod->function_count) return WasmResult::kErrorParseOthers;
