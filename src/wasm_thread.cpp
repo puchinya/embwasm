@@ -255,9 +255,7 @@ WasmResult WasmScheduler::Step() noexcept {
             if (ctx.call_stack_top == 0) {
                 res = engine_.ExecuteInternal(ctx.start_module, ctx.start_func_index);
             } else {
-                WasmModuleInstance* resume_mod = const_cast<WasmModuleInstance*>(
-                    ctx.call_stack[ctx.call_stack_top - 1].func->module);
-                res = engine_.ExecuteInternal(resume_mod, 0);
+                res = engine_.RunLoop(&ctx);
             }
 
             if (res == WasmResult::kYield) {

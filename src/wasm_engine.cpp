@@ -2945,13 +2945,8 @@ namespace embwasm {
             return WasmResult::kErrorInvalidArgument;
         }
 
-        std::size_t sp = ctx->stack_top;  // local stack pointer (synced to ctx at call/return/yield)
-        WasmResult result = WasmResult::kOk;
-        WasmValue *stack = ctx->stack;
-
-        // module のエイリアス
+        // module のエイリアス（初期フレーム構築に使用）
         WasmTypeSignature **signatures = module->signatures;
-        std::size_t signature_count = module->signature_count;
         WasmFunction *functions = module->functions;
         std::size_t function_count = module->function_count;
 
@@ -2972,7 +2967,6 @@ namespace embwasm {
                 module = rm;
                 initial_func = rf;
                 signatures = module->signatures;
-                signature_count = module->signature_count;
                 functions = module->functions;
                 function_count = module->function_count;
             }
@@ -3033,15 +3027,22 @@ namespace embwasm {
             }
         }
 
+        return RunLoop(ctx);
+    }
+
+    WasmResult WasmEngine::RunLoop(WasmThreadContext *ctx) noexcept {
+        std::size_t sp = ctx->stack_top;
+        WasmResult result = WasmResult::kOk;
+        WasmValue *stack = ctx->stack;
+
         // コールスタックが空になるまで実行ループを回す
         while (ctx->call_stack_top > 0) {
             WasmFrame &frame = ctx->call_stack[ctx->call_stack_top - 1];
             WasmModuleInstance *current_mod = const_cast<WasmModuleInstance *>(frame.func->module);
 
-            signatures = current_mod->signatures;
-            signature_count = current_mod->signature_count;
-            functions = current_mod->functions;
-            function_count = current_mod->function_count;
+            WasmTypeSignature **signatures = current_mod->signatures;
+            std::size_t signature_count = current_mod->signature_count;
+            WasmFunction *functions = current_mod->functions;
             WasmGlobal *globals = current_mod->globals;
             uint8_t *linear_memory_ptr = current_mod->linear_memory_ptr;
             std::size_t linear_memory_size = current_mod->linear_memory_size;

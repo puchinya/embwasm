@@ -281,6 +281,10 @@ public:
     /// @brief 指定モジュール・関数インデックスで実行ループを起動します（内部 API）。
     WasmResult ExecuteInternal(WasmModuleInstance* module, uint32_t func_index) noexcept;
 
+    /// @brief ctx のコールスタックが空になるまでバイトコードを実行します（内部 API）。
+    /// ExecuteInternal が初期フレームを積んだ後、またはスレッド再開時に直接呼ばれます。
+    WasmResult RunLoop(WasmThreadContext* ctx) noexcept;
+
     /// @brief 指定インスタンスの線形メモリ先頭ポインタを返します。
     /// @param instance_id  インスタンス ID。
     /// @return 線形メモリの先頭ポインタ。メモリなし / 無効 ID の場合は `nullptr`。
