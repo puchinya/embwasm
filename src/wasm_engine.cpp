@@ -30,61 +30,25 @@ namespace embwasm {
     // =============================================================================
 
     static inline uint32_t CountTrailingZeros32(uint32_t v) noexcept {
-        if (v == 0) return 32;
-        uint32_t c = 0;
-        if ((v & 0x0000FFFF) == 0) {
-            v >>= 16;
-            c += 16;
-        }
-        if ((v & 0x000000FF) == 0) {
-            v >>= 8;
-            c += 8;
-        }
-        if ((v & 0x0000000F) == 0) {
-            v >>= 4;
-            c += 4;
-        }
-        if ((v & 0x00000003) == 0) {
-            v >>= 2;
-            c += 2;
-        }
-        if ((v & 0x00000001) == 0) { c += 1; }
-        return c;
+        return CountTrailingZeros(v);
     }
 
     static inline uint32_t CountTrailingZeros64(uint64_t v) noexcept {
         if (v == 0) return 64;
-        uint32_t low = static_cast<uint32_t>(v & 0xFFFFFFFFULL);
-        if (low != 0) return CountTrailingZeros32(low);
-        return 32 + CountTrailingZeros32(static_cast<uint32_t>(v >> 32));
+        uint32_t low = static_cast<uint32_t>(v);
+        if (low != 0) return CountTrailingZeros(low);
+        return 32 + CountTrailingZeros(static_cast<uint32_t>(v >> 32));
     }
 
     static inline uint32_t CountLeadingZeros32(uint32_t v) noexcept {
-        if (v == 0) return 32;
-        uint32_t c = 0;
-        if ((v & 0xFFFF0000) == 0) { v <<= 16; c += 16; }
-        if ((v & 0xFF000000) == 0) { v <<= 8;  c += 8;  }
-        if ((v & 0xF0000000) == 0) { v <<= 4;  c += 4;  }
-        if ((v & 0xC0000000) == 0) { v <<= 2;  c += 2;  }
-        if ((v & 0x80000000) == 0) { c += 1; }
-        return c;
+        return CountLeadingZeros(v);
     }
 
     static inline uint32_t CountLeadingZeros64(uint64_t v) noexcept {
         if (v == 0) return 64;
         uint32_t high = static_cast<uint32_t>(v >> 32);
-        if (high != 0) return CountLeadingZeros32(high);
-        return 32 + CountLeadingZeros32(static_cast<uint32_t>(v & 0xFFFFFFFFULL));
-    }
-
-    static inline uint32_t PopCount32(uint32_t v) noexcept {
-        v = v - ((v >> 1) & 0x55555555);
-        v = (v & 0x33333333) + ((v >> 2) & 0x33333333);
-        return (((v + (v >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
-    }
-
-    static inline uint32_t PopCount64(uint64_t v) noexcept {
-        return PopCount32(static_cast<uint32_t>(v & 0xFFFFFFFFULL)) + PopCount32(static_cast<uint32_t>(v >> 32));
+        if (high != 0) return CountLeadingZeros(high);
+        return 32 + CountLeadingZeros(static_cast<uint32_t>(v));
     }
 
 #if defined(__arm__) || defined(__thumb__) || defined(__ARM_ARCH_7M__) || defined(__ARM_ARCH_7EM__)

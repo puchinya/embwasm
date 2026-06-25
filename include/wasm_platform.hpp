@@ -95,6 +95,76 @@ inline uint32_t CountLeadingZeros(uint32_t value) noexcept {
 }
 #endif
 
+// =============================================================================
+// CountTrailingZeros — CTZ 命令 / BSF 命令 / RBIT+CLZ によるトレーリングゼロカウント
+// =============================================================================
+
+#if defined(__ARM_ARCH_7M__) || defined(__ARM_ARCH_7EM__)
+// ARMv7-M/7-EM: RBIT で ビット逆順化後に CLZ
+inline uint32_t CountTrailingZeros(uint32_t v) noexcept {
+    if (v == 0) return 32;
+    uint32_t result;
+    __asm__ volatile (
+        "rbit %0, %1\n"
+        "clz  %0, %0\n"
+        : "=r" (result) : "r" (v)
+    );
+    return result;
+}
+#elif defined(__GNUC__) || defined(__clang__)
+inline uint32_t CountTrailingZeros(uint32_t v) noexcept {
+    if (v == 0) return 32;
+    return static_cast<uint32_t>(__builtin_ctz(v));
+}
+#elif defined(_MSC_VER)
+inline uint32_t CountTrailingZeros(uint32_t v) noexcept {
+    if (v == 0) return 32;
+    unsigned long index;
+    _BitScanForward(&index, v);
+    return static_cast<uint32_t>(index);
+}
+#else
+inline uint32_t CountTrailingZeros(uint32_t v) noexcept {
+    if (v == 0) return 32;
+    uint32_t c = 0;
+    if ((v & 0x0000FFFFU) == 0) { v >>= 16; c += 16; }
+    if ((v & 0x000000FFU) == 0) { v >>= 8;  c += 8;  }
+    if ((v & 0x0000000FU) == 0) { v >>= 4;  c += 4;  }
+    if ((v & 0x00000003U) == 0) { v >>= 2;  c += 2;  }
+    if ((v & 0x00000001U) == 0) { c += 1; }
+    return c;
+}
+#endif
+
+// =============================================================================
+// PopCount — POPCNT 命令によるポップカウント
+// =============================================================================
+
+#if defined(__GNUC__) || defined(__clang__)
+inline uint32_t PopCount32(uint32_t v) noexcept {
+    return static_cast<uint32_t>(__builtin_popcount(v));
+}
+inline uint32_t PopCount64(uint64_t v) noexcept {
+    return static_cast<uint32_t>(__builtin_popcountll(v));
+}
+#elif defined(_MSC_VER)
+inline uint32_t PopCount32(uint32_t v) noexcept {
+    return static_cast<uint32_t>(__popcnt(v));
+}
+inline uint32_t PopCount64(uint64_t v) noexcept {
+    return static_cast<uint32_t>(__popcnt64(v));
+}
+#else
+inline uint32_t PopCount32(uint32_t v) noexcept {
+    v = v - ((v >> 1) & 0x55555555U);
+    v = (v & 0x33333333U) + ((v >> 2) & 0x33333333U);
+    return (((v + (v >> 4)) & 0x0F0F0F0FU) * 0x01010101U) >> 24;
+}
+inline uint32_t PopCount64(uint64_t v) noexcept {
+    return PopCount32(static_cast<uint32_t>(v)) + PopCount32(static_cast<uint32_t>(v >> 32));
+}
+#endif
+
 } // namespace embwasm
 
 #endif // EMBWASM_WASM_PLATFORM_HPP_
