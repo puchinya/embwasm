@@ -8,8 +8,10 @@
 #include "wasm_engine.hpp"
 #include "wasm_api_static.hpp"
 
+constexpr size_t kMemoryPoolSize = 1 << 20;
+
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 }
 
 namespace embwasm {

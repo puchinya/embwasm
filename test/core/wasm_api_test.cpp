@@ -9,8 +9,10 @@ extern int32_t g_last_printed_value;
 extern bool g_print_val_called;
 }
 
+constexpr size_t kMemoryPoolSize = 1 << 20;
+
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 }
 
 TEST(WasmApiStaticTest, AllFunctions) {

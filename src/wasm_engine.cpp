@@ -1815,7 +1815,7 @@ namespace embwasm {
             { result = WasmResult::kErrorValidationFailed; goto cleanup; }
 
         // 算出値を関数メンバーに記録
-        func.local.max_label_depth = max_label_depth;
+        func.local.max_label_depth = static_cast<uint16_t>(max_label_depth);
         func.local.max_stack_depth = static_cast<uint32_t>(max_stack_depth < 0 ? 0 : max_stack_depth);
 
         // ジャンプテーブルを永続領域にコピー（tmp_jumps は cleanup で解放する一時バッファ）
@@ -2676,7 +2676,7 @@ namespace embwasm {
 
                         functions[code_func_idx].local.code_ptr = ptr;
                         functions[code_func_idx].local.code_size = static_cast<uint32_t>(body_end - ptr);
-                        functions[code_func_idx].local.local_count = local_count;
+                        functions[code_func_idx].local.local_count = static_cast<uint16_t>(local_count);
 
                         ptr = body_end;
                     }

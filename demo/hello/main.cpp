@@ -3,13 +3,15 @@
 #include "embwasm.hpp"
 #include "main_wasm.hpp"
 
+constexpr size_t kMemoryPoolSize = 1 << 20;
+
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 }
 
 int main() {
     std::cout << "=== Embedded WASM Engine Demo ===" << std::endl;
-    std::cout << "Memory Pool Size Configured: " << embwasm::kMemoryPoolSize << " bytes" << std::endl;
+    std::cout << "Memory Pool Size Configured: " << kMemoryPoolSize << " bytes" << std::endl;
 
     // 1. メモリプールの作成
     embwasm::WasmMemoryPool pool;

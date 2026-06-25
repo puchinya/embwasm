@@ -39,8 +39,8 @@ struct BlockJumpEntry {
 struct WasmLocalFunction {
     const uint8_t* code_ptr;   ///< バイトコードの先頭ポインタ（ROM を指す）。
     uint32_t code_size;        ///< バイトコードのバイト数。
-    uint32_t local_count;      ///< 引数を除くローカル変数数。
-    uint32_t max_label_depth;  ///< `Validate()` で算出した最大ラベルスタック深度（関数ブロック含む）。
+    uint16_t local_count;      ///< 引数を除くローカル変数数。
+    uint16_t max_label_depth;  ///< `Validate()` で算出した最大ラベルスタック深度（関数ブロック含む）。
     uint32_t max_stack_depth;  ///< `Validate()` で算出した最大データスタック深度。
     BlockJumpEntry* block_jump_table; ///< block/if の end 位置ジャンプテーブル（body_offset 昇順）。
     uint32_t        block_count;      ///< block_jump_table のエントリ数。

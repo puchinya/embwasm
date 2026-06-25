@@ -13,9 +13,6 @@ namespace embwasm {
 // WASM 実行環境の設定ファイル (通常・省メモリ環境用)
 // ==========================================
 
-/// @brief メモリプールの総サイズ（バイト単位）。
-constexpr std::size_t kMemoryPoolSize = 512 * 1024; // 512 KB
-
 /// @brief メモリプールのアライメント（バイト単位）。
 constexpr std::size_t kMemoryPoolAlignment = 8;
 

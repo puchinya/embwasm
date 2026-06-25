@@ -9,8 +9,9 @@
 
 namespace embwasm {
 
+constexpr size_t kMemoryPoolSize = 1 << 20;
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 }
 
 class WasmThreadTest : public ::testing::Test {

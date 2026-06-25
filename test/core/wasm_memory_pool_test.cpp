@@ -3,8 +3,10 @@
 #include "wasm_config.hpp"
 #include "wasm_memory_pool.hpp"
 
+constexpr size_t kMemoryPoolSize = 1 << 20;
+
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 }
 
 TEST(WasmMemoryPoolTest, AllFunctions) {
@@ -12,21 +14,21 @@ TEST(WasmMemoryPoolTest, AllFunctions) {
     pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
     
     // GetTotalBytes の検証
-    EXPECT_EQ(pool.GetTotalBytes(), embwasm::kMemoryPoolSize);
+    EXPECT_EQ(pool.GetTotalBytes(), kMemoryPoolSize);
     
     // 初期状態の確認 (GetUsedBytes, GetFreeBytes)
     EXPECT_EQ(pool.GetUsedBytes(), 0U);
-    EXPECT_EQ(pool.GetFreeBytes(), embwasm::kMemoryPoolSize);
+    EXPECT_EQ(pool.GetFreeBytes(), kMemoryPoolSize);
 
     // Allocate & Reset の検証
     void* ptr1 = pool.Allocate(100);
     ASSERT_NE(ptr1, nullptr);
     EXPECT_GE(pool.GetUsedBytes(), 100U);
-    EXPECT_EQ(pool.GetFreeBytes(), embwasm::kMemoryPoolSize - pool.GetUsedBytes());
+    EXPECT_EQ(pool.GetFreeBytes(), kMemoryPoolSize - pool.GetUsedBytes());
 
     pool.Reset();
     EXPECT_EQ(pool.GetUsedBytes(), 0U);
-    EXPECT_EQ(pool.GetFreeBytes(), embwasm::kMemoryPoolSize);
+    EXPECT_EQ(pool.GetFreeBytes(), kMemoryPoolSize);
 
     // Alignment（kMemoryPoolAlignment 境界に揃うことの検証）
     void* ptr2 = pool.Allocate(1);
@@ -36,7 +38,7 @@ TEST(WasmMemoryPoolTest, AllFunctions) {
     EXPECT_EQ(reinterpret_cast<uintptr_t>(ptr3) % embwasm::kMemoryPoolAlignment, 0U);
 
     // OutOfMemory の検証
-    void* ptr_overflow = pool.Allocate(embwasm::kMemoryPoolSize + 1);
+    void* ptr_overflow = pool.Allocate(kMemoryPoolSize + 1);
     EXPECT_EQ(ptr_overflow, nullptr);
     pool.Deinit();
 }

@@ -4,8 +4,10 @@
 #include "wasm_engine.hpp"
 #include "wasm_thread.hpp"
 
+constexpr std::size_t kMemoryPoolSize = 384 * 1024 * 1024;
+
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 
 constexpr uint8_t kWasmMemBinaryForStdioTest[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,

@@ -5,8 +5,10 @@
 #include "embwasm.hpp"
 #include "bench_wasm.hpp"
 
+constexpr size_t kMemoryPoolSize = 1 << 20;
+
 namespace {
-alignas(16) uint8_t g_wasm_pool_buf[embwasm::kMemoryPoolSize];
+alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 }
 
 struct BenchResult {
@@ -74,7 +76,7 @@ static void PrintRow(const char* variant, const char* fn, int32_t arg,
 
 int main() {
     std::cout << "=== embwasm Benchmark ===" << std::endl;
-    std::cout << "Memory Pool: " << embwasm::kMemoryPoolSize << " bytes" << std::endl;
+    std::cout << "Memory Pool: " << kMemoryPoolSize << " bytes" << std::endl;
 
     embwasm::WasmMemoryPool pool;
     pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
