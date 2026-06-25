@@ -6,16 +6,36 @@
 
 ## 1. ホストAPIの基本設計
 
-ベアメタル環境の制約（**STL禁止、例外処理禁止、RTTI禁止**）に従い、ホストAPIは以下のシグネチャを持つ静的C++関数として定義します。
+ベアメタル環境の制約（**STL禁止、例外処理禁止、RTTI禁止**）に従い、ホストAPIは `include/wasm_types.hpp` で定義された `HostFunction` 型に適合する静的C++関数として定義します。
 
 ```cpp
-WasmResult HostFunction(
-    WasmEngine& engine,         // エンジンインスタンス
+// include/wasm_types.hpp の typedef
+typedef WasmResult (*HostFunction)(
     const WasmValue* args,      // WASM側から渡された引数の配列
     uint32_t arg_count,         // 引数の個数
     WasmValue* results,         // WASM側へ返却する戻り値の配列
-    uint32_t result_count       // 戻り値の個数
+    uint32_t result_count,      // 戻り値の個数
+    void* user_data             // エンジンに設定したユーザーデータ
 ) noexcept;
+```
+
+> **注意**: `WasmEngine&` は引数に含まれません。エンジンへのアクセスが必要な場合は `SetUserData()` / `GetUserData()` で任意のポインタを渡してください。
+
+### WasmValue の構造
+`WasmValue` は型タグ（`WasmType`）を**持ちません**。型はバイトコード上の命令が静的に決定するため、実行時に型を添付する必要がありません。値の格納・取り出しには `value.i32` / `value.i64` / `value.f32` / `value.f64` フィールドを直接使用します。
+
+```cpp
+// 値の生成ヘルパー
+WasmValue v = WasmValue::FromI32(42);
+WasmValue v = WasmValue::FromI64(100LL);
+WasmValue v = WasmValue::FromF32(3.14f);
+WasmValue v = WasmValue::FromF64(2.718);
+
+// 値の参照
+int32_t  x = v.value.i32;
+int64_t  y = v.value.i64;
+float    z = v.value.f32;
+double   w = v.value.f64;
 ```
 
 ### 例外処理とエラーハンドリング
@@ -31,33 +51,28 @@ WasmResult HostFunction(
 
 ```cpp
 #include "wasm_types.hpp"
-#include "wasm_engine.hpp"
 
 namespace embwasm {
 
 // センサー値を読み込むホストAPI
 // WASMシグネチャ: (import "env" "get_sensor_value" (func (result i32)))
 WasmResult GetSensorValue(
-    WasmEngine& engine,
-    const WasmValue* args, 
-    uint32_t arg_count, 
-    WasmValue* results, 
-    uint32_t result_count) noexcept 
+    const WasmValue* args,
+    uint32_t arg_count,
+    WasmValue* results,
+    uint32_t result_count,
+    void* user_data) noexcept
 {
-    (void)engine;
-    (void)args;      // 引数なし
+    (void)args;
     (void)arg_count;
+    (void)user_data;
 
     if (result_count < 1) {
-        return WasmResult::kErrorRuntimeError;
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     // 擬似的なセンサー値の読み出し
-    int32_t dummy_sensor_val = 42;
-
-    // 戻り値を設定
-    results[0].type = WasmType::kI32;
-    results[0].value.i32 = dummy_sensor_val;
+    results[0] = WasmValue::FromI32(42);
 
     return WasmResult::kOk;
 }
@@ -65,22 +80,22 @@ WasmResult GetSensorValue(
 // LEDに出力するホストAPI
 // WASMシグネチャ: (import "env" "write_led_value" (func (param i32)))
 WasmResult WriteLedValue(
-    WasmEngine& engine,
-    const WasmValue* args, 
-    uint32_t arg_count, 
-    WasmValue* results, 
-    uint32_t result_count) noexcept 
+    const WasmValue* args,
+    uint32_t arg_count,
+    WasmValue* results,
+    uint32_t result_count,
+    void* user_data) noexcept
 {
-    (void)engine;
-    (void)results;      // 戻り値なし
+    (void)results;
     (void)result_count;
+    (void)user_data;
 
-    if (arg_count < 1 || args[0].type != WasmType::kI32) {
-        return WasmResult::kErrorRuntimeError;
+    if (arg_count < 1) {
+        return WasmResult::kErrorExecuteRuntimeError;
     }
 
     int32_t led_state = args[0].value.i32;
-    
+
     // ベアメタル環境ではここでハードウェアレジスタを操作
     // (例: GPIO_WriteBit(LED_PORT, LED_PIN, led_state);)
 

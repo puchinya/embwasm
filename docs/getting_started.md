@@ -14,7 +14,8 @@ graph TD
     B --> C[3. tools/codegen/gen_api.py を実行して静的検索コードを生成]
     C --> D[4. ホストAPIの実装を追加]
     D --> E[5. メモリプールとエンジンの初期化・WASMバイナリのロード]
-    E --> F[6. WASMのエクスポート関数を実行]
+    E --> F[6. InstantiateModules() でインポートを解決]
+    F --> G[7. WASMのエクスポート関数を実行]
 ```
 
 ---
@@ -46,24 +47,33 @@ python3 tools/codegen/gen_api.py hostapi.wit src/wasm_api_static.cpp include/was
 
 ### ステップ 4: ホストAPIの実装
 C++側で、WASMから呼び出されるホストAPIを実装します。
-（例: `demo/hello/main.cpp` 内での実装など）
+ホスト関数のシグネチャは `HostFunction` 型定義（`include/wasm_types.hpp`）に従います。
 
 ```cpp
+// ホスト関数のシグネチャ
+// typedef WasmResult (*HostFunction)(
+//     const WasmValue* args, uint32_t arg_count,
+//     WasmValue* results,    uint32_t result_count,
+//     void* user_data);
+
 embwasm::WasmResult MyHostFunc(
-    embwasm::WasmEngine& engine,
-    const embwasm::WasmValue* args, 
-    uint32_t arg_count, 
-    embwasm::WasmValue* results, 
-    uint32_t result_count) noexcept 
+    const embwasm::WasmValue* args,
+    uint32_t arg_count,
+    embwasm::WasmValue* results,
+    uint32_t result_count,
+    void* user_data) noexcept
 {
     // 実装...
     return embwasm::WasmResult::kOk;
 }
 ```
 
+詳細は [docs/api_impl_for_wasm.md](api_impl_for_wasm.md) を参照してください。
+
 ### ステップ 5: メモリプールとエンジンの初期化
 動的ヒープを使用しないため、外部の静的バッファをメモリプールに渡してエンジンに渡します。
 メモリプールの容量は `include/wasm_config.hpp` の `kMemoryPoolSize` で定義されます。
+実行時の設定（スタックサイズ等）は `WasmEngineConfig` で変更できます。
 
 ```cpp
 #include "embwasm.hpp"
@@ -73,30 +83,60 @@ static uint8_t g_pool_buf[embwasm::kMemoryPoolSize];
 embwasm::WasmMemoryPool pool;
 pool.Init(g_pool_buf, sizeof(g_pool_buf));
 
-// 2. WASMエンジンの初期化
+// 2. WASMエンジンの初期化（デフォルト設定）
 embwasm::WasmEngine engine;
-engine.Init(pool); // 内部で標準ホストモジュールも初期化されます
+engine.Init(pool);
+
+// 2b. カスタム設定で初期化する場合
+embwasm::WasmEngineConfig config;
+config.stack_size      = embwasm::kUnifiedStackSize;  // データスタック + ローカル変数の合計
+config.call_stack_size = embwasm::kWasmCallStackSize;
+config.labels_pool_size = embwasm::kLabelsPoolSize;
+engine.Init(pool, config);
 ```
 
-### ステップ 6: WASMバイナリのロードと実行
-バイト配列としてのWASMバイナリをロードし、エクスポート関数を呼び出します。
+### ステップ 6: WASMバイナリのロードとインスタンス化
+バイト配列としてのWASMバイナリをロードし、インポートを解決します。
 
 ```cpp
 // WASMバイナリデータのロード (モジュール名 "default" として登録)
-int32_t instance_id = engine.Load("default", 7, kWasmBinary, sizeof(kWasmBinary));
+int32_t instance_id = engine.LoadModule("default", 7, kWasmBinary, sizeof(kWasmBinary));
 if (instance_id < 0) {
-    // ロードエラー処理
+    // ロードエラー処理（戻り値は負の WasmResult 値）
 }
 
-// 引数の設定 (例: 引数なし)
-embwasm::WasmValue result; // 結果格納用バッファ
+// ロード済みの全モジュールのインポートを解決してインスタンス化
+embwasm::WasmResult inst_res = engine.InstantiateModules();
+if (embwasm::IsError(inst_res)) {
+    // インスタンス化エラー処理
+}
+```
 
-// "run" 関数の実行 (引数0個、戻り値1個)
+### ステップ 7: WASMエクスポート関数の実行
+
+#### 通常の実行（名前解決あり）
+
+```cpp
+embwasm::WasmValue result;
+
 // Execute(module_name, module_name_len, func_name, func_name_len, args, arg_count, results, result_count)
 embwasm::WasmResult exec_res = engine.Execute("default", 7, "run", 3, nullptr, 0, &result, 1);
 if (exec_res == embwasm::WasmResult::kOk) {
-    // 実行成功。result に結果が格納されています。
+    // 実行成功。result.value.i32 等で結果を参照できます。
 }
+```
+
+#### ホットパス実行（インデックス直接指定）
+
+同一関数を繰り返し呼ぶ場合は、モジュール名・関数名のルックアップを省略できる `ExecuteByIndex()` を使用してください。
+
+```cpp
+// 事前にインデックスを解決しておく
+int32_t func_idx = engine.GetExportFunctionIndex("default", 7, "run", 3);
+
+// 以降はインデックスで直接呼び出す
+embwasm::WasmValue result;
+embwasm::WasmResult exec_res = engine.ExecuteByIndex(instance_id, func_idx, nullptr, 0, &result, 1);
 ```
 
 ---
@@ -106,10 +146,13 @@ if (exec_res == embwasm::WasmResult::kOk) {
 プロジェクト全体は CMake で構成されています。ビルドとデモプログラムの実行は以下で行います。
 
 ```bash
-# ビルド
-cmake -B build -S .
-cmake --build build
+# ビルド（ビルドディレクトリは cmake-build-debug）
+cmake -B cmake-build-debug -S .
+cmake --build cmake-build-debug
 
 # デモの実行
-./build/demo/hello/embwasm_demo_hello
+./cmake-build-debug/demo/hello/embwasm_demo_hello
+
+# ベンチマークデモの実行
+./cmake-build-debug/demo/benchmark/embwasm_demo_benchmark
 ```
