@@ -10,9 +10,9 @@ namespace embwasm {
 
 /// @brief WasmEngine 初期化設定。Init() の第2引数として渡す。
 struct WasmEngineConfig {
-    std::size_t stack_size       = kUnifiedStackSize;
-    std::size_t call_stack_size  = kWasmCallStackSize;
-    std::size_t labels_pool_size = kLabelsPoolSize;
+    std::size_t stack_size       = kDefaultUnifiedStackSize;
+    std::size_t call_stack_size  = kDefaultWasmCallStackSize;
+    std::size_t labels_pool_size = kDefaultLabelsPoolSize;
 };
 
 struct WasmModuleInstance;

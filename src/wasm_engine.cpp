@@ -2260,7 +2260,7 @@ namespace embwasm {
                 uint32_t count = DecodeVarUint32(ptr, body_end);
                 if (ptr >= body_end) return WasmResult::kErrorParseOthers;
                 ++ptr; // type byte (値は不要、カウントのみ使用)
-                if (count > kWasmValidationMaxLocals - local_count) return WasmResult::kErrorOutOfMemory;
+                if (count > kWasmValidationMaxLocals - local_count) return WasmResult::kErrorParseOthers;
                 local_count += count;
             }
             uint32_t code_func_idx = ctx.code_index_offset + i;
