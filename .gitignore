@@ -34,6 +34,7 @@ wasm_api_static.cpp
 wasm_api.h
 .juine/
 .gemini/
+*.su
 
 # ==========================================
 # Claude Code (.claude) ホワイトリスト設定

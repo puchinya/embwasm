@@ -67,17 +67,56 @@ set(WASM_GEN_H ${CMAKE_CURRENT_BINARY_DIR}/main_wasm.hpp)
 set(WASM_COMMON_INC ${CMAKE_CURRENT_SOURCE_DIR}/../common/wasm/include)
 set(WASM_COMMON_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../common/wasm/stdlib.c)
 
-# WASM バイナリのコンパイル
+set(WASM_OBJ_DIR ${CMAKE_CURRENT_BINARY_DIR}/wasm_objs)
+file(MAKE_DIRECTORY ${WASM_OBJ_DIR})
+
+# コンパイル: main.c → main.o (-fstack-usage で静的スタック解析用 .su を生成)
+add_custom_command(
+    OUTPUT ${WASM_OBJ_DIR}/main.o
+    COMMAND ${WASM_CLANG} --target=wasm32 -O2 -nostdlib -fstack-usage -c
+            -o ${WASM_OBJ_DIR}/main.o
+            ${WASM_SRC}
+            -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
+    DEPENDS ${WASM_SRC} ${GEN_WASM_H}
+    COMMENT "Compiling main.c to WASM object"
+)
+
+# コンパイル: stdlib.c → stdlib.o
+add_custom_command(
+    OUTPUT ${WASM_OBJ_DIR}/stdlib.o
+    COMMAND ${WASM_CLANG} --target=wasm32 -O2 -nostdlib -fstack-usage -c
+            -o ${WASM_OBJ_DIR}/stdlib.o
+            ${WASM_COMMON_SRC}
+            -I${WASM_COMMON_INC}
+    DEPENDS ${WASM_COMMON_SRC}
+    COMMENT "Compiling stdlib.c to WASM object"
+)
+
+# コンパイル: wasm_host_api.c → wasm_host_api.o
+add_custom_command(
+    OUTPUT ${WASM_OBJ_DIR}/wasm_host_api.o
+    COMMAND ${WASM_CLANG} --target=wasm32 -O2 -nostdlib -fstack-usage -c
+            -o ${WASM_OBJ_DIR}/wasm_host_api.o
+            ${GEN_WASM_C}
+            -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
+    DEPENDS ${GEN_WASM_H} ${GEN_WASM_C}
+    COMMENT "Compiling wasm_host_api.c to WASM object"
+)
+
+# リンク: .o ファイル群 → main.wasm
 add_custom_command(
     OUTPUT ${WASM_OUT}
-    COMMAND ${WASM_CLANG} --target=wasm32 -O2 -nostdlib ${WASM_LD_FLAGS}
+    COMMAND ${WASM_CLANG} --target=wasm32 -nostdlib ${WASM_LD_FLAGS}
             -Wl,--no-entry -Wl,--export=main
             -Wl,-z,stack-size=4096 -Wl,--stack-first
             -o ${WASM_OUT}
-            ${WASM_SRC} ${WASM_COMMON_SRC} ${GEN_WASM_C}
-            -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
-    DEPENDS ${WASM_SRC} ${WASM_COMMON_SRC} ${GEN_WASM_H} ${GEN_WASM_C}
-    COMMENT "Compiling HTTP server WASM using ${WASM_CLANG}"
+            ${WASM_OBJ_DIR}/main.o
+            ${WASM_OBJ_DIR}/stdlib.o
+            ${WASM_OBJ_DIR}/wasm_host_api.o
+    DEPENDS ${WASM_OBJ_DIR}/main.o
+            ${WASM_OBJ_DIR}/stdlib.o
+            ${WASM_OBJ_DIR}/wasm_host_api.o
+    COMMENT "Linking WASM objects to main.wasm"
 )
 
 # WASM バイナリを C++ ソースへ変換
@@ -105,5 +144,27 @@ target_include_directories(embwasm_demo_http PRIVATE
 if(MSVC)
     target_compile_options(embwasm_demo_http PRIVATE /W4 /WX)
 else()
-    target_compile_options(embwasm_demo_http PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(embwasm_demo_http PRIVATE -Wall -Wextra -Wpedantic -Werror -fstack-usage)
 endif()
+
+# WASM 側 静的スタックサイズ解析ターゲット (cmake --build . --target embwasm_demo_http_analyze_stack)
+add_custom_target(embwasm_demo_http_analyze_stack
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/analyze_wasm_stack.py
+            --label "http WASM"
+            ${WASM_OBJ_DIR}/main.su
+            ${WASM_OBJ_DIR}/stdlib.su
+            ${WASM_OBJ_DIR}/wasm_host_api.su
+    DEPENDS ${WASM_OBJ_DIR}/main.o
+            ${WASM_OBJ_DIR}/stdlib.o
+            ${WASM_OBJ_DIR}/wasm_host_api.o
+    COMMENT "Analyzing WASM static stack usage for http demo"
+)
+
+# ホスト側 静的スタックサイズ解析ターゲット
+add_custom_target(embwasm_demo_http_host_analyze_stack
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/analyze_wasm_stack.py
+            --label "http host"
+            --dir ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/embwasm_demo_http.dir
+    DEPENDS embwasm_demo_http
+    COMMENT "Analyzing host-side C++ stack usage for http demo"
+)
