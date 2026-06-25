@@ -34,5 +34,14 @@ target_include_directories(embwasm PUBLIC
 if(MSVC)
     target_compile_options(embwasm PRIVATE -O2 /W4 /WX)
 else()
-    target_compile_options(embwasm PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(embwasm PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror -fstack-usage)
 endif()
+
+# 静的スタックサイズ解析ターゲット (cmake --build . --target embwasm_analyze_stack)
+add_custom_target(embwasm_analyze_stack
+    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/analyze_wasm_stack.py
+            --label "libembwasm host"
+            --dir ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/embwasm.dir
+    DEPENDS embwasm
+    COMMENT "Analyzing libembwasm static stack usage"
+)
