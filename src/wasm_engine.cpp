@@ -108,6 +108,16 @@ namespace embwasm {
     }
 #endif
 
+#if defined(__aarch64__)
+    static inline uint64_t Rotr64(uint64_t x, uint64_t y) noexcept {
+        uint64_t result;
+        __asm__ volatile ("ror %0, %1, %2" : "=r"(result) : "r"(x), "r"(y));
+        return result;
+    }
+    static inline uint64_t Rotl64(uint64_t x, uint64_t y) noexcept {
+        return Rotr64(x, (-y) & 63u);
+    }
+#else
     static inline uint64_t Rotl64(uint64_t x, uint64_t y) noexcept {
         y &= 63;
         if (y == 0) return x;
@@ -119,6 +129,7 @@ namespace embwasm {
         if (y == 0) return x;
         return (x >> y) | (x << (64 - y));
     }
+#endif
 
     static inline float NearestF32(float x) noexcept {
         float r = std::round(x);
@@ -149,6 +160,7 @@ namespace embwasm {
 
     // Decodes a variable-length unsigned 32-bit integer.
     static inline uint32_t DecodeVarUint32(const uint8_t *&cursor, const uint8_t *limit) noexcept {
+        if (cursor < limit && *cursor < 0x80) return static_cast<uint32_t>(*cursor++);
         uint32_t decoded_value = 0;
         uint32_t shift_amount = 0;
 
@@ -171,6 +183,10 @@ namespace embwasm {
 
     // Decodes a variable-length signed 32-bit integer.
     static inline int32_t DecodeVarInt32(const uint8_t *&cursor, const uint8_t *limit) noexcept {
+        if (cursor < limit && *cursor < 0x80) {
+            uint8_t b = *cursor++;
+            return static_cast<int32_t>(b) | (b & 0x40 ? ~0x7F : 0);
+        }
         int32_t decoded_value = 0;
         uint32_t shift_amount = 0;
         uint8_t raw_byte = 0;
@@ -199,6 +215,10 @@ namespace embwasm {
 
     // Decodes a variable-length signed 64-bit integer.
     static inline int64_t DecodeVarInt64(const uint8_t *&cursor, const uint8_t *limit) noexcept {
+        if (cursor < limit && *cursor < 0x80) {
+            uint8_t b = *cursor++;
+            return static_cast<int64_t>(b) | (b & 0x40 ? ~static_cast<int64_t>(0x7F) : 0LL);
+        }
         int64_t decoded_value = 0;
         uint32_t shift_amount = 0;
         uint8_t raw_byte = 0;
@@ -2798,6 +2818,19 @@ namespace embwasm {
         return nullptr;
     }
 
+    // br/end/return 共通のスタック巻き戻しヘルパー。
+    // dst <= src が常に成立するためオーバーラップを考慮しない。
+    static inline void StackUnwind(
+        WasmValue* stack, std::size_t dst, std::size_t src, uint32_t arity) noexcept
+    {
+        if (arity == 1) {
+            stack[dst] = stack[src];
+        } else {
+            for (uint32_t i = 0; i < arity; ++i)
+                stack[dst + i] = stack[src + i];
+        }
+    }
+
     // call / call_indirect 共通のフレーム構築ヘルパー。
     // 成功時は新フレームを call_stack に積み kOk を返す。sp と max_call_stack_depth は更新される。
     // 失敗時は sp / ctx->stack_top をロールバックしてエラーコードを返す。
@@ -3146,7 +3179,7 @@ namespace embwasm {
                             const std::size_t src = sp - arity;
                             sp = target_label.stack_top;
                             if (arity > 0)
-                                std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                                StackUnwind(stack, sp, src, arity);
                             sp += arity;
 
                             ip = target_label.pc;
@@ -3177,6 +3210,7 @@ namespace embwasm {
                             if (i == idx) {
                                 chosen_label_idx = target;
                                 found = true;
+                                break; // 常に goto frame_changed するため ip は不要
                             }
                         }
                         uint32_t default_target = DecodeVarUint32(ip, limit);
@@ -3193,7 +3227,7 @@ namespace embwasm {
                         const std::size_t src = sp - arity;
                         sp = target_label.stack_top;
                         if (arity > 0)
-                            std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                            StackUnwind(stack, sp, src, arity);
                         sp += arity;
 
                         ip = target_label.pc;
@@ -3218,7 +3252,7 @@ namespace embwasm {
                             const std::size_t src = sp - arity;
                             sp = label.stack_top;
                             if (arity > 0)
-                                std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                                StackUnwind(stack, sp, src, arity);
                             sp += arity;
 
                             label_top--;
@@ -3231,7 +3265,7 @@ namespace embwasm {
                             const std::size_t src = sp - arity;
                             sp = func_label.stack_top;
                             if (arity > 0)
-                                std::memmove(stack + sp, stack + src, arity * sizeof(WasmValue));
+                                StackUnwind(stack, sp, src, arity);
                             sp += arity;
                         }
                         // 関数の終了 (end で label_stack_top == 0、または return)
@@ -3426,11 +3460,8 @@ namespace embwasm {
 
                     case 0x24: {
                         // global.set <global_idx>
+                        // ValidateFunctionBody でイミュータブルへの書き込みは検証済み
                         uint32_t idx = DecodeVarUint32(ip, limit);
-                        if (!globals[idx].is_mutable) {
-                            result = OnTrap(WasmResult::kErrorExecuteTrapGlobalImmutable);
-                            goto done;
-                        }
                         globals[idx].value = stack[--sp];
                         break;
                     }
