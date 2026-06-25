@@ -24,12 +24,7 @@ add_library(embwasm
     ${PLATFORM_SRC}
 )
 
-# WasmScheduler などのソースは常にビルド対象とするが、
-# 内容が #if EMBWASM_ENABLE_MULTITHREADING でガードされているため
-# 無効時は実質的に空（または不要なシンボルなし）となる。
-
 # インクルードディレクトリの公開 (PUBLIC) 設定
-# これによりリンク元ターゲット（demoやtest）に自動でインクルードパスが伝播します。
 target_include_directories(embwasm PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${CMAKE_CURRENT_SOURCE_DIR}/hostmodule/threads
@@ -37,7 +32,7 @@ target_include_directories(embwasm PUBLIC
 
 # 警告レベルを高く設定し、警告をエラーとして処理
 if(MSVC)
-    target_compile_options(embwasm PRIVATE /W4 /WX)
+    target_compile_options(embwasm PRIVATE -O2 /W4 /WX)
 else()
-    target_compile_options(embwasm PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_compile_options(embwasm PRIVATE -O2 -Wall -Wextra -Wpedantic -Werror)
 endif()

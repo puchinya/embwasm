@@ -3527,28 +3527,7 @@ namespace embwasm {
                         uint32_t base = static_cast<uint32_t>(stack[--sp].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
-                        std::size_t size = 0;
-                        switch (op) {
-                            case 0x28:
-                            case 0x2A:
-                            case 0x2E:
-                            case 0x2F:
-                            case 0x32:
-                            case 0x33: size = 4;
-                                break;
-                            case 0x29:
-                            case 0x2B: size = 8;
-                                break;
-                            case 0x2C:
-                            case 0x2D:
-                            case 0x30:
-                            case 0x31: size = 1;
-                                break;
-                            case 0x34:
-                            case 0x35: size = 4;
-                                break;
-                        }
-                        if (op == 0x2E || op == 0x2F || op == 0x32 || op == 0x33) size = 2;
+                        std::size_t size = kLoadSize[op - 0x28];
 
                         if (!linear_memory_ptr || addr + size > linear_memory_size) {
                             result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
@@ -3557,46 +3536,21 @@ namespace embwasm {
 
                         WasmValue result_val;
                         result_val.value.i64 = 0;
-                        if (op == 0x28) {
-                            std::memcpy(&result_val.value.i32, &linear_memory_ptr[addr], 4);
-                        } else if (op == 0x29) {
-                            std::memcpy(&result_val.value.i64, &linear_memory_ptr[addr], 8);
-                        } else if (op == 0x2A) {
-                            std::memcpy(&result_val.value.f32, &linear_memory_ptr[addr], 4);
-                        } else if (op == 0x2B) {
-                            std::memcpy(&result_val.value.f64, &linear_memory_ptr[addr], 8);
-                        } else if (op == 0x2C) {
-                            result_val.value.i32 = static_cast<int32_t>(static_cast<int8_t>(linear_memory_ptr[addr]));
-                        } else if (op == 0x2D) {
-                            result_val.value.i32 = static_cast<int32_t>(linear_memory_ptr[addr]);
-                        } else if (op == 0x2E) {
-                            int16_t v;
-                            std::memcpy(&v, &linear_memory_ptr[addr], 2);
-                            result_val.value.i32 = static_cast<int32_t>(v);
-                        } else if (op == 0x2F) {
-                            uint16_t v;
-                            std::memcpy(&v, &linear_memory_ptr[addr], 2);
-                            result_val.value.i32 = static_cast<int32_t>(v);
-                        } else if (op == 0x30) {
-                            result_val.value.i64 = static_cast<int64_t>(static_cast<int8_t>(linear_memory_ptr[addr]));
-                        } else if (op == 0x31) {
-                            result_val.value.i64 = static_cast<int64_t>(linear_memory_ptr[addr]);
-                        } else if (op == 0x32) {
-                            int16_t v;
-                            std::memcpy(&v, &linear_memory_ptr[addr], 2);
-                            result_val.value.i64 = static_cast<int64_t>(v);
-                        } else if (op == 0x33) {
-                            uint16_t v;
-                            std::memcpy(&v, &linear_memory_ptr[addr], 2);
-                            result_val.value.i64 = static_cast<int64_t>(v);
-                        } else if (op == 0x34) {
-                            int32_t v;
-                            std::memcpy(&v, &linear_memory_ptr[addr], 4);
-                            result_val.value.i64 = static_cast<int64_t>(v);
-                        } else if (op == 0x35) {
-                            uint32_t v;
-                            std::memcpy(&v, &linear_memory_ptr[addr], 4);
-                            result_val.value.i64 = static_cast<int64_t>(v);
+                        switch (op) {
+                            case 0x28: std::memcpy(&result_val.value.i32, &linear_memory_ptr[addr], 4); break;
+                            case 0x29: std::memcpy(&result_val.value.i64, &linear_memory_ptr[addr], 8); break;
+                            case 0x2A: std::memcpy(&result_val.value.f32, &linear_memory_ptr[addr], 4); break;
+                            case 0x2B: std::memcpy(&result_val.value.f64, &linear_memory_ptr[addr], 8); break;
+                            case 0x2C: result_val.value.i32 = static_cast<int32_t>(static_cast<int8_t>(linear_memory_ptr[addr])); break;
+                            case 0x2D: result_val.value.i32 = static_cast<int32_t>(linear_memory_ptr[addr]); break;
+                            case 0x2E: { int16_t v; std::memcpy(&v, &linear_memory_ptr[addr], 2); result_val.value.i32 = static_cast<int32_t>(v); break; }
+                            case 0x2F: { uint16_t v; std::memcpy(&v, &linear_memory_ptr[addr], 2); result_val.value.i32 = static_cast<int32_t>(v); break; }
+                            case 0x30: result_val.value.i64 = static_cast<int64_t>(static_cast<int8_t>(linear_memory_ptr[addr])); break;
+                            case 0x31: result_val.value.i64 = static_cast<int64_t>(linear_memory_ptr[addr]); break;
+                            case 0x32: { int16_t v; std::memcpy(&v, &linear_memory_ptr[addr], 2); result_val.value.i64 = static_cast<int64_t>(v); break; }
+                            case 0x33: { uint16_t v; std::memcpy(&v, &linear_memory_ptr[addr], 2); result_val.value.i64 = static_cast<int64_t>(v); break; }
+                            case 0x34: { int32_t v; std::memcpy(&v, &linear_memory_ptr[addr], 4); result_val.value.i64 = static_cast<int64_t>(v); break; }
+                            case 0x35: { uint32_t v; std::memcpy(&v, &linear_memory_ptr[addr], 4); result_val.value.i64 = static_cast<int64_t>(v); break; }
                         }
                         stack[sp++] = result_val;
                         break;
@@ -3619,47 +3573,21 @@ namespace embwasm {
                         uint32_t base = static_cast<uint32_t>(stack[--sp].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
-                        std::size_t size = 0;
-                        switch (op) {
-                            case 0x36:
-                            case 0x38:
-                            case 0x3E: size = 4;
-                                break;
-                            case 0x37:
-                            case 0x39: size = 8;
-                                break;
-                            case 0x3A:
-                            case 0x3C: size = 1;
-                                break;
-                            case 0x3B:
-                            case 0x3D: size = 2;
-                                break;
-                        }
+                        std::size_t size = kStoreSize[op - 0x36];
                         if (!linear_memory_ptr || addr + size > linear_memory_size) {
                             result = OnTrap(WasmResult::kErrorExecuteTrapMemoryOutOfBounds);
                             goto done;
                         }
-                        if (op == 0x36) {
-                            std::memcpy(&linear_memory_ptr[addr], &val.value.i32, 4);
-                        } else if (op == 0x37) {
-                            std::memcpy(&linear_memory_ptr[addr], &val.value.i64, 8);
-                        } else if (op == 0x38) {
-                            std::memcpy(&linear_memory_ptr[addr], &val.value.f32, 4);
-                        } else if (op == 0x39) {
-                            std::memcpy(&linear_memory_ptr[addr], &val.value.f64, 8);
-                        } else if (op == 0x3A) {
-                            linear_memory_ptr[addr] = static_cast<uint8_t>(val.value.i32 & 0xFF);
-                        } else if (op == 0x3B) {
-                            uint16_t v = static_cast<uint16_t>(val.value.i32 & 0xFFFF);
-                            std::memcpy(&linear_memory_ptr[addr], &v, 2);
-                        } else if (op == 0x3C) {
-                            linear_memory_ptr[addr] = static_cast<uint8_t>(val.value.i64 & 0xFF);
-                        } else if (op == 0x3D) {
-                            uint16_t v = static_cast<uint16_t>(val.value.i64 & 0xFFFF);
-                            std::memcpy(&linear_memory_ptr[addr], &v, 2);
-                        } else if (op == 0x3E) {
-                            uint32_t v = static_cast<uint32_t>(val.value.i64 & 0xFFFFFFFFULL);
-                            std::memcpy(&linear_memory_ptr[addr], &v, 4);
+                        switch (op) {
+                            case 0x36: std::memcpy(&linear_memory_ptr[addr], &val.value.i32, 4); break;
+                            case 0x37: std::memcpy(&linear_memory_ptr[addr], &val.value.i64, 8); break;
+                            case 0x38: std::memcpy(&linear_memory_ptr[addr], &val.value.f32, 4); break;
+                            case 0x39: std::memcpy(&linear_memory_ptr[addr], &val.value.f64, 8); break;
+                            case 0x3A: linear_memory_ptr[addr] = static_cast<uint8_t>(val.value.i32 & 0xFF); break;
+                            case 0x3B: { uint16_t v = static_cast<uint16_t>(val.value.i32 & 0xFFFF); std::memcpy(&linear_memory_ptr[addr], &v, 2); break; }
+                            case 0x3C: linear_memory_ptr[addr] = static_cast<uint8_t>(val.value.i64 & 0xFF); break;
+                            case 0x3D: { uint16_t v = static_cast<uint16_t>(val.value.i64 & 0xFFFF); std::memcpy(&linear_memory_ptr[addr], &v, 2); break; }
+                            case 0x3E: { uint32_t v = static_cast<uint32_t>(val.value.i64 & 0xFFFFFFFFULL); std::memcpy(&linear_memory_ptr[addr], &v, 4); break; }
                         }
                         break;
                     }
