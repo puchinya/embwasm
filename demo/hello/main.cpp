@@ -3,7 +3,7 @@
 #include "embwasm.hpp"
 #include "main_wasm.hpp"
 
-constexpr size_t kMemoryPoolSize = 1 << 20;
+constexpr size_t kMemoryPoolSize = 128 << 10;
 
 namespace {
 alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
@@ -19,7 +19,11 @@ int main() {
 
     // 3. WASMエンジンの構築
     embwasm::WasmEngine engine;
-    engine.Init(pool);
+    embwasm::WasmEngineConfig config;
+    config.stack_size = 512;
+    config.call_stack_size = 32;
+    config.labels_pool_size = 512;
+    engine.Init(pool, config);
 
     // 5. WASMバイナリのロード
     std::cout << "\nLoading WASM Binary..." << std::endl;
