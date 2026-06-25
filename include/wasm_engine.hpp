@@ -25,6 +25,16 @@ enum class WasmFunctionKind : uint8_t {
     kImport = 2, ///< インポート宣言（ロード時に解決される）。
 };
 
+/// @brief block / if 命令の end・else 位置を保持するジャンプテーブルエントリ。
+///
+/// ValidateFunctionBody() で構築し、WasmLocalFunction に保持する。
+/// block_jump_table は body_offset の昇順にソート済み（バイナリサーチ可能）。
+struct BlockJumpEntry {
+    uint32_t body_offset;   ///< code_ptr からの block body 開始オフセット（block_type decode 後の ip）。
+    uint32_t end_offset;    ///< code_ptr からの end の次バイトオフセット。
+    uint32_t else_offset;   ///< if のみ: else body 開始オフセット。else なし・block は 0。
+};
+
 /// @brief モジュール内部に定義された WASM 関数のメタデータ。
 struct WasmLocalFunction {
     const uint8_t* code_ptr;   ///< バイトコードの先頭ポインタ（ROM を指す）。
@@ -32,6 +42,8 @@ struct WasmLocalFunction {
     uint32_t local_count;      ///< 引数を除くローカル変数数。
     uint32_t max_label_depth;  ///< `Validate()` で算出した最大ラベルスタック深度（関数ブロック含む）。
     uint32_t max_stack_depth;  ///< `Validate()` で算出した最大データスタック深度。
+    BlockJumpEntry* block_jump_table; ///< block/if の end 位置ジャンプテーブル（body_offset 昇順）。
+    uint32_t        block_count;      ///< block_jump_table のエントリ数。
 };
 
 /// @brief ホスト側（C++）から提供される関数のメタデータ。

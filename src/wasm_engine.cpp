@@ -945,6 +945,12 @@ namespace embwasm {
         }
         mod->signature_count = 0;
         if (mod->functions) {
+            for (std::size_t i = 0; i < mod->function_count; ++i) {
+                if (mod->functions[i].kind == WasmFunctionKind::kLocal &&
+                    mod->functions[i].local.block_jump_table) {
+                    pool_->Free(mod->functions[i].local.block_jump_table);
+                }
+            }
             pool_->Free(mod->functions);
             mod->functions = nullptr;
         }
@@ -1165,12 +1171,15 @@ namespace embwasm {
         // ラベルスタック (バリデーション専用)
         // [0] = 関数全体の暗黙ブロック、[1..] = ネストされたブロック
         struct ValLabel {
-            int32_t stack_at_entry;
+            int32_t  stack_at_entry;
             uint32_t result_count;
+            uint32_t jump_idx;  // block/if: index into tmp_jumps; UINT32_MAX for loop/outer
+            uint8_t  opcode;    // 0x02=block, 0x03=loop, 0x04=if, 0x00=outer
         };
         // 事前スキャン: 各オペコードのイミディエイトを正確にスキップしながら
         // 実際の最大ラベルネスト深度を計測し、プールから最低限確保する。
         uint32_t pre_top = 1, pre_max = 1; // pre_top = label_top 相当
+        uint32_t block_if_count = 0;  // block(0x02) / if(0x04) のみカウント（ジャンプテーブルに必要）
         {
             const uint8_t* p = ip;
             while (p < limit) {
@@ -1182,6 +1191,7 @@ namespace embwasm {
                             return WasmResult::kErrorValidationFailed;
                         ++pre_top;
                         if (pre_top > pre_max) pre_max = pre_top;
+                        if (b != 0x03) ++block_if_count;  // loop は除外
                         break;
                     case 0x0B: // end
                         if (pre_top > 1) --pre_top;
@@ -1239,10 +1249,20 @@ namespace embwasm {
         ValLabel* val_labels = static_cast<ValLabel*>(
             pool_->Allocate(pre_max * sizeof(ValLabel)));
         if (!val_labels) return WasmResult::kErrorOutOfMemory;
+        BlockJumpEntry* tmp_jumps = nullptr;
+        if (block_if_count > 0) {
+            tmp_jumps = static_cast<BlockJumpEntry*>(
+                pool_->Allocate(block_if_count * sizeof(BlockJumpEntry)));
+            if (!tmp_jumps) {
+                pool_->Free(val_labels);
+                return WasmResult::kErrorOutOfMemory;
+            }
+        }
         WasmResult result = WasmResult::kOk;
         uint32_t label_top = 1;
         uint32_t max_label_depth = 1;
-        val_labels[0] = {0, sig->result_count};
+        val_labels[0] = {0, sig->result_count, UINT32_MAX, 0x00};
+        uint32_t next_jump_idx = 0;
 
         int32_t stack_depth = 0;
         int32_t max_stack_depth = 0;
@@ -1282,7 +1302,13 @@ namespace embwasm {
                     } else {
                         entry = stack_depth - static_cast<int32_t>(param_count);
                     }
-                    val_labels[label_top++] = {entry, result_count};
+                    if (op == 0x02 && tmp_jumps) {
+                        tmp_jumps[next_jump_idx] = {
+                            static_cast<uint32_t>(ip - func.local.code_ptr), 0, 0};
+                        val_labels[label_top++] = {entry, result_count, next_jump_idx++, 0x02};
+                    } else {
+                        val_labels[label_top++] = {entry, result_count, UINT32_MAX, op};
+                    }
                     if (label_top > max_label_depth) max_label_depth = label_top;
                     break;
                 }
@@ -1303,14 +1329,24 @@ namespace embwasm {
                         stack_depth--;
                     } // 条件値をポップ
                     if (label_top >= kWasmValidationMaxLabelDepth) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
-                    val_labels[label_top++] = {stack_depth, result_count};
+                    if (tmp_jumps) {
+                        tmp_jumps[next_jump_idx] = {
+                            static_cast<uint32_t>(ip - func.local.code_ptr), 0, 0};
+                        val_labels[label_top++] = {stack_depth, result_count, next_jump_idx++, 0x04};
+                    } else {
+                        val_labels[label_top++] = {stack_depth, result_count, UINT32_MAX, 0x04};
+                    }
                     if (label_top > max_label_depth) max_label_depth = label_top;
                     break;
                 }
 
                 case 0x05: // else: then-ブランチ終了 → スタックをif進入時の深度に戻す
                     if (label_top > 0) {
-                        stack_depth = val_labels[label_top - 1].stack_at_entry;
+                        const ValLabel &elbl = val_labels[label_top - 1];
+                        stack_depth = elbl.stack_at_entry;
+                        if (tmp_jumps && elbl.jump_idx != UINT32_MAX)
+                            tmp_jumps[elbl.jump_idx].else_offset =
+                                static_cast<uint32_t>(ip - func.local.code_ptr);
                     }
                     is_unreachable = false;
                     break;
@@ -1320,6 +1356,9 @@ namespace embwasm {
                     if (label_top > 0) {
                         const ValLabel &lbl = val_labels[--label_top];
                         stack_depth = lbl.stack_at_entry + static_cast<int32_t>(lbl.result_count);
+                        if (tmp_jumps && lbl.jump_idx != UINT32_MAX)
+                            tmp_jumps[lbl.jump_idx].end_offset =
+                                static_cast<uint32_t>(ip - func.local.code_ptr);
                     }
                     is_unreachable = false;
                     break;
@@ -1779,7 +1818,21 @@ namespace embwasm {
         func.local.max_label_depth = max_label_depth;
         func.local.max_stack_depth = static_cast<uint32_t>(max_stack_depth < 0 ? 0 : max_stack_depth);
 
+        // ジャンプテーブルを永続領域にコピー（tmp_jumps は cleanup で解放する一時バッファ）
+        if (result == WasmResult::kOk && block_if_count > 0 && tmp_jumps) {
+            auto *tbl = static_cast<BlockJumpEntry*>(
+                pool_->Allocate(block_if_count * sizeof(BlockJumpEntry)));
+            if (!tbl) {
+                result = WasmResult::kErrorOutOfMemory;
+            } else {
+                std::memcpy(tbl, tmp_jumps, block_if_count * sizeof(BlockJumpEntry));
+                func.local.block_jump_table = tbl;
+                func.local.block_count = block_if_count;
+            }
+        }
+
     cleanup:
+        if (tmp_jumps) pool_->Free(tmp_jumps);
         pool_->Free(val_labels);
         return result;
     }
@@ -2805,6 +2858,22 @@ namespace embwasm {
         return result;
     }
 
+    // block/if のジャンプテーブルから body_offset に対応するエントリを O(log N) で返す。
+    // 見つからない場合は nullptr を返す（正常バイナリでは起こらない）。
+    static const BlockJumpEntry* FindBlockJump(
+        const WasmLocalFunction &lf, uint32_t body_offset) noexcept
+    {
+        uint32_t lo = 0, hi = lf.block_count;
+        while (lo < hi) {
+            uint32_t mid = (lo + hi) / 2;
+            if (lf.block_jump_table[mid].body_offset < body_offset) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo < lf.block_count && lf.block_jump_table[lo].body_offset == body_offset)
+            return &lf.block_jump_table[lo];
+        return nullptr;
+    }
+
     // call / call_indirect 共通のフレーム構築ヘルパー。
     // 成功時は新フレームを call_stack に積み kOk を返す。sp と max_call_stack_depth は更新される。
     // 失敗時は sp / ctx->stack_top をロールバックしてエラーコードを返す。
@@ -3035,88 +3104,13 @@ namespace embwasm {
                         label.result_count = result_count;
 
                         if (op == 0x02) {
-                            // block
-                            // 対応する end を探す (ネストを考慮)
-                            // 各オペコードの引数バイトを正しくスキップしながら探索する
-                            const uint8_t *search_ptr = ip;
-                            int nest_level = 0;
-                            while (search_ptr < limit) {
-                                uint8_t s_op = *search_ptr++;
-                                if (s_op == 0x02 || s_op == 0x03 || s_op == 0x04) {
-                                    DecodeVarInt32(search_ptr, limit);
-                                    nest_level++;
-                                } else if (s_op == 0x05) {
-                                    // else
-                                } else if (s_op == 0x0B) {
-                                    if (nest_level == 0) {
-                                        label.pc = search_ptr;
-                                        break;
-                                    }
-                                    nest_level--;
-                                } else if (s_op == 0x0C || s_op == 0x0D) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                } else if (s_op == 0x0E) {
-                                    uint32_t target_count = DecodeVarUint32(search_ptr, limit);
-                                    for (uint32_t i = 0; i < target_count + 1; ++i) {
-                                        DecodeVarUint32(search_ptr, limit);
-                                    }
-                                } else if (s_op == 0x10) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                } else if (s_op == 0x11) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                    if (search_ptr < limit) search_ptr++;
-                                } else if (s_op >= 0x20 && s_op <= 0x26) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                } else if (s_op >= 0x28 && s_op <= 0x3E) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                    DecodeVarUint32(search_ptr, limit);
-                                } else if (s_op == 0x3F || s_op == 0x40) {
-                                    if (search_ptr < limit) search_ptr++;
-                                } else if (s_op == 0x41) {
-                                    DecodeVarInt32(search_ptr, limit);
-                                } else if (s_op == 0x42) {
-                                    DecodeVarInt64(search_ptr, limit);
-                                } else if (s_op == 0x43) {
-                                    search_ptr += 4;
-                                } else if (s_op == 0x44) {
-                                    search_ptr += 8;
-                                } else if (s_op >= 0xC0 && s_op <= 0xC4) {
-                                    // sign extension opcodes: no immediates
-                                } else if (s_op == 0xD0) {
-                                    DecodeVarInt32(search_ptr, limit); // ref.null: heap type
-                                } else if (s_op == 0xD2) {
-                                    DecodeVarUint32(search_ptr, limit); // ref.func: func idx
-                                } else if (s_op == 0x1C) {
-                                    uint32_t type_count = DecodeVarUint32(search_ptr, limit);
-                                    if (type_count <= static_cast<std::size_t>(limit - search_ptr)) {
-                                        search_ptr += type_count;
-                                    } else {
-                                        search_ptr = limit;
-                                    }
-                                } else if (s_op == 0xFC) {
-                                    uint32_t fc_sub = DecodeVarUint32(search_ptr, limit);
-                                    if (fc_sub == 8) {
-                                        DecodeVarUint32(search_ptr, limit);
-                                        if (search_ptr < limit) search_ptr++;
-                                    } else if (fc_sub == 9 || fc_sub == 13) {
-                                        DecodeVarUint32(search_ptr, limit);
-                                    } else if (fc_sub == 10) {
-                                        if (search_ptr < limit) search_ptr++;
-                                        if (search_ptr < limit) search_ptr++;
-                                    } else if (fc_sub == 11) {
-                                        if (search_ptr < limit) search_ptr++;
-                                    } else if (fc_sub == 12 || fc_sub == 14) {
-                                        DecodeVarUint32(search_ptr, limit);
-                                        DecodeVarUint32(search_ptr, limit);
-                                    } else if (fc_sub >= 15 && fc_sub <= 17) {
-                                        DecodeVarUint32(search_ptr, limit);
-                                    }
-                                }
-                            }
+                            // block: 事前計算済みジャンプテーブルから end 位置を O(log N) で取得
+                            const BlockJumpEntry *e = FindBlockJump(
+                                frame.func->local,
+                                static_cast<uint32_t>(ip - frame.func->local.code_ptr));
+                            label.pc = e ? frame.func->local.code_ptr + e->end_offset : limit;
                         } else {
-                            // loop
-                            // loop の場合、br 0 でループ先頭（ループ本体の先頭）に戻る。
-                            // ip はすでに block_type の次（ループ本体の先頭）を指している。
+                            // loop: br 0 でループ先頭に戻る。ip は block_type の次を指す。
                             label.pc = ip;
                         }
                         break;
@@ -3142,84 +3136,17 @@ namespace embwasm {
                         label.param_count = 0;
                         label.result_count = result_count;
 
-                        // 対応する else または end を探す
-                        // 各オペコードの引数バイトを正しくスキップしながら探索する
-                        const uint8_t *search_ptr = ip;
+                        // 事前計算済みジャンプテーブルから else/end 位置を O(log N) で取得
+                        const BlockJumpEntry *e = FindBlockJump(
+                            frame.func->local,
+                            static_cast<uint32_t>(ip - frame.func->local.code_ptr));
                         const uint8_t *else_ptr = nullptr;
-                        int nest_level = 0;
-                        while (search_ptr < limit) {
-                            uint8_t s_op = *search_ptr++;
-                            if (s_op == 0x02 || s_op == 0x03 || s_op == 0x04) {
-                                DecodeVarInt32(search_ptr, limit);
-                                nest_level++;
-                            } else if (s_op == 0x05) {
-                                // else
-                                if (nest_level == 0) else_ptr = search_ptr;
-                            } else if (s_op == 0x0B) {
-                                if (nest_level == 0) {
-                                    label.pc = search_ptr;
-                                    break;
-                                }
-                                nest_level--;
-                            } else if (s_op == 0x0C || s_op == 0x0D) {
-                                DecodeVarUint32(search_ptr, limit);
-                            } else if (s_op == 0x0E) {
-                                uint32_t target_count = DecodeVarUint32(search_ptr, limit);
-                                for (uint32_t i = 0; i < target_count + 1; ++i) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                }
-                            } else if (s_op == 0x10) {
-                                DecodeVarUint32(search_ptr, limit);
-                            } else if (s_op == 0x11) {
-                                DecodeVarUint32(search_ptr, limit);
-                                if (search_ptr < limit) search_ptr++;
-                            } else if (s_op >= 0x20 && s_op <= 0x26) {
-                                DecodeVarUint32(search_ptr, limit);
-                            } else if (s_op >= 0x28 && s_op <= 0x3E) {
-                                DecodeVarUint32(search_ptr, limit);
-                                DecodeVarUint32(search_ptr, limit);
-                            } else if (s_op == 0x3F || s_op == 0x40) {
-                                if (search_ptr < limit) search_ptr++;
-                            } else if (s_op == 0x41) {
-                                DecodeVarInt32(search_ptr, limit);
-                            } else if (s_op == 0x42) {
-                                DecodeVarInt64(search_ptr, limit);
-                            } else if (s_op == 0x43) {
-                                search_ptr += 4;
-                            } else if (s_op == 0x44) {
-                                search_ptr += 8;
-                            } else if (s_op >= 0xC0 && s_op <= 0xC4) {
-                                // sign extension opcodes: no immediates
-                            } else if (s_op == 0xD0) {
-                                DecodeVarInt32(search_ptr, limit);
-                            } else if (s_op == 0xD2) {
-                                DecodeVarUint32(search_ptr, limit);
-                            } else if (s_op == 0x1C) {
-                                uint32_t type_count = DecodeVarUint32(search_ptr, limit);
-                                if (type_count <= static_cast<std::size_t>(limit - search_ptr)) {
-                                    search_ptr += type_count;
-                                } else {
-                                    search_ptr = limit;
-                                }
-                            } else if (s_op == 0xFC) {
-                                uint32_t fc_sub = DecodeVarUint32(search_ptr, limit);
-                                if (fc_sub == 8) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                    if (search_ptr < limit) search_ptr++;
-                                } else if (fc_sub == 9 || fc_sub == 13) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                } else if (fc_sub == 10) {
-                                    if (search_ptr < limit) search_ptr++;
-                                    if (search_ptr < limit) search_ptr++;
-                                } else if (fc_sub == 11) {
-                                    if (search_ptr < limit) search_ptr++;
-                                } else if (fc_sub == 12 || fc_sub == 14) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                    DecodeVarUint32(search_ptr, limit);
-                                } else if (fc_sub >= 15 && fc_sub <= 17) {
-                                    DecodeVarUint32(search_ptr, limit);
-                                }
-                            }
+                        if (e) {
+                            label.pc = frame.func->local.code_ptr + e->end_offset;
+                            if (e->else_offset != 0)
+                                else_ptr = frame.func->local.code_ptr + e->else_offset;
+                        } else {
+                            label.pc = limit;
                         }
 
                         if (cond == 0) {
