@@ -1887,126 +1887,498 @@ namespace embwasm {
         return WasmResult::kOk;
     }
 
-    WasmResult WasmEngine::ParseSections(WasmModuleInstance *mod, const uint8_t *binary, std::size_t size) noexcept {
-        if (!mod) return WasmResult::kErrorInvalidArgument;
+    // =========================================================
+    // Section parsing helpers
+    // =========================================================
 
-        // =========================================================
-        // Pass 1: エントリ数カウント + 重複セクション検出
-        // =========================================================
-        struct Counts {
-            std::size_t type_count;
-            std::size_t func_count;
-            std::size_t export_count;
-            std::size_t import_count;
-            std::size_t global_count;
-            std::size_t table_count;
-            std::size_t data_count;
-            std::size_t elem_count;
-        };
-        Counts counts = {};
-        {
-            uint16_t seen = 0;
-            const uint8_t *p = binary;
-            const uint8_t *e = binary + size;
-            while (p < e) {
-                uint8_t sid = *p++;
-                if (p >= e) break;
-                uint32_t ssz = DecodeVarUint32(p, e);
-                if (ssz > static_cast<std::size_t>(e - p)) break;
-                const uint8_t *se = p + ssz;
-                if (sid != 0 && sid <= 15) {
-                    uint16_t bit = static_cast<uint16_t>(1u << sid);
-                    if (seen & bit) return WasmResult::kErrorParseOthers;
-                    seen |= bit;
+    struct SectionCounts {
+        std::size_t type_count   = 0;
+        std::size_t func_count   = 0;
+        std::size_t export_count = 0;
+        std::size_t import_count = 0;
+        std::size_t global_count = 0;
+        std::size_t table_count  = 0;
+        std::size_t data_count   = 0;
+        std::size_t elem_count   = 0;
+    };
+
+    struct ParseContext {
+        WasmModuleInstance* mod;
+        WasmMemoryPool*     pool;
+        std::size_t         sig_idx;
+        std::size_t         func_idx;
+        std::size_t         exp_idx;
+        std::size_t         imp_idx;
+        std::size_t         glob_idx;
+        uint32_t            code_index_offset;
+    };
+
+    static WasmResult ParseTypeSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t type_count = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < type_count; ++i) {
+            if (ptr >= end) return WasmResult::kErrorParseOthers;
+            uint8_t form = *ptr++;
+            if (form != 0x60) return WasmResult::kErrorParseUnknownSection;
+            uint32_t param_count = DecodeVarUint32(ptr, end);
+            if (param_count > kWasmMaxParamCount) return WasmResult::kErrorValidationFailed;
+            const uint8_t* params_start = ptr;
+            for (uint32_t p = 0; p < param_count; ++p) {
+                if (ptr >= end) return WasmResult::kErrorParseOthers;
+                ++ptr;
+            }
+            uint32_t result_count = DecodeVarUint32(ptr, end);
+            if (result_count > kWasmMaxResultCount) return WasmResult::kErrorValidationFailed;
+            const uint8_t* results_start = ptr;
+            for (uint32_t r = 0; r < result_count; ++r) {
+                if (ptr >= end) return WasmResult::kErrorParseOthers;
+                ++ptr;
+            }
+            if (ctx.sig_idx >= ctx.mod->signature_count) return WasmResult::kErrorOutOfMemory;
+            std::size_t sig_size = WasmTypeSignature::ByteSize(param_count, result_count);
+            auto* sig = static_cast<WasmTypeSignature*>(ctx.pool->Allocate(sig_size));
+            if (!sig) return WasmResult::kErrorOutOfMemory;
+            std::memset(sig, 0, sig_size);
+            sig->param_count  = static_cast<uint16_t>(param_count);
+            sig->result_count = static_cast<uint16_t>(result_count);
+            for (uint32_t p = 0; p < param_count; ++p)
+                sig->SetParam(p, static_cast<WasmType>(params_start[p]));
+            for (uint32_t r = 0; r < result_count; ++r)
+                sig->SetResult(r, static_cast<WasmType>(results_start[r]));
+            ctx.mod->signatures[ctx.sig_idx++] = sig;
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseImportSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t import_count = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < import_count; ++i) {
+            uint32_t mod_len = DecodeVarUint32(ptr, end);
+            if (mod_len > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+            const char* mod_name = reinterpret_cast<const char*>(ptr);
+            ptr += mod_len;
+            uint32_t field_len = DecodeVarUint32(ptr, end);
+            if (field_len > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+            const char* field_name = reinterpret_cast<const char*>(ptr);
+            ptr += field_len;
+            if (ptr >= end) return WasmResult::kErrorParseOthers;
+            uint8_t kind = *ptr++;
+            WasmImportEntry entry = {};
+            entry.module_name     = mod_name;
+            entry.module_name_len = mod_len;
+            entry.field_name      = field_name;
+            entry.field_name_len  = field_len;
+            entry.kind            = kind;
+            switch (kind) {
+                case 0x00: {
+                    uint32_t type_idx = DecodeVarUint32(ptr, end);
+                    if (ctx.func_idx >= ctx.mod->function_count) return WasmResult::kErrorOutOfMemory;
+                    entry.index = static_cast<uint32_t>(ctx.func_idx);
+                    entry.desc.func.type_index = type_idx;
+                    ctx.func_idx++;
+                    ctx.code_index_offset++;
+                    break;
                 }
-                switch (sid) {
-                    case 1: counts.type_count = DecodeVarUint32(p, se); break;
-                    case 2: {
-                        uint32_t n = DecodeVarUint32(p, se);
-                        counts.import_count = n;
-                        for (uint32_t i = 0; i < n && p < se; ++i) {
-                            uint32_t mlen = DecodeVarUint32(p, se);
-                            if (mlen > static_cast<std::size_t>(se - p)) goto count_next;
-                            p += mlen;
-                            uint32_t flen = DecodeVarUint32(p, se);
-                            if (flen > static_cast<std::size_t>(se - p)) goto count_next;
-                            p += flen;
-                            if (p >= se) goto count_next;
-                            uint8_t k = *p++;
-                            switch (k) {
-                                case 0x00: DecodeVarUint32(p, se); counts.func_count++; break;
-                                case 0x01: {
-                                    if (p >= se) goto count_next;
-                                    p++;
-                                    if (p >= se) goto count_next;
-                                    { uint8_t f = *p++; DecodeVarUint32(p, se); if (f & 1) DecodeVarUint32(p, se); }
-                                    counts.table_count++;
-                                    break;
-                                }
-                                case 0x02: {
-                                    if (p >= se) goto count_next;
-                                    { uint8_t f = *p++; DecodeVarUint32(p, se); if (f & 1) DecodeVarUint32(p, se); }
-                                    break;
-                                }
-                                case 0x03: {
-                                    if (p + 2 > se) goto count_next;
-                                    p++; p++;
-                                    counts.global_count++;
-                                    break;
-                                }
-                                default: goto count_next;
-                            }
-                        }
-                        break;
-                    }
-                    case 3: counts.func_count += DecodeVarUint32(p, se); break;
-                    case 4: counts.table_count += DecodeVarUint32(p, se); break;
-                    case 6: counts.global_count += DecodeVarUint32(p, se); break;
-                    case 7: counts.export_count = DecodeVarUint32(p, se); break;
-                    case 9: counts.elem_count = DecodeVarUint32(p, se); break;
-                    case 11: counts.data_count = DecodeVarUint32(p, se); break;
-                    default: break;
+                case 0x01: {
+                    uint8_t elem_type = *ptr++;
+                    uint8_t flags     = *ptr++;
+                    uint32_t min_size = DecodeVarUint32(ptr, end);
+                    uint32_t max_size = 0xFFFFFFFF;
+                    if (flags & 0x01) max_size = DecodeVarUint32(ptr, end);
+                    entry.index = static_cast<uint32_t>(ctx.mod->table_count);
+                    entry.desc.table.elem_type = elem_type;
+                    entry.desc.table.min_size  = min_size;
+                    entry.desc.table.max_size  = max_size;
+                    if (ctx.mod->table_count < ctx.mod->table_capacity) ctx.mod->table_count++;
+                    break;
                 }
-            count_next:
-                p = se;
+                case 0x02: {
+                    uint8_t flags       = *ptr++;
+                    uint32_t min_pages  = DecodeVarUint32(ptr, end);
+                    uint32_t max_pages  = 0;
+                    if (flags & 0x01) max_pages = DecodeVarUint32(ptr, end);
+                    entry.index = 0;
+                    entry.desc.mem.min_pages = min_pages;
+                    entry.desc.mem.max_pages = max_pages;
+                    break;
+                }
+                case 0x03: {
+                    if (ptr + 2 > end) return WasmResult::kErrorParseOthers;
+                    uint8_t value_type  = *ptr++;
+                    bool    is_mutable  = (*ptr++ != 0);
+                    entry.index = static_cast<uint32_t>(ctx.glob_idx);
+                    entry.desc.global.value_type = value_type;
+                    entry.desc.global.is_mutable = is_mutable;
+                    if (ctx.glob_idx < ctx.mod->global_count) ctx.glob_idx++;
+                    break;
+                }
+                default: break;
+            }
+            if (ctx.mod->imports && ctx.imp_idx < ctx.mod->import_count) {
+                ctx.mod->imports[ctx.imp_idx++] = entry;
             }
         }
+        return WasmResult::kOk;
+    }
 
-        // =========================================================
-        // 確保: カウントに基づいて正確なサイズをプールから確保する。
-        // =========================================================
+    static WasmResult ParseFunctionSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t num_funcs = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < num_funcs; ++i) {
+            uint32_t type_idx = DecodeVarUint32(ptr, end);
+            if (ctx.func_idx >= ctx.mod->function_count) return WasmResult::kErrorOutOfMemory;
+            ctx.mod->functions[ctx.func_idx].kind             = WasmFunctionKind::kLocal;
+            ctx.mod->functions[ctx.func_idx].type_index       = type_idx;
+            ctx.mod->functions[ctx.func_idx].local.code_ptr   = nullptr;
+            ctx.mod->functions[ctx.func_idx].local.code_size  = 0;
+            ctx.mod->functions[ctx.func_idx].local.local_count = 0;
+            ctx.func_idx++;
+        }
+        return WasmResult::kOk;
+    }
 
+    static WasmResult ParseTableSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t num_tables = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < num_tables; ++i) {
+            uint8_t elem_type = *ptr++;
+            if (elem_type != 0x70 && elem_type != 0x6F) return WasmResult::kErrorParseOthers;
+            uint8_t  flags    = *ptr++;
+            uint32_t min_size = DecodeVarUint32(ptr, end);
+            uint32_t max_size = 0xFFFFFFFF;
+            if (flags & 0x01) max_size = DecodeVarUint32(ptr, end);
+            if (ctx.mod->table_count < ctx.mod->table_capacity) {
+                ctx.mod->table_sizes[ctx.mod->table_count]          = min_size;
+                ctx.mod->table_max_sizes[ctx.mod->table_count]      = max_size;
+                ctx.mod->table_types[ctx.mod->table_count]          = static_cast<WasmType>(elem_type);
+                ctx.mod->tables[ctx.mod->table_count]               = nullptr;
+                ctx.mod->is_table_shared[ctx.mod->table_count]      = false;
+                ctx.mod->table_import_modules[ctx.mod->table_count] = nullptr;
+                ctx.mod->table_import_fields[ctx.mod->table_count]  = nullptr;
+                ctx.mod->table_count++;
+            } else {
+                return WasmResult::kErrorOutOfMemory;
+            }
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseMemorySection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t mem_count = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < mem_count; ++i) {
+            uint8_t  flags         = *ptr++;
+            uint32_t initial_pages = DecodeVarUint32(ptr, end);
+            uint32_t maximum_pages = 0;
+            if (flags & 0x01) maximum_pages = DecodeVarUint32(ptr, end);
+            ctx.mod->has_memory              = true;
+            ctx.mod->memory_is_imported      = false;
+            ctx.mod->memory_min_pages        = initial_pages;
+            ctx.mod->max_linear_memory_pages = maximum_pages;
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseGlobalSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t num_globals = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < num_globals; ++i) {
+            if (ctx.glob_idx >= ctx.mod->global_count) return WasmResult::kErrorOutOfMemory;
+            WasmType type       = static_cast<WasmType>(*ptr++);
+            bool     is_mutable = (*ptr++ != 0);
+            uint8_t  opcode     = *ptr++;
+            WasmValue val;
+            uint32_t  init_ref = 0xFFFFFFFFu;
+            if (opcode == 0x41) {
+                val.value.i32 = DecodeVarInt32(ptr, end);
+            } else if (opcode == 0x42) {
+                val.value.i64 = DecodeVarInt64(ptr, end);
+            } else if (opcode == 0x43) {
+                if (4 > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+                std::memcpy(&val.value.f32, ptr, 4); ptr += 4;
+            } else if (opcode == 0x44) {
+                if (8 > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+                std::memcpy(&val.value.f64, ptr, 8); ptr += 8;
+            } else if (opcode == 0x23) {
+                uint32_t idx = DecodeVarUint32(ptr, end);
+                if (idx >= ctx.glob_idx) return WasmResult::kErrorParseOthers;
+                val      = ctx.mod->globals[idx].value;
+                init_ref = idx;
+            } else if (opcode == 0xD0) {
+                int32_t heap_type = DecodeVarInt32(ptr, end);
+                (void)heap_type;
+                val.value.i64 = -1;
+            } else if (opcode == 0xD2) {
+                uint32_t ref_func_idx = DecodeVarUint32(ptr, end);
+                val.value.i64 = static_cast<int64_t>(ref_func_idx);
+            } else {
+                return WasmResult::kErrorParseOthers;
+            }
+            if (ptr >= end || *ptr++ != 0x0B) return WasmResult::kErrorParseOthers;
+            ctx.mod->globals[ctx.glob_idx++] = {type, is_mutable, val, init_ref};
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseExportSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t num_exports = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < num_exports; ++i) {
+            uint32_t name_len = DecodeVarUint32(ptr, end);
+            if (name_len > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+            const char* name = reinterpret_cast<const char*>(ptr);
+            ptr += name_len;
+            if (ptr >= end) return WasmResult::kErrorParseOthers;
+            uint8_t  kind = *ptr++;
+            uint32_t idx  = DecodeVarUint32(ptr, end);
+            if (ctx.exp_idx >= ctx.mod->export_count) return WasmResult::kErrorOutOfMemory;
+            ctx.mod->exports[ctx.exp_idx++] = {name, name_len, kind, idx};
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseDataSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t data_count = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < data_count; ++i) {
+            uint32_t seg_flags = DecodeVarUint32(ptr, end);
+            bool     is_passive = (seg_flags == 1) || (seg_flags == 3);
+            uint32_t offset = 0;
+            if (!is_passive) {
+                if (seg_flags == 2) DecodeVarUint32(ptr, end);
+                if (ptr >= end) return WasmResult::kErrorParseOthers;
+                uint8_t  opcode           = *ptr++;
+                uint32_t offset_global_ref = 0xFFFFFFFFu;
+                if (opcode == 0x41) {
+                    offset = static_cast<uint32_t>(DecodeVarInt32(ptr, end));
+                } else if (opcode == 0x23) {
+                    uint32_t gidx = DecodeVarUint32(ptr, end);
+                    offset_global_ref = gidx;
+                    if (gidx < ctx.glob_idx)
+                        offset = static_cast<uint32_t>(ctx.mod->globals[gidx].value.value.i32);
+                } else {
+                    return WasmResult::kErrorParseOthers;
+                }
+                if (ptr >= end || *ptr++ != 0x0B) return WasmResult::kErrorParseOthers;
+                if (ctx.mod->data_segment_offset_global_refs)
+                    ctx.mod->data_segment_offset_global_refs[ctx.mod->data_segment_count] = offset_global_ref;
+            }
+            uint32_t data_size = DecodeVarUint32(ptr, end);
+            if (data_size > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+            if (ctx.mod->data_segment_count < ctx.mod->data_segment_capacity) {
+                ctx.mod->data_segments[ctx.mod->data_segment_count]          = ptr;
+                ctx.mod->data_segment_sizes[ctx.mod->data_segment_count]     = data_size;
+                ctx.mod->data_segment_dropped[ctx.mod->data_segment_count]   = false;
+                ctx.mod->data_segment_offsets[ctx.mod->data_segment_count]   = offset;
+                ctx.mod->data_segment_is_active[ctx.mod->data_segment_count] = !is_passive;
+                ctx.mod->data_segment_count++;
+            } else {
+                return WasmResult::kErrorOutOfMemory;
+            }
+            ptr += data_size;
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseElementSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t num_elems = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < num_elems; ++i) {
+            if (ptr >= end) return WasmResult::kErrorParseOthers;
+            uint32_t flags     = DecodeVarUint32(ptr, end);
+            uint32_t table_idx = 0;
+            bool     has_offset = false;
+            if ((flags & 1) == 0) {
+                has_offset = true;
+                if ((flags & 2) == 2) table_idx = DecodeVarUint32(ptr, end);
+            } else {
+                if ((flags & 2) == 2) { uint8_t ref_type = *ptr++; (void)ref_type; }
+                else                  { uint8_t kind     = *ptr++; (void)kind;     }
+            }
+            uint32_t offset            = 0;
+            uint32_t offset_global_ref = 0xFFFFFFFFu;
+            if (has_offset) {
+                uint8_t opcode = *ptr++;
+                if (opcode == 0x41) {
+                    offset = static_cast<uint32_t>(DecodeVarInt32(ptr, end));
+                } else if (opcode == 0x23) {
+                    uint32_t global_idx = DecodeVarUint32(ptr, end);
+                    offset_global_ref = global_idx;
+                    if (global_idx < ctx.glob_idx)
+                        offset = ctx.mod->globals[global_idx].value.value.i32;
+                } else {
+                    return WasmResult::kErrorParseOthers;
+                }
+                if (ptr >= end || *ptr++ != 0x0B) return WasmResult::kErrorParseOthers;
+            }
+            if (has_offset && (flags & 2) == 2) {
+                if (ptr >= end) return WasmResult::kErrorParseOthers;
+                uint8_t elemkind_or_reftype = *ptr++;
+                (void)elemkind_or_reftype;
+            }
+            uint32_t  num_funcs = DecodeVarUint32(ptr, end);
+            uint32_t* elem_arr  = nullptr;
+            if (num_funcs > 0) {
+                elem_arr = static_cast<uint32_t*>(ctx.pool->Allocate(num_funcs * sizeof(uint32_t)));
+                if (!elem_arr) return WasmResult::kErrorOutOfMemory;
+            }
+            if ((flags & 4) == 4) {
+                for (uint32_t f = 0; f < num_funcs; ++f) {
+                    if (ptr >= end) { if (elem_arr) ctx.pool->Free(elem_arr); return WasmResult::kErrorParseOthers; }
+                    uint8_t  op  = *ptr++;
+                    uint32_t val = 0xFFFFFFFF;
+                    if      (op == 0xD2) { val = DecodeVarUint32(ptr, end); }
+                    else if (op == 0xD0) { uint8_t type = *ptr++; (void)type; }
+                    if (ptr >= end || *ptr++ != 0x0B) { if (elem_arr) ctx.pool->Free(elem_arr); return WasmResult::kErrorParseOthers; }
+                    if (elem_arr) elem_arr[f] = val;
+                }
+            } else {
+                for (uint32_t f = 0; f < num_funcs; ++f) {
+                    uint32_t fidx = DecodeVarUint32(ptr, end);
+                    if (elem_arr) elem_arr[f] = fidx;
+                }
+            }
+            if (ctx.mod->elem_segment_count < ctx.mod->elem_segment_capacity) {
+                bool is_declarative = !has_offset && ((flags & 2) == 2);
+                ctx.mod->elem_segments[ctx.mod->elem_segment_count]                   = elem_arr;
+                ctx.mod->elem_segment_sizes[ctx.mod->elem_segment_count]              = num_funcs;
+                ctx.mod->elem_segment_dropped[ctx.mod->elem_segment_count]            = is_declarative;
+                ctx.mod->elem_segment_table_indices[ctx.mod->elem_segment_count]      = table_idx;
+                ctx.mod->elem_segment_offsets[ctx.mod->elem_segment_count]            = offset;
+                ctx.mod->elem_segment_offset_global_refs[ctx.mod->elem_segment_count] = offset_global_ref;
+                ctx.mod->elem_segment_is_active[ctx.mod->elem_segment_count]          = has_offset;
+                ctx.mod->elem_segment_count++;
+            } else {
+                if (elem_arr) ctx.pool->Free(elem_arr);
+                return WasmResult::kErrorOutOfMemory;
+            }
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult ParseCodeSection(ParseContext& ctx, const uint8_t*& ptr, const uint8_t* end) noexcept {
+        uint32_t code_count = DecodeVarUint32(ptr, end);
+        for (uint32_t i = 0; i < code_count; ++i) {
+            uint32_t body_size = DecodeVarUint32(ptr, end);
+            if (body_size > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
+            const uint8_t* body_end    = ptr + body_size;
+            uint32_t       local_decls = DecodeVarUint32(ptr, body_end);
+            uint32_t       local_count = 0;
+            WasmType temp_types[kMaxLocalDecls];
+            for (uint32_t j = 0; j < local_decls; ++j) {
+                uint32_t count    = DecodeVarUint32(ptr, body_end);
+                if (ptr >= body_end) return WasmResult::kErrorParseOthers;
+                uint8_t  type_val = *ptr++;
+                WasmType type     = static_cast<WasmType>(type_val);
+                for (uint32_t c = 0; c < count; ++c) {
+                    if (local_count >= kMaxLocalDecls) return WasmResult::kErrorOutOfMemory;
+                    temp_types[local_count++] = type;
+                }
+            }
+            uint32_t code_func_idx = ctx.code_index_offset + i;
+            if (code_func_idx >= ctx.mod->function_count) return WasmResult::kErrorParseOthers;
+            ctx.mod->functions[code_func_idx].local.code_ptr    = ptr;
+            ctx.mod->functions[code_func_idx].local.code_size   = static_cast<uint32_t>(body_end - ptr);
+            ctx.mod->functions[code_func_idx].local.local_count = static_cast<uint16_t>(local_count);
+            ptr = body_end;
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult CountSectionEntries(const uint8_t* binary, std::size_t size, SectionCounts& counts) noexcept {
+        uint16_t       seen = 0;
+        const uint8_t* p   = binary;
+        const uint8_t* e   = binary + size;
+        while (p < e) {
+            uint8_t  sid = *p++;
+            if (p >= e) break;
+            uint32_t ssz = DecodeVarUint32(p, e);
+            if (ssz > static_cast<std::size_t>(e - p)) break;
+            const uint8_t* se = p + ssz;
+            if (sid != 0 && sid <= 15) {
+                uint16_t bit = static_cast<uint16_t>(1u << sid);
+                if (seen & bit) return WasmResult::kErrorParseOthers;
+                seen |= bit;
+            }
+            switch (sid) {
+                case 1: counts.type_count = DecodeVarUint32(p, se); break;
+                case 2: {
+                    uint32_t n = DecodeVarUint32(p, se);
+                    counts.import_count = n;
+                    for (uint32_t i = 0; i < n && p < se; ++i) {
+                        uint32_t mlen = DecodeVarUint32(p, se);
+                        if (mlen > static_cast<std::size_t>(se - p)) goto count_next;
+                        p += mlen;
+                        uint32_t flen = DecodeVarUint32(p, se);
+                        if (flen > static_cast<std::size_t>(se - p)) goto count_next;
+                        p += flen;
+                        if (p >= se) goto count_next;
+                        uint8_t k = *p++;
+                        switch (k) {
+                            case 0x00: DecodeVarUint32(p, se); counts.func_count++; break;
+                            case 0x01: {
+                                if (p >= se) goto count_next;
+                                p++;
+                                if (p >= se) goto count_next;
+                                { uint8_t f = *p++; DecodeVarUint32(p, se); if (f & 1) DecodeVarUint32(p, se); }
+                                counts.table_count++;
+                                break;
+                            }
+                            case 0x02: {
+                                if (p >= se) goto count_next;
+                                { uint8_t f = *p++; DecodeVarUint32(p, se); if (f & 1) DecodeVarUint32(p, se); }
+                                break;
+                            }
+                            case 0x03: {
+                                if (p + 2 > se) goto count_next;
+                                p++; p++;
+                                counts.global_count++;
+                                break;
+                            }
+                            default: goto count_next;
+                        }
+                    }
+                    break;
+                }
+                case 3:  counts.func_count   += DecodeVarUint32(p, se); break;
+                case 4:  counts.table_count  += DecodeVarUint32(p, se); break;
+                case 6:  counts.global_count += DecodeVarUint32(p, se); break;
+                case 7:  counts.export_count  = DecodeVarUint32(p, se); break;
+                case 9:  counts.elem_count    = DecodeVarUint32(p, se); break;
+                case 11: counts.data_count    = DecodeVarUint32(p, se); break;
+                default: break;
+            }
+        count_next:
+            p = se;
+        }
+        return WasmResult::kOk;
+    }
+
+    static WasmResult AllocateSectionBuffers(WasmModuleInstance* mod, WasmMemoryPool* pool,
+                                              const SectionCounts& counts) noexcept {
         mod->signature_count = counts.type_count;
-        mod->signatures = (counts.type_count > 0)
-            ? static_cast<WasmTypeSignature **>(pool_->Allocate(counts.type_count * sizeof(WasmTypeSignature *)))
+        mod->signatures = counts.type_count > 0
+            ? static_cast<WasmTypeSignature**>(pool->Allocate(counts.type_count * sizeof(WasmTypeSignature*)))
             : nullptr;
         if (counts.type_count > 0 && !mod->signatures) return WasmResult::kErrorOutOfMemory;
-        if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature *));
+        if (mod->signatures) std::memset(mod->signatures, 0, counts.type_count * sizeof(WasmTypeSignature*));
 
         mod->function_count = counts.func_count;
-        mod->functions = (counts.func_count > 0)
-            ? static_cast<WasmFunction *>(pool_->Allocate(counts.func_count * sizeof(WasmFunction)))
+        mod->functions = counts.func_count > 0
+            ? static_cast<WasmFunction*>(pool->Allocate(counts.func_count * sizeof(WasmFunction)))
             : nullptr;
         if (counts.func_count > 0 && !mod->functions) return WasmResult::kErrorOutOfMemory;
         if (mod->functions) std::memset(mod->functions, 0, counts.func_count * sizeof(WasmFunction));
 
         mod->export_count = counts.export_count;
-        mod->exports = (counts.export_count > 0)
-            ? static_cast<WasmExportEntry *>(pool_->Allocate(counts.export_count * sizeof(WasmExportEntry)))
+        mod->exports = counts.export_count > 0
+            ? static_cast<WasmExportEntry*>(pool->Allocate(counts.export_count * sizeof(WasmExportEntry)))
             : nullptr;
         if (counts.export_count > 0 && !mod->exports) return WasmResult::kErrorOutOfMemory;
         if (mod->exports) std::memset(mod->exports, 0, counts.export_count * sizeof(WasmExportEntry));
 
         mod->import_count = counts.import_count;
-        mod->imports = (counts.import_count > 0)
-            ? static_cast<WasmImportEntry *>(pool_->Allocate(counts.import_count * sizeof(WasmImportEntry)))
+        mod->imports = counts.import_count > 0
+            ? static_cast<WasmImportEntry*>(pool->Allocate(counts.import_count * sizeof(WasmImportEntry)))
             : nullptr;
         if (counts.import_count > 0 && !mod->imports) return WasmResult::kErrorOutOfMemory;
         if (mod->imports) std::memset(mod->imports, 0, counts.import_count * sizeof(WasmImportEntry));
 
         mod->global_count = counts.global_count;
-        mod->globals = (counts.global_count > 0)
-            ? static_cast<WasmGlobal *>(pool_->Allocate(counts.global_count * sizeof(WasmGlobal)))
+        mod->globals = counts.global_count > 0
+            ? static_cast<WasmGlobal*>(pool->Allocate(counts.global_count * sizeof(WasmGlobal)))
             : nullptr;
         if (counts.global_count > 0 && !mod->globals) return WasmResult::kErrorOutOfMemory;
         if (mod->globals) {
@@ -2014,37 +2386,37 @@ namespace embwasm {
             for (std::size_t g = 0; g < counts.global_count; ++g) mod->globals[g].init_global_ref = 0xFFFFFFFFu;
         }
 
-        mod->linear_memory_ptr = nullptr;
-        mod->linear_memory_size = 0;
-        mod->linear_memory_capacity = 0;
+        mod->linear_memory_ptr       = nullptr;
+        mod->linear_memory_size      = 0;
+        mod->linear_memory_capacity  = 0;
         mod->max_linear_memory_pages = 0;
-        mod->is_memory_shared = false;
+        mod->is_memory_shared        = false;
 
         mod->table_capacity = counts.table_count;
-        mod->table_count = 0;
+        mod->table_count    = 0;
         if (counts.table_count > 0) {
-            mod->tables              = static_cast<uint32_t **>(pool_->Allocate(counts.table_count * sizeof(uint32_t *)));
-            mod->table_sizes         = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
-            mod->table_max_sizes     = static_cast<uint32_t *>(pool_->Allocate(counts.table_count * sizeof(uint32_t)));
-            mod->table_types         = static_cast<WasmType *>(pool_->Allocate(counts.table_count * sizeof(WasmType)));
-            mod->is_table_shared     = static_cast<bool *>(pool_->Allocate(counts.table_count * sizeof(bool)));
-            mod->table_import_modules     = static_cast<const char **>(pool_->Allocate(counts.table_count * sizeof(const char *)));
-            mod->table_import_module_lens = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
-            mod->table_import_fields      = static_cast<const char **>(pool_->Allocate(counts.table_count * sizeof(const char *)));
-            mod->table_import_field_lens  = static_cast<std::size_t *>(pool_->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->tables              = static_cast<uint32_t**>(pool->Allocate(counts.table_count * sizeof(uint32_t*)));
+            mod->table_sizes         = static_cast<std::size_t*>(pool->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_max_sizes     = static_cast<uint32_t*>(pool->Allocate(counts.table_count * sizeof(uint32_t)));
+            mod->table_types         = static_cast<WasmType*>(pool->Allocate(counts.table_count * sizeof(WasmType)));
+            mod->is_table_shared     = static_cast<bool*>(pool->Allocate(counts.table_count * sizeof(bool)));
+            mod->table_import_modules     = static_cast<const char**>(pool->Allocate(counts.table_count * sizeof(const char*)));
+            mod->table_import_module_lens = static_cast<std::size_t*>(pool->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_import_fields      = static_cast<const char**>(pool->Allocate(counts.table_count * sizeof(const char*)));
+            mod->table_import_field_lens  = static_cast<std::size_t*>(pool->Allocate(counts.table_count * sizeof(std::size_t)));
             if (!mod->tables || !mod->table_sizes || !mod->table_max_sizes || !mod->table_types ||
                 !mod->is_table_shared || !mod->table_import_modules || !mod->table_import_module_lens ||
                 !mod->table_import_fields || !mod->table_import_field_lens) {
                 return WasmResult::kErrorOutOfMemory;
             }
-            std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t *));
+            std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t*));
             std::memset(mod->table_sizes, 0, counts.table_count * sizeof(std::size_t));
             for (std::size_t i = 0; i < counts.table_count; ++i) mod->table_max_sizes[i] = 0xFFFFFFFF;
             std::memset(mod->table_types, 0, counts.table_count * sizeof(WasmType));
             std::memset(mod->is_table_shared, 0, counts.table_count * sizeof(bool));
-            std::memset(mod->table_import_modules, 0, counts.table_count * sizeof(const char *));
+            std::memset(mod->table_import_modules, 0, counts.table_count * sizeof(const char*));
             std::memset(mod->table_import_module_lens, 0, counts.table_count * sizeof(std::size_t));
-            std::memset(mod->table_import_fields, 0, counts.table_count * sizeof(const char *));
+            std::memset(mod->table_import_fields, 0, counts.table_count * sizeof(const char*));
             std::memset(mod->table_import_field_lens, 0, counts.table_count * sizeof(std::size_t));
         } else {
             mod->tables = nullptr; mod->table_sizes = nullptr; mod->table_max_sizes = nullptr;
@@ -2054,19 +2426,19 @@ namespace embwasm {
         }
 
         mod->data_segment_capacity = counts.data_count;
-        mod->data_segment_count = 0;
+        mod->data_segment_count    = 0;
         if (counts.data_count > 0) {
-            mod->data_segments          = static_cast<const uint8_t **>(pool_->Allocate(counts.data_count * sizeof(const uint8_t *)));
-            mod->data_segment_sizes     = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_dropped   = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
-            mod->data_segment_offsets              = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_offset_global_refs   = static_cast<uint32_t *>(pool_->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_is_active            = static_cast<bool *>(pool_->Allocate(counts.data_count * sizeof(bool)));
+            mod->data_segments                 = static_cast<const uint8_t**>(pool->Allocate(counts.data_count * sizeof(const uint8_t*)));
+            mod->data_segment_sizes            = static_cast<uint32_t*>(pool->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_dropped          = static_cast<bool*>(pool->Allocate(counts.data_count * sizeof(bool)));
+            mod->data_segment_offsets          = static_cast<uint32_t*>(pool->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_offset_global_refs = static_cast<uint32_t*>(pool->Allocate(counts.data_count * sizeof(uint32_t)));
+            mod->data_segment_is_active        = static_cast<bool*>(pool->Allocate(counts.data_count * sizeof(bool)));
             if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped ||
                 !mod->data_segment_offsets || !mod->data_segment_offset_global_refs || !mod->data_segment_is_active) {
                 return WasmResult::kErrorOutOfMemory;
             }
-            std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t *));
+            std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t*));
             std::memset(mod->data_segment_sizes, 0, counts.data_count * sizeof(uint32_t));
             std::memset(mod->data_segment_dropped, 0, counts.data_count * sizeof(bool));
             std::memset(mod->data_segment_offsets, 0, counts.data_count * sizeof(uint32_t));
@@ -2075,26 +2447,25 @@ namespace embwasm {
         } else {
             mod->data_segments = nullptr; mod->data_segment_sizes = nullptr;
             mod->data_segment_dropped = nullptr; mod->data_segment_offsets = nullptr;
-            mod->data_segment_offset_global_refs = nullptr;
-            mod->data_segment_is_active = nullptr;
+            mod->data_segment_offset_global_refs = nullptr; mod->data_segment_is_active = nullptr;
         }
 
         mod->elem_segment_capacity = counts.elem_count;
-        mod->elem_segment_count = 0;
+        mod->elem_segment_count    = 0;
         if (counts.elem_count > 0) {
-            mod->elem_segments              = static_cast<uint32_t **>(pool_->Allocate(counts.elem_count * sizeof(uint32_t *)));
-            mod->elem_segment_sizes         = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_dropped       = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
-            mod->elem_segment_table_indices = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_offsets              = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_offset_global_refs   = static_cast<uint32_t *>(pool_->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_is_active            = static_cast<bool *>(pool_->Allocate(counts.elem_count * sizeof(bool)));
+            mod->elem_segments              = static_cast<uint32_t**>(pool->Allocate(counts.elem_count * sizeof(uint32_t*)));
+            mod->elem_segment_sizes         = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_dropped       = static_cast<bool*>(pool->Allocate(counts.elem_count * sizeof(bool)));
+            mod->elem_segment_table_indices = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_offsets              = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_offset_global_refs   = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
+            mod->elem_segment_is_active            = static_cast<bool*>(pool->Allocate(counts.elem_count * sizeof(bool)));
             if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped ||
                 !mod->elem_segment_table_indices || !mod->elem_segment_offsets ||
                 !mod->elem_segment_offset_global_refs || !mod->elem_segment_is_active) {
                 return WasmResult::kErrorOutOfMemory;
             }
-            std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t *));
+            std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t*));
             std::memset(mod->elem_segment_sizes, 0, counts.elem_count * sizeof(uint32_t));
             std::memset(mod->elem_segment_dropped, 0, counts.elem_count * sizeof(bool));
             std::memset(mod->elem_segment_table_indices, 0, counts.elem_count * sizeof(uint32_t));
@@ -2107,555 +2478,57 @@ namespace embwasm {
             mod->elem_segment_offsets = nullptr; mod->elem_segment_offset_global_refs = nullptr;
             mod->elem_segment_is_active = nullptr;
         }
+        return WasmResult::kOk;
+    }
 
-        // =========================================================
-        // Pass 2: セクションを充填する。
-        // =========================================================
-        WasmTypeSignature **signatures_ = mod->signatures;
-        std::size_t sig_idx = 0;
-        WasmFunction *functions = mod->functions;
-        std::size_t func_idx = 0;
-        WasmExportEntry *exports = mod->exports;
-        std::size_t exp_idx = 0;
-        WasmImportEntry *imports_arr = mod->imports;
-        std::size_t imp_idx = 0;
-        WasmGlobal *globals = mod->globals;
-        std::size_t glob_idx = 0;
-        uint32_t **tables = mod->tables;
-        std::size_t *table_sizes = mod->table_sizes;
-        uint32_t *table_max_sizes = mod->table_max_sizes;
-        WasmType *table_types_ = mod->table_types;
-        std::size_t &table_count_ = mod->table_count;
-        bool *is_table_shared_ = mod->is_table_shared;
-        const uint8_t **data_segments_ = mod->data_segments;
-        uint32_t *data_segment_sizes_ = mod->data_segment_sizes;
-        bool *data_segment_dropped_ = mod->data_segment_dropped;
-        std::size_t &data_segment_count_ = mod->data_segment_count;
-        uint32_t **elem_segments_ = mod->elem_segments;
-        uint32_t *elem_segment_sizes_ = mod->elem_segment_sizes;
-        bool *elem_segment_dropped_ = mod->elem_segment_dropped;
-        std::size_t &elem_segment_count_ = mod->elem_segment_count;
-        int32_t &start_function_index_ = mod->start_function_index;
+    static WasmResult FillSections(WasmModuleInstance* mod, WasmMemoryPool* pool,
+                                    const uint8_t* binary, std::size_t size) noexcept {
+        ParseContext ctx = {};
+        ctx.mod  = mod;
+        ctx.pool = pool;
 
-        const uint8_t *ptr = binary;
-        const uint8_t *end = binary + size;
-
-        uint32_t code_index_offset = 0; // インポート関数の数。Code sectionの関数インデックスはインポート関数の後に続きます。
+        const uint8_t* ptr = binary;
+        const uint8_t* end = binary + size;
 
         while (ptr < end) {
-            uint8_t section_id = *ptr++;
+            uint8_t  section_id   = *ptr++;
             uint32_t section_size = DecodeVarUint32(ptr, end);
             if (section_size > static_cast<std::size_t>(end - ptr)) return WasmResult::kErrorParseOthers;
-            const uint8_t *section_end = ptr + section_size;
+            const uint8_t* section_end = ptr + section_size;
 
+            WasmResult r = WasmResult::kOk;
             switch (section_id) {
-                case 1: {
-                    // Type Section (型定義)
-                    uint32_t type_count = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < type_count; ++i) {
-                        if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                        uint8_t form = *ptr++;
-                        if (form != 0x60) {
-                            // 0x60 = Function Type
-                            return WasmResult::kErrorParseUnknownSection;
-                        }
-
-                        uint32_t param_count = DecodeVarUint32(ptr, section_end);
-                        if (param_count > kWasmMaxParamCount) {
-                            return WasmResult::kErrorValidationFailed;
-                        }
-                        const uint8_t *params_start = ptr;
-                        for (uint32_t p = 0; p < param_count; ++p) {
-                            if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                            ++ptr;
-                        }
-
-                        uint32_t result_count = DecodeVarUint32(ptr, section_end);
-                        if (result_count > kWasmMaxResultCount) {
-                            return WasmResult::kErrorValidationFailed;
-                        }
-                        const uint8_t *results_start = ptr;
-                        for (uint32_t r = 0; r < result_count; ++r) {
-                            if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                            ++ptr;
-                        }
-
-                        if (sig_idx >= mod->signature_count) {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-                        std::size_t sig_size = WasmTypeSignature::ByteSize(param_count, result_count);
-                        auto *sig = static_cast<WasmTypeSignature *>(pool_->Allocate(sig_size));
-                        if (!sig) return WasmResult::kErrorOutOfMemory;
-                        std::memset(sig, 0, sig_size);
-                        sig->param_count = static_cast<uint16_t>(param_count);
-                        sig->result_count = static_cast<uint16_t>(result_count);
-                        for (uint32_t p = 0; p < param_count; ++p)
-                            sig->SetParam(p, static_cast<WasmType>(params_start[p]));
-                        for (uint32_t r = 0; r < result_count; ++r)
-                            sig->SetResult(r, static_cast<WasmType>(results_start[r]));
-                        signatures_[sig_idx++] = sig;
-                    }
-                    break;
-                }
-
-                case 2: {
-                    // Import Section: WasmImportEntry の生成のみ。
-                    // 各要素へのメタデータ設定・リンク処理はすべて ResolveImports() で行う。
-                    uint32_t import_count = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < import_count; ++i) {
-                        uint32_t mod_len = DecodeVarUint32(ptr, section_end);
-                        if (mod_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParseOthers;
-                        const char *mod_name = reinterpret_cast<const char *>(ptr);
-                        ptr += mod_len;
-
-                        uint32_t field_len = DecodeVarUint32(ptr, section_end);
-                        if (field_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParseOthers;
-                        const char *field_name = reinterpret_cast<const char *>(ptr);
-                        ptr += field_len;
-
-                        if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                        uint8_t kind = *ptr++;
-
-                        WasmImportEntry entry = {};
-                        entry.module_name = mod_name;
-                        entry.module_name_len = mod_len;
-                        entry.field_name = field_name;
-                        entry.field_name_len = field_len;
-                        entry.kind = kind;
-
-                        switch (kind) {
-                            case 0x00: {
-                                uint32_t type_idx = DecodeVarUint32(ptr, section_end);
-                                if (func_idx >= mod->function_count) return WasmResult::kErrorOutOfMemory;
-                                entry.index = static_cast<uint32_t>(func_idx);
-                                entry.desc.func.type_index = type_idx;
-                                func_idx++;
-                                code_index_offset++;
-                                break;
-                            }
-                            case 0x01: {
-                                uint8_t elem_type = *ptr++;
-                                uint8_t flags = *ptr++;
-                                uint32_t min_size = DecodeVarUint32(ptr, section_end);
-                                uint32_t max_size = 0xFFFFFFFF;
-                                if (flags & 0x01) max_size = DecodeVarUint32(ptr, section_end);
-                                entry.index = static_cast<uint32_t>(table_count_);
-                                entry.desc.table.elem_type = elem_type;
-                                entry.desc.table.min_size = min_size;
-                                entry.desc.table.max_size = max_size;
-                                if (table_count_ < mod->table_capacity) {
-                                    table_count_++;
-                                }
-                                break;
-                            }
-                            case 0x02: {
-                                uint8_t flags = *ptr++;
-                                uint32_t min_pages = DecodeVarUint32(ptr, section_end);
-                                uint32_t max_pages = 0;
-                                if (flags & 0x01) max_pages = DecodeVarUint32(ptr, section_end);
-                                entry.index = 0;
-                                entry.desc.mem.min_pages = min_pages;
-                                entry.desc.mem.max_pages = max_pages;
-                                break;
-                            }
-                            case 0x03: {
-                                if (ptr + 2 > section_end) return WasmResult::kErrorParseOthers;
-                                uint8_t value_type = *ptr++;
-                                bool is_mutable = (*ptr++ != 0);
-                                entry.index = static_cast<uint32_t>(glob_idx);
-                                entry.desc.global.value_type = value_type;
-                                entry.desc.global.is_mutable = is_mutable;
-                                if (glob_idx < mod->global_count) {
-                                    glob_idx++;
-                                }
-                                break;
-                            }
-                            default:
-                                break;
-                        }
-
-                        if (imports_arr && imp_idx < mod->import_count) {
-                            imports_arr[imp_idx++] = entry;
-                        }
-                    }
-                    break;
-                }
-
-                case 3: {
-                    // Function Section (関数と型のマッピング)
-                    uint32_t num_funcs = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < num_funcs; ++i) {
-                        uint32_t type_idx = DecodeVarUint32(ptr, section_end);
-
-                        if (func_idx >= mod->function_count) {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-                        functions[func_idx].kind = WasmFunctionKind::kLocal;
-                        functions[func_idx].type_index = type_idx;
-                        functions[func_idx].local.code_ptr = nullptr;
-                        functions[func_idx].local.code_size = 0;
-                        functions[func_idx].local.local_count = 0;
-                        func_idx++;
-                    }
-                    break;
-                }
-
-                case 7: {
-                    // Export Section (公開関数)
-                    uint32_t num_exports = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < num_exports; ++i) {
-                        uint32_t name_len = DecodeVarUint32(ptr, section_end);
-                        if (name_len > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParseOthers;
-                        const char *name = reinterpret_cast<const char *>(ptr);
-                        ptr += name_len;
-
-                        if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                        uint8_t kind = *ptr++;
-                        uint32_t idx = DecodeVarUint32(ptr, section_end);
-
-                        if (exp_idx >= mod->export_count) {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-                        exports[exp_idx] = {name, name_len, kind, idx};
-                        exp_idx++;
-                    }
-                    break;
-                }
-
-                case 6: {
-                    // Global Section
-                    uint32_t num_globals = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < num_globals; ++i) {
-                        if (glob_idx >= mod->global_count) {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-
-                        WasmType type = static_cast<WasmType>(*ptr++);
-                        bool is_mutable = (*ptr++ != 0);
-
-                        // Init expression
-                        uint8_t opcode = *ptr++;
-                        WasmValue val;
-                        uint32_t init_ref = 0xFFFFFFFFu;
-                        if (opcode == 0x41) {
-                            // i32.const
-                            val.value.i32 = DecodeVarInt32(ptr, section_end);
-                        } else if (opcode == 0x42) {
-                            // i64.const
-                            val.value.i64 = DecodeVarInt64(ptr, section_end);
-                        } else if (opcode == 0x43) {
-                            // f32.const
-                            if (4 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParseOthers;
-                            std::memcpy(&val.value.f32, ptr, 4);
-                            ptr += 4;
-                        } else if (opcode == 0x44) {
-                            // f64.const
-                            if (8 > static_cast<std::size_t>(section_end - ptr)) return WasmResult::kErrorParseOthers;
-                            std::memcpy(&val.value.f64, ptr, 8);
-                            ptr += 8;
-                        } else if (opcode == 0x23) {
-                            // global.get: パース時の値をコピーするが、インポート解決後に再評価が必要なので ref を記録する。
-                            uint32_t idx = DecodeVarUint32(ptr, section_end);
-                            if (idx >= glob_idx) return WasmResult::kErrorParseOthers;
-                            val = globals[idx].value;
-                            init_ref = idx;
-                        } else if (opcode == 0xD0) {
-                            // ref.null
-                            int32_t heap_type = DecodeVarInt32(ptr, section_end);
-                            (void) heap_type;
-                            val.value.i64 = -1;
-                        } else if (opcode == 0xD2) {
-                            // ref.func
-                            uint32_t ref_func_idx = DecodeVarUint32(ptr, section_end);
-                            val.value.i64 = static_cast<int64_t>(ref_func_idx);
-                        } else {
-                            // 未サポートまたは無効な初期化式
-                            return WasmResult::kErrorParseOthers;
-                        }
-                        if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParseOthers; // end
-
-                        globals[glob_idx++] = {type, is_mutable, val, init_ref};
-                    }
-                    break;
-                }
-
-                case 4: {
-                    // Table Section (間接関数テーブル)
-                    // メタデータのみ記録。実際のテーブルデータ確保は InstantiateModules() で行う。
-                    uint32_t num_tables = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < num_tables; ++i) {
-                        uint8_t elem_type = *ptr++;
-                        if (elem_type != 0x70 && elem_type != 0x6F) return WasmResult::kErrorParseOthers;
-
-                        uint8_t flags = *ptr++;
-                        uint32_t min_size = DecodeVarUint32(ptr, section_end);
-                        uint32_t max_size = 0xFFFFFFFF;
-                        if (flags & 0x01) {
-                            max_size = DecodeVarUint32(ptr, section_end);
-                        }
-
-                        if (table_count_ < mod->table_capacity) {
-                            table_sizes[table_count_] = min_size;
-                            table_max_sizes[table_count_] = max_size;
-                            table_types_[table_count_] = static_cast<WasmType>(elem_type);
-                            tables[table_count_] = nullptr;
-                            is_table_shared_[table_count_] = false;
-                            mod->table_import_modules[table_count_] = nullptr;
-                            mod->table_import_fields[table_count_] = nullptr;
-                            table_count_++;
-                        } else {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-                    }
-                    break;
-                }
-
-                case 5: {
-                    // Memory Section
-                    // メタデータのみ記録。実際のメモリ確保は InstantiateModules() で行う。
-                    uint32_t mem_count = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < mem_count; ++i) {
-                        uint8_t flags = *ptr++;
-                        uint32_t initial_pages = DecodeVarUint32(ptr, section_end);
-                        uint32_t maximum_pages = 0;
-                        if (flags & 0x01) {
-                            maximum_pages = DecodeVarUint32(ptr, section_end);
-                        }
-                        mod->has_memory = true;
-                        mod->memory_is_imported = false;
-                        mod->memory_min_pages = initial_pages;
-                        mod->max_linear_memory_pages = maximum_pages;
-                    }
-                    break;
-                }
-
-                case 11: {
-                    // Data Section
-                    // ポインタ・サイズ・オフセット・アクティブフラグを記録する。
-                    // 線形メモリへの適用は InstantiateModules() で行う。
-                    uint32_t data_count = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < data_count; ++i) {
-                        uint32_t seg_flags = DecodeVarUint32(ptr, section_end);
-                        bool is_passive = (seg_flags == 1) || (seg_flags == 3);
-
-                        uint32_t offset = 0;
-                        if (!is_passive) {
-                            if (seg_flags == 2) {
-                                /* uint32_t mem_idx = */
-                                DecodeVarUint32(ptr, section_end);
-                            }
-                            if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                            uint8_t opcode = *ptr++;
-                            uint32_t offset_global_ref = 0xFFFFFFFFu;
-                            if (opcode == 0x41) {
-                                // i32.const
-                                offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
-                            } else if (opcode == 0x23) {
-                                // global.get
-                                uint32_t gidx = DecodeVarUint32(ptr, section_end);
-                                offset_global_ref = gidx;
-                                if (gidx < glob_idx) {
-                                    offset = static_cast<uint32_t>(globals[gidx].value.value.i32);
-                                }
-                            } else {
-                                return WasmResult::kErrorParseOthers;
-                            }
-                            if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParseOthers;
-                            if (mod->data_segment_offset_global_refs) {
-                                mod->data_segment_offset_global_refs[data_segment_count_] = offset_global_ref;
-                            }
-                        }
-
-                        uint32_t data_size = DecodeVarUint32(ptr, section_end);
-                        if (data_size > static_cast<std::size_t>(section_end - ptr)) {
-                            return WasmResult::kErrorParseOthers;
-                        }
-
-                        if (data_segment_count_ < mod->data_segment_capacity) {
-                            data_segments_[data_segment_count_] = ptr;
-                            data_segment_sizes_[data_segment_count_] = data_size;
-                            data_segment_dropped_[data_segment_count_] = false;
-                            mod->data_segment_offsets[data_segment_count_] = offset;
-                            mod->data_segment_is_active[data_segment_count_] = !is_passive;
-                            data_segment_count_++;
-                        } else {
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-                        ptr += data_size;
-                    }
-                    break;
-                }
-
+                case 1:  r = ParseTypeSection(ctx, ptr, section_end);     break;
+                case 2:  r = ParseImportSection(ctx, ptr, section_end);   break;
+                case 3:  r = ParseFunctionSection(ctx, ptr, section_end); break;
+                case 4:  r = ParseTableSection(ctx, ptr, section_end);    break;
+                case 5:  r = ParseMemorySection(ctx, ptr, section_end);   break;
+                case 6:  r = ParseGlobalSection(ctx, ptr, section_end);   break;
+                case 7:  r = ParseExportSection(ctx, ptr, section_end);   break;
                 case 8: {
-                    // Start Section
-                    uint32_t func_idx = DecodeVarUint32(ptr, section_end);
-                    start_function_index_ = static_cast<int32_t>(func_idx);
+                    uint32_t start_func = DecodeVarUint32(ptr, section_end);
+                    mod->start_function_index = static_cast<int32_t>(start_func);
                     break;
                 }
-
-                case 9: {
-                    // Element Section (テーブル初期値)
-                    uint32_t num_elems = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < num_elems; ++i) {
-                        if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                        uint32_t flags = DecodeVarUint32(ptr, section_end);
-
-                        uint32_t table_idx = 0;
-                        bool has_offset = false;
-
-                        if ((flags & 1) == 0) {
-                            // アクティブ
-                            has_offset = true;
-                            if ((flags & 2) == 2) {
-                                table_idx = DecodeVarUint32(ptr, section_end);
-                            }
-                        } else {
-                            // パッシブ・宣言的
-                            if ((flags & 2) == 2) {
-                                uint8_t ref_type = *ptr++;
-                                (void) ref_type;
-                            } else {
-                                uint8_t kind = *ptr++;
-                                (void) kind;
-                            }
-                        }
-
-
-                        uint32_t offset = 0;
-                        uint32_t offset_global_ref = 0xFFFFFFFFu;
-                        if (has_offset) {
-                            uint8_t opcode = *ptr++;
-                            if (opcode == 0x41) {
-                                // i32.const
-                                offset = static_cast<uint32_t>(DecodeVarInt32(ptr, section_end));
-                            } else if (opcode == 0x23) {
-                                // global.get
-                                uint32_t global_idx = DecodeVarUint32(ptr, section_end);
-                                offset_global_ref = global_idx;
-                                if (global_idx < glob_idx) {
-                                    offset = globals[global_idx].value.value.i32;
-                                }
-                            } else {
-                                return WasmResult::kErrorParseOthers;
-                            }
-                            if (ptr >= section_end || *ptr++ != 0x0B) return WasmResult::kErrorParseOthers; // end
-                        }
-
-                        if (has_offset && (flags & 2) == 2) {
-                            if (ptr >= section_end) return WasmResult::kErrorParseOthers;
-                            uint8_t elemkind_or_reftype = *ptr++;
-                            (void) elemkind_or_reftype;
-                        }
-
-                        uint32_t num_funcs = DecodeVarUint32(ptr, section_end);
-                        uint32_t *elem_arr = nullptr;
-                        if (num_funcs > 0) {
-                            elem_arr = static_cast<uint32_t *>(pool_->Allocate(num_funcs * sizeof(uint32_t)));
-                            if (!elem_arr) {
-                                return WasmResult::kErrorOutOfMemory;
-                            }
-                        }
-
-                        // 関数インデックスを elem_arr に収集する（テーブルへの書き込みは InstantiateModules() で行う）
-                        if ((flags & 4) == 4) {
-                            // elem_exprs の配列
-                            for (uint32_t f = 0; f < num_funcs; ++f) {
-                                if (ptr >= section_end) {
-                                    if (elem_arr) pool_->Free(elem_arr);
-                                    return WasmResult::kErrorParseOthers;
-                                }
-                                uint8_t op = *ptr++;
-                                uint32_t val = 0xFFFFFFFF;
-                                if (op == 0xD2) {
-                                    // ref.func
-                                    val = DecodeVarUint32(ptr, section_end);
-                                } else if (op == 0xD0) {
-                                    // ref.null
-                                    uint8_t type = *ptr++;
-                                    (void) type;
-                                }
-                                if (ptr >= section_end || *ptr++ != 0x0B) {
-                                    if (elem_arr) pool_->Free(elem_arr);
-                                    return WasmResult::kErrorParseOthers;
-                                }
-                                if (elem_arr) elem_arr[f] = val;
-                            }
-                        } else {
-                            // 関数インデックスの配列
-                            for (uint32_t f = 0; f < num_funcs; ++f) {
-                                uint32_t fidx = DecodeVarUint32(ptr, section_end);
-                                if (elem_arr) elem_arr[f] = fidx;
-                            }
-                        }
-
-                        if (elem_segment_count_ < mod->elem_segment_capacity) {
-                            bool is_declarative = !has_offset && ((flags & 2) == 2);
-                            elem_segments_[elem_segment_count_] = elem_arr;
-                            elem_segment_sizes_[elem_segment_count_] = num_funcs;
-                            elem_segment_dropped_[elem_segment_count_] = is_declarative;
-                            mod->elem_segment_table_indices[elem_segment_count_] = table_idx;
-                            mod->elem_segment_offsets[elem_segment_count_] = offset;
-                            mod->elem_segment_offset_global_refs[elem_segment_count_] = offset_global_ref;
-                            mod->elem_segment_is_active[elem_segment_count_] = has_offset;
-                            elem_segment_count_++;
-                        } else {
-                            if (elem_arr) pool_->Free(elem_arr);
-                            return WasmResult::kErrorOutOfMemory;
-                        }
-                    }
-                    break;
-                }
-
-                case 10: {
-                    // Code Section (関数の実体)
-                    uint32_t code_count = DecodeVarUint32(ptr, section_end);
-                    for (uint32_t i = 0; i < code_count; ++i) {
-                        uint32_t body_size = DecodeVarUint32(ptr, section_end);
-                        if (body_size > static_cast<std::size_t>(section_end - ptr)) {
-                            return WasmResult::kErrorParseOthers;
-                        }
-                        const uint8_t *body_end = ptr + body_size;
-
-                        // ローカル変数の宣言数をパース (kMaxLocalDecls はロード時の上限、実行時は kMaxLocals)
-                        uint32_t local_decls = DecodeVarUint32(ptr, body_end);
-                        uint32_t local_count = 0;
-                        WasmType temp_types[kMaxLocalDecls];
-                        for (uint32_t j = 0; j < local_decls; ++j) {
-                            uint32_t count = DecodeVarUint32(ptr, body_end);
-                            if (ptr >= body_end) return WasmResult::kErrorParseOthers;
-                            uint8_t type_val = *ptr++;
-                            WasmType type = static_cast<WasmType>(type_val);
-                            for (uint32_t c = 0; c < count; ++c) {
-                                if (local_count >= kMaxLocalDecls) {
-                                    return WasmResult::kErrorOutOfMemory;
-                                }
-                                temp_types[local_count++] = type;
-                            }
-                        }
-
-                        uint32_t code_func_idx = code_index_offset + i;
-                        if (code_func_idx >= mod->function_count) {
-                            return WasmResult::kErrorParseOthers;
-                        }
-
-                        functions[code_func_idx].local.code_ptr = ptr;
-                        functions[code_func_idx].local.code_size = static_cast<uint32_t>(body_end - ptr);
-                        functions[code_func_idx].local.local_count = static_cast<uint16_t>(local_count);
-
-                        ptr = body_end;
-                    }
-                    break;
-                }
-
-                default:
-                    // 未知または不要なセクションはスキップ
-                    ptr = section_end;
-                    break;
+                case 9:  r = ParseElementSection(ctx, ptr, section_end);  break;
+                case 10: r = ParseCodeSection(ctx, ptr, section_end);     break;
+                case 11: r = ParseDataSection(ctx, ptr, section_end);     break;
+                default: ptr = section_end; break;
             }
+            if (r != WasmResult::kOk) return r;
             ptr = section_end;
         }
-
         return WasmResult::kOk;
+    }
+
+    WasmResult WasmEngine::ParseSections(WasmModuleInstance *mod, const uint8_t *binary, std::size_t size) noexcept {
+        if (!mod) return WasmResult::kErrorInvalidArgument;
+        SectionCounts counts = {};
+        WasmResult r = CountSectionEntries(binary, size, counts);
+        if (r != WasmResult::kOk) return r;
+        r = AllocateSectionBuffers(mod, pool_, counts);
+        if (r != WasmResult::kOk) return r;
+        return FillSections(mod, pool_, binary, size);
     }
 
     WasmResult WasmEngine::Execute(const char *module_name, std::size_t module_name_len, const char *func_name,
