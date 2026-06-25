@@ -157,6 +157,7 @@ struct WasmModuleInstance {
     std::size_t elem_segment_capacity;
 
     int32_t start_function_index; ///< Start セクションで指定された関数インデックス（-1 = なし）。
+    uint32_t self_index;          ///< modules_[] 上の自身のインデックス。EncodeFuncRef で使用。
 
     /// @brief 線形メモリの先頭ポインタを返します。
     uint8_t *GetLinearMemory() const noexcept {

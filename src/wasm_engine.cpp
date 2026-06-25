@@ -245,18 +245,12 @@ namespace embwasm {
         return decoded_value;
     }
 
-    static uint32_t EncodeFuncRef(WasmEngine *current_engine, WasmModuleInstance *current_mod,
+    static uint32_t EncodeFuncRef(WasmEngine * /*current_engine*/, WasmModuleInstance *current_mod,
                                   uint32_t func_idx) noexcept {
         if (func_idx == 0xFFFFFFFF) return 0xFFFFFFFF;
         if ((func_idx >> 16) != 0) return func_idx; // Already encoded
 
-        uint32_t mod_idx = 0;
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (current_engine->GetModuleInstanceById(static_cast<int32_t>(i)) == current_mod) {
-                mod_idx = static_cast<uint32_t>(i + 1);
-                break;
-            }
-        }
+        uint32_t mod_idx = current_mod->self_index + 1;
         return (mod_idx << 16) | (func_idx & 0xFFFF);
     }
 
@@ -365,6 +359,7 @@ namespace embwasm {
         m.elem_segment_count = 0;
         m.elem_segment_capacity = 0;
         m.start_function_index = -1;
+        m.self_index = 0;
     }
 
     static inline bool StrEq(const char *a, std::size_t a_len, const char *b, std::size_t b_len) noexcept {
@@ -1077,6 +1072,7 @@ namespace embwasm {
         // ParseSections中のEncodeFuncRefがこのモジュールのスロットを見つけられるよう先にtrueにする。
         // 失敗時はFreeModuleInstance()でmod本体ごと解放される。
         mod->is_active = true;
+        mod->self_index = static_cast<uint32_t>(slot_idx);
         mod->imports_resolved = false;
         if (module_name && module_name_len > 0) {
             std::size_t nlen = module_name_len < sizeof(mod->name) - 1 ? module_name_len : sizeof(mod->name) - 1;
@@ -1724,10 +1720,13 @@ namespace embwasm {
                     DecodeVarInt32(ip, limit); // heap type
                     stack_depth++;
                     break;
-                case 0xD2: // ref.func
-                    DecodeVarUint32(ip, limit);
+                case 0xD2: { // ref.func
+                    uint32_t ref_func_idx = DecodeVarUint32(ip, limit);
+                    if (ref_func_idx >= function_count) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
+                    if (ref_func_idx >= kWasmMaxFuncRefIndex) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     stack_depth++;
                     break;
+                }
 
                 case 0xFC: {
                     // 拡張命令
@@ -1874,8 +1873,9 @@ namespace embwasm {
             uint32_t *elems = mod->elem_segments[i];
             uint32_t seg_size = mod->elem_segment_sizes[i];
             for (uint32_t f = 0; f < seg_size; ++f) {
-                if (elems && elems[f] != 0xFFFFFFFF && elems[f] >= function_count) {
-                    return WasmResult::kErrorValidationFailed;
+                if (elems && elems[f] != 0xFFFFFFFF) {
+                    if (elems[f] >= function_count) return WasmResult::kErrorValidationFailed;
+                    if (elems[f] >= kWasmMaxFuncRefIndex) return WasmResult::kErrorValidationFailed;
                 }
             }
         }

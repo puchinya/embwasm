@@ -14,6 +14,10 @@ static constexpr uint32_t kWasmValidationMaxLabelDepth = 0xFFFF;
 static constexpr uint32_t kWasmValidationMaxStack      = 0xFFFF;
 static constexpr uint32_t kWasmValidationMaxLocals     = 0xFFFF;
 
+// EncodeFuncRef が下位16ビットに func_idx をエンコードするため、
+// funcref として使える関数インデックスの上限（0x10000 未満）
+static constexpr uint32_t kWasmMaxFuncRefIndex = 0xFFFF;
+
 } // namespace embwasm
 
 #endif // EMBWASM_WASM_LIMITS_HPP_
