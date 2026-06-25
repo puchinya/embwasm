@@ -229,6 +229,17 @@ public:
     /// @return 実行結果を示す WasmResult。
     WasmResult Execute(const char* module_name, std::size_t module_name_len, const char* func_name, std::size_t func_name_len, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
 
+    /// @brief 事前解決済みのインスタンス ID と関数インデックスで直接実行します。
+    /// Execute() のモジュール名・関数名ルックアップと InstantiateModules() を省略するため、
+    /// 同じ関数を繰り返し呼ぶホットパスで使用してください。
+    /// @param instance_id   LoadModule() の戻り値。
+    /// @param func_idx      GetExportFunctionIndex() の戻り値。
+    /// @param args          引数配列（なければ nullptr）。
+    /// @param arg_count     引数の個数。
+    /// @param results       結果格納配列（なければ nullptr）。
+    /// @param result_count  戻り値の個数。
+    WasmResult ExecuteByIndex(int32_t instance_id, int32_t func_idx, const WasmValue* args, uint32_t arg_count, WasmValue* results, uint32_t result_count) noexcept;
+
     /// @brief 指定モジュールのエクスポート関数インデックスを返します。
     /// @param module_name      モジュール名。
     /// @param module_name_len  モジュール名の長さ（バイト数）。
