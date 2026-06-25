@@ -2719,7 +2719,7 @@ namespace embwasm {
 
         exec_ctx->stack_top = 0;
         for (uint32_t i = 0; i < arg_count; ++i) {
-            if (exec_ctx->stack_top >= kWasmStackSize) {
+            if (exec_ctx->stack_top >= exec_ctx->stack_size) {
                 exec_ctx->state = ThreadState::kTerminated;
                 return WasmResult::kErrorExecuteTrapStackOverflow;
             }
@@ -2816,7 +2816,7 @@ namespace embwasm {
 
         exec_ctx->stack_top = 0;
         for (uint32_t i = 0; i < arg_count; ++i) {
-            if (exec_ctx->stack_top >= kWasmStackSize) {
+            if (exec_ctx->stack_top >= exec_ctx->stack_size) {
                 exec_ctx->state = ThreadState::kTerminated;
                 return WasmResult::kErrorExecuteTrapStackOverflow;
             }

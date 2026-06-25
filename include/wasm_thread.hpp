@@ -30,9 +30,9 @@ struct WasmFrame {
     const uint8_t* ip;        ///< 現在のインストラクションポインタ。
     const uint8_t* limit;     ///< バイトコードの終端ポインタ。
     WasmValue* locals;        ///< `WasmThreadContext::stack` 内のローカル変数スライスへのポインタ。
-    uint32_t total_locals;    ///< 引数＋ローカル変数の合計数。
+    uint16_t total_locals;    ///< 引数＋ローカル変数の合計数。
+    uint16_t label_capacity;      ///< このフレームに割り当てたラベルスロット数。
     WasmLabel* labels;            ///< `WasmThreadContext::labels_pool` 内のスライスへのポインタ。
-    uint32_t label_capacity;      ///< このフレームに割り当てたラベルスロット数。
     std::size_t label_stack_top;  ///< ラベルスタックの現在深さ。
 };
 
