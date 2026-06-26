@@ -1,6 +1,5 @@
 #include <cstddef>
 #include <gtest/gtest.h>
-#include "wasm_thread.hpp"
 #include "wasm_engine.hpp"
 #include "wasm_memory_pool.hpp"
 #include "embwasm_hostmodule_thread.hpp"

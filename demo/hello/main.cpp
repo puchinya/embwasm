@@ -22,7 +22,7 @@ int main() {
     embwasm::WasmEngineConfig config;
     config.stack_size = 512;
     config.call_stack_size = 32;
-    config.labels_pool_size = 512;
+    config.labels_pool_size = 128;
     engine.Init(pool, config);
 
     // 5. WASMバイナリのロード

@@ -19,7 +19,6 @@ endif()
 add_library(embwasm
     wasm_memory_pool.cpp
     wasm_engine.cpp
-    wasm_thread.cpp
     hostmodule/threads/embwasm_hostmodule_thread.cpp
     ${PLATFORM_SRC}
 )

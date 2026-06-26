@@ -2,7 +2,6 @@
 #include <iostream>
 #include "embwasm.hpp"
 #include "main_wasm.hpp"
-#include "wasm_thread.hpp"
 #include "embwasm_hostmodule_thread.hpp"
 
 constexpr size_t kMemoryPoolSize = 1 << 20;

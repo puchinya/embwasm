@@ -1677,7 +1677,6 @@ bool ValidateHostFunctionType(HostFunctionId id, const WasmTypeSignature* sig) n
 
 #include "wasm_api_static.hpp"
 #include "wasm_engine.hpp"
-#include "wasm_thread.hpp"
 {include_directives_str}
 #include <cstring>
 

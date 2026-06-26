@@ -23,7 +23,6 @@
 #include "embwasm_hostmodule_socket.hpp"
 #include "wasi_socket_platform.hpp"
 #include "wasm_engine.hpp"
-#include "wasm_thread.hpp"
 
 #include <cstdint>
 #include <cstring>

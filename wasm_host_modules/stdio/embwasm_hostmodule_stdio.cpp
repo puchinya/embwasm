@@ -117,8 +117,10 @@ WasmResult puts(
     uint32_t s_len,
     int32_t& out_result) noexcept
 {
-    uint8_t* mem_base = engine.GetLinearMemory();
-    size_t mem_size = engine.GetLinearMemorySize();
+    uint8_t* mem_base;
+    size_t mem_size;
+
+    GetLinearMemoryForHostApi(engine, mem_base, mem_size);
 
     ptrdiff_t offset = reinterpret_cast<const uint8_t*>(s) - mem_base;
     if (offset < 0 || static_cast<size_t>(offset) + s_len > mem_size) {

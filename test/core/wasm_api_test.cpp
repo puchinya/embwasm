@@ -2,7 +2,6 @@
 #include <gtest/gtest.h>
 #include "wasm_api_static.hpp"
 #include "wasm_engine.hpp"
-#include "wasm_thread.hpp"
 
 namespace embwasm {
 extern int32_t g_last_printed_value;

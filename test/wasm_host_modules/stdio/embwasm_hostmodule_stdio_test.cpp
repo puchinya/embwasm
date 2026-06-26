@@ -2,7 +2,6 @@
 #include <gtest/gtest.h>
 #include "wasm_api_static.hpp"
 #include "wasm_engine.hpp"
-#include "wasm_thread.hpp"
 
 constexpr std::size_t kMemoryPoolSize = 384 * 1024 * 1024;
 

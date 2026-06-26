@@ -1,8 +1,7 @@
 #ifndef EMBWASM_HOSTMODULE_STDIO_HPP_
 #define EMBWASM_HOSTMODULE_STDIO_HPP_
 
-#include "wasm_types.hpp"
-#include "wasm_engine.hpp"
+#include "embwasm.hpp"
 
 namespace embwasm {
 namespace hostmodules {
