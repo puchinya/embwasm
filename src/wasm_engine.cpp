@@ -2567,85 +2567,7 @@ namespace embwasm {
             return WasmResult::kErrorFunctionNotFound;
         }
 
-#if EMBWASM_ENABLE_MULTITHREADING
-        // メインスレッドを使って実行
-        uint32_t thread_id = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(func_idx));
-        if (thread_id == 0) return WasmResult::kErrorOutOfMemory;
-
-        WasmThreadContext *exec_ctx = scheduler_.GetMainThreadContext();
-        if (!exec_ctx) return WasmResult::kErrorOutOfMemory;
-
-        exec_ctx->stack_top = 0;
-        for (uint32_t i = 0; i < arg_count; ++i) {
-            if (exec_ctx->stack_top >= exec_ctx->stack_size) {
-                exec_ctx->state = ThreadState::kTerminated;
-                return WasmResult::kErrorExecuteTrapStackOverflow;
-            }
-            exec_ctx->stack[exec_ctx->stack_top++] = args[i];
-        }
-
-        WasmResult res = scheduler_.Run();
-
-        if (res == WasmResult::kOk) {
-            const WasmFunction &func = mod->functions[func_idx];
-            uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
-
-            if (result_count > actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
-            if (exec_ctx->stack_top < actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
-
-            WasmValue temp_results[kWasmMaxResultCount];
-            for (uint32_t i = 0; i < actual_result_count; ++i) {
-                temp_results[actual_result_count - 1 - i] = exec_ctx->stack[--exec_ctx->stack_top];
-            }
-
-            uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
-            for (uint32_t i = 0; i < copy_count; ++i) {
-                results[i] = temp_results[i];
-            }
-        }
-
-        return res;
-#else
-        if (!ctx_) return WasmResult::kErrorOutOfMemory;
-        ctx_->Reset();
-        ctx_->state = ThreadState::kRunning;
-        ctx_->stack_top = 0;
-        ctx_->call_stack_top = 0;
-
-        for (uint32_t i = 0; i < arg_count; ++i) {
-            if (ctx_->stack_top >= ctx_->stack_size) {
-                return WasmResult::kErrorExecuteTrapStackOverflow;
-            }
-            ctx_->stack[ctx_->stack_top++] = args[i];
-        }
-
-        WasmResult res = ExecuteInternal(mod, static_cast<uint32_t>(func_idx));
-
-        if (res == WasmResult::kOk) {
-            const WasmFunction &func = mod->functions[func_idx];
-            uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
-
-            if (result_count > actual_result_count) {
-                return WasmResult::kErrorExecuteRuntimeError;
-            }
-            if (ctx_->stack_top < actual_result_count) {
-                return WasmResult::kErrorExecuteRuntimeError;
-            }
-
-            WasmValue temp_results[kWasmMaxResultCount];
-            for (uint32_t i = 0; i < actual_result_count; ++i) {
-                temp_results[actual_result_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
-            }
-
-            uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
-            for (uint32_t i = 0; i < copy_count; ++i) {
-                results[i] = temp_results[i];
-            }
-        }
-
-        ctx_->state = ThreadState::kTerminated;
-        return res;
-#endif
+        return ExecuteResolved(mod, static_cast<uint32_t>(func_idx), args, arg_count, results, result_count);
     }
 
     WasmResult WasmEngine::ExecuteByIndex(int32_t instance_id, int32_t func_idx,
@@ -2665,11 +2587,17 @@ namespace embwasm {
             return WasmResult::kErrorFunctionNotFound;
         }
 
+        return ExecuteResolved(mod, static_cast<uint32_t>(func_idx), args, arg_count, results, result_count);
+    }
+
+    WasmResult WasmEngine::ExecuteResolved(WasmModuleInstance* mod, uint32_t func_idx,
+                                           const WasmValue* args, uint32_t arg_count,
+                                           WasmValue* results, uint32_t result_count) noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
-        uint32_t thread_id = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(func_idx));
+        uint32_t thread_id = scheduler_.SetupMainThread(mod, func_idx);
         if (thread_id == 0) return WasmResult::kErrorOutOfMemory;
 
-        WasmThreadContext *exec_ctx = scheduler_.GetMainThreadContext();
+        WasmThreadContext* exec_ctx = scheduler_.GetMainThreadContext();
         if (!exec_ctx) return WasmResult::kErrorOutOfMemory;
 
         exec_ctx->stack_top = 0;
@@ -2684,19 +2612,18 @@ namespace embwasm {
         WasmResult res = scheduler_.Run();
 
         if (res == WasmResult::kOk) {
-            const WasmFunction &func = mod->functions[func_idx];
+            const WasmFunction& func = mod->functions[func_idx];
             uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
 
             if (result_count > actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
             if (exec_ctx->stack_top < actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
 
-            WasmValue temp_results[kWasmMaxResultCount];
             for (uint32_t i = 0; i < actual_result_count; ++i) {
-                temp_results[actual_result_count - 1 - i] = exec_ctx->stack[--exec_ctx->stack_top];
-            }
-            uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
-            for (uint32_t i = 0; i < copy_count; ++i) {
-                results[i] = temp_results[i];
+                WasmValue val = exec_ctx->stack[--exec_ctx->stack_top];
+                uint32_t dest = actual_result_count - 1 - i;
+                if (dest < result_count) {
+                    results[dest] = val;
+                }
             }
         }
 
@@ -2715,22 +2642,21 @@ namespace embwasm {
             ctx_->stack[ctx_->stack_top++] = args[i];
         }
 
-        WasmResult res = ExecuteInternal(mod, static_cast<uint32_t>(func_idx));
+        WasmResult res = ExecuteInternal(mod, func_idx);
 
         if (res == WasmResult::kOk) {
-            const WasmFunction &func = mod->functions[func_idx];
+            const WasmFunction& func = mod->functions[func_idx];
             uint32_t actual_result_count = mod->signatures[func.type_index]->result_count;
 
             if (result_count > actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
             if (ctx_->stack_top < actual_result_count) return WasmResult::kErrorExecuteRuntimeError;
 
-            WasmValue temp_results[kWasmMaxResultCount];
             for (uint32_t i = 0; i < actual_result_count; ++i) {
-                temp_results[actual_result_count - 1 - i] = ctx_->stack[--ctx_->stack_top];
-            }
-            uint32_t copy_count = result_count < actual_result_count ? result_count : actual_result_count;
-            for (uint32_t i = 0; i < copy_count; ++i) {
-                results[i] = temp_results[i];
+                WasmValue val = ctx_->stack[--ctx_->stack_top];
+                uint32_t dest = actual_result_count - 1 - i;
+                if (dest < result_count) {
+                    results[dest] = val;
+                }
             }
         }
 

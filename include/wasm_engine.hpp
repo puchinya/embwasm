@@ -64,13 +64,12 @@ struct WasmImportFunction {
 struct WasmFunction {
     WasmFunctionKind kind; ///< 関数の種別。
     uint32_t type_index;   ///< 対応するシグネチャのインデックス。
+    WasmModuleInstance* module; ///< この関数が属するモジュールインスタンス。
     union {
         WasmHostFunction host;
         WasmLocalFunction local;
         WasmImportFunction import;
     };
-
-    struct WasmModuleInstance* module; ///< この関数が属するモジュールインスタンス。
 };
 
 /// @brief WASM グローバル変数。
@@ -387,6 +386,10 @@ public:
 
 private:
     friend class WasmScheduler;
+
+    WasmResult ExecuteResolved(WasmModuleInstance* mod, uint32_t func_idx,
+                               const WasmValue* args, uint32_t arg_count,
+                               WasmValue* results, uint32_t result_count) noexcept;
 
     WasmResult ParseSections(WasmModuleInstance* mod, const uint8_t* binary, std::size_t size) noexcept;
 
