@@ -242,9 +242,9 @@ double div() {
     },
     "stdio_test": {
         "code": """
-__attribute__((import_module("embwasm:stdio/stdio"), import_name("puts")))
+__attribute__((import_module("sys:rt/stdio"), import_name("puts")))
 extern int embwasm_puts(int addr, int len);
-__attribute__((import_module("embwasm:stdio/stdio"), import_name("printf")))
+__attribute__((import_module("sys:rt/stdio"), import_name("printf")))
 extern void embwasm_printf(int fmt_addr, int fmt_len, int args_addr, int args_count);
 
 __attribute__((export_name("test_puts")))

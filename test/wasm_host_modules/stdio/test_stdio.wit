@@ -1,5 +1,5 @@
 package embwasm:test-stdio;
 
-/// @wit-import: "../../../wasm_host_modules/stdio/stdio.wit"
+/// @wit-import: "../../../wasm_host_modules/wit/sys_rt/stdio.wit"
 world test-stdio {
 }

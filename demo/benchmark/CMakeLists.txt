@@ -23,7 +23,8 @@ add_custom_command(
     OUTPUT ${GEN_WASM_H} ${GEN_WASM_C}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${GEN_WASM_WIT_DIR}
     COMMAND ${CMAKE_COMMAND} -E copy ${DEMO_CONFIG_FILE} ${GEN_WASM_WIT}
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../../wasm_host_modules ${GEN_WASM_WIT_DIR}/deps
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${GEN_WASM_WIT_DIR}/deps
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/../../wasm_host_modules/wit ${GEN_WASM_WIT_DIR}/deps
     COMMAND wit-bindgen c --out-dir ${GEN_WASM_DIR} --world wasm-host-api ${GEN_WASM_WIT_DIR}
     DEPENDS ${DEMO_CONFIG_FILE} ${GEN_CPP}
     COMMENT "Generating WASM client bindings using wit-bindgen with deps"

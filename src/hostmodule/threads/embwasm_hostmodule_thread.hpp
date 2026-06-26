@@ -9,8 +9,8 @@ namespace embwasm {
 class WasmEngine;
 
 namespace hostmodules {
-namespace embwasm {
-namespace threads {
+namespace sys {
+namespace rt {
 namespace threads {
 
 // [embwasm-proto:decl-begin]
@@ -28,8 +28,8 @@ inline WasmResult event_signal(WasmEngine&, int32_t) noexcept { return WasmResul
 // [embwasm-proto:decl-end]
 
 } // namespace threads
-} // namespace threads
-} // namespace embwasm
+} // namespace rt
+} // namespace sys
 } // namespace hostmodules
 } // namespace embwasm
 

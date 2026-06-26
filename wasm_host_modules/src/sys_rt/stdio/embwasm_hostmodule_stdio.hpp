@@ -5,8 +5,8 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace embwasm {
-namespace stdio {
+namespace sys {
+namespace rt {
 namespace stdio {
 
 // [embwasm-proto:decl-begin]
@@ -25,8 +25,8 @@ WasmResult puts(
 // [embwasm-proto:decl-end]
 
 } // namespace stdio
-} // namespace stdio
-} // namespace embwasm
+} // namespace rt
+} // namespace sys
 } // namespace hostmodules
 } // namespace embwasm
 

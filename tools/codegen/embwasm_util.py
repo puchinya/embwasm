@@ -626,7 +626,7 @@ def _to_cpp_type_name(wit_name: str) -> str:
 
 
 def _wit_package_to_ns(package_raw: str) -> str:
-    """'embwasm:threads' → 'embwasm::threads'"""
+    """'sys:rt' → 'sys::rt'"""
     return package_raw.replace('-', '_').replace(':', '::').replace('/', '::')
 
 
@@ -1257,7 +1257,7 @@ def _gen_typed_protos(apis: list) -> str:
 # ---------------------------------------------------------------------------
 
 def _wit_package_to_import_module(package: str, iface_name_raw: str) -> str:
-    """'embwasm:stdio', 'stdio' → 'embwasm:stdio/stdio'"""
+    """'sys:rt', 'stdio' → 'sys:rt/stdio'"""
     if package and iface_name_raw:
         return f'{package}/{iface_name_raw}'
     return '$root'

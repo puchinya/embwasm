@@ -1,6 +1,6 @@
 package wasi:sockets;
 
-/// @wit-import: "../../wasm_host_modules/threads/threads.wit"
+/// @wit-import: "../sys_rt/threads.wit"
 
 /// @cpp-header: "embwasm_hostmodule_socket.hpp"
 /// @cpp-init:   embwasm::hostmodules::wasi::sockets::sockets::initialize

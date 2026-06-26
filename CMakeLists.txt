@@ -14,8 +14,8 @@ if(EMBWASM_BUILD_OFFICIAL_SPEC_TESTS)
     add_compile_definitions(EMBWASM_USE_SPEC_CONFIG)
 endif()
 
-add_subdirectory(wasm_host_modules/sockets)
-add_subdirectory(wasm_host_modules/stdio)
+add_subdirectory(wasm_host_modules/src/sockets)
+add_subdirectory(wasm_host_modules/src/sys_rt/stdio)
 
 add_subdirectory(src)
 

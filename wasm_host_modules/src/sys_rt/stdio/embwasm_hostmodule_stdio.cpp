@@ -4,8 +4,8 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace embwasm {
-namespace stdio {
+namespace sys {
+namespace rt {
 namespace stdio {
 
 // [embwasm-proto:func:printf]
@@ -140,7 +140,7 @@ WasmResult puts(
 
 // [embwasm-proto:funcs-end]
 } // namespace stdio
-} // namespace stdio
-} // namespace embwasm
+} // namespace rt
+} // namespace sys
 } // namespace hostmodules
 } // namespace embwasm

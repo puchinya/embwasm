@@ -1,6 +1,6 @@
 package embwasm:demo;
 
-/// @wit-import: "../../wasm_host_modules/sockets/sockets.wit"
+/// @wit-import: "../../wasm_host_modules/wit/sockets/sockets.wit"
 world wasm-host-api {
     import wasi:sockets/sockets;
 }

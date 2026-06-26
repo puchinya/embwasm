@@ -3,8 +3,8 @@
 
 namespace embwasm {
 namespace hostmodules {
-namespace embwasm {
-namespace threads {
+namespace sys {
+namespace rt {
 namespace threads {
 
 #if EMBWASM_ENABLE_MULTITHREADING
@@ -69,7 +69,7 @@ WasmResult event_signal(WasmEngine& engine, int32_t event_id) noexcept {
 #endif // EMBWASM_ENABLE_MULTITHREADING
 
 } // namespace threads
-} // namespace threads
-} // namespace embwasm
+} // namespace rt
+} // namespace sys
 } // namespace hostmodules
 } // namespace embwasm

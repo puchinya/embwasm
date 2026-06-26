@@ -7,7 +7,7 @@ int main(void) {
     wasm_host_api_string_t s;
     s.ptr = (uint8_t*)"Hello";
     s.len = 5;
-    embwasm_stdio_stdio_puts(&s);
+    sys_rt_stdio_puts(&s);
     return 0;
 }
 

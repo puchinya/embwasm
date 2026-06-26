@@ -1,9 +1,9 @@
 package embwasm:demo;
 
 /// @cpp-header: "../hello/host_apis.hpp"
-/// @wit-import: "../../wasm_host_modules/threads/threads.wit"
-/// @wit-import: "../../wasm_host_modules/stdio/stdio.wit"
+/// @wit-import: "../../wasm_host_modules/wit/sys_rt/threads.wit"
+/// @wit-import: "../../wasm_host_modules/wit/sys_rt/stdio.wit"
 world wasm-host-api {
-    import embwasm:threads/threads;
-    import embwasm:stdio/stdio;
+    import sys:rt/threads;
+    import sys:rt/stdio;
 }

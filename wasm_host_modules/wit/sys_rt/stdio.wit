@@ -1,4 +1,4 @@
-package embwasm:stdio;
+package sys:rt;
 
 /// @cpp-header: "embwasm_hostmodule_stdio.hpp"
 interface stdio {

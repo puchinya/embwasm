@@ -1,4 +1,4 @@
-package embwasm:threads;
+package sys:rt;
 
 /// @cpp-header: "embwasm_hostmodule_thread.hpp"
 interface threads {
