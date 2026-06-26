@@ -15,8 +15,8 @@ struct WasmFunction;
 ///
 /// 分岐（`br`）時のジャンプ先 IP とスタック巻き戻し位置を保持します。
 struct WasmLabel {
-    const uint8_t* pc;      ///< ジャンプ先 IP。`block`/`if` は `end` の次、`loop` はループ先頭。
-    std::size_t stack_top;  ///< ブロック進入時のデータスタック高さ（`br` 時にここまで巻き戻す）。
+    const uint8_t* pc;    ///< ジャンプ先 IP。`block`/`if` は `end` の次、`loop` はループ先頭。
+    uint32_t stack_top;   ///< ブロック進入時のデータスタック高さ（`br` 時にここまで巻き戻す）。
     uint8_t opcode;         ///< ブロック種別（0x02: block, 0x03: loop, 0x04: if）。
     uint16_t param_count;   ///< ブロックのパラメータ数。
     uint16_t result_count;  ///< ブロックの結果数。
@@ -34,7 +34,7 @@ struct WasmFrame {
     uint16_t total_locals;    ///< 引数＋ローカル変数の合計数。
     uint16_t label_capacity;      ///< このフレームに割り当てたラベルスロット数。
     WasmLabel* labels;            ///< `WasmThreadContext::labels_pool` 内のスライスへのポインタ。
-    std::size_t label_stack_top;  ///< ラベルスタックの現在深さ。
+    uint32_t label_stack_top;     ///< ラベルスタックの現在深さ。
 };
 
 /// @brief スレッドの実行状態。
@@ -70,21 +70,21 @@ struct WasmThreadContext {
     /// @brief 統合スタック（プールから確保）。演算値とフレームごとのローカル変数を一本の配列で管理します。
     /// レイアウト: [frame0 locals][frame0 operands][frame1 locals][frame1 operands]...
     WasmValue* stack;
-    std::size_t stack_size; ///< 確保済み要素数（WasmEngineConfig で設定）。
-    std::size_t stack_top;  ///< スタックの現在深さ（ローカル変数領域を含む）。
+    uint32_t stack_size; ///< 確保済み要素数（WasmEngineConfig で設定）。
+    uint32_t stack_top;  ///< スタックの現在深さ（ローカル変数領域を含む）。
 
-    WasmFrame* call_stack;       ///< WASM コールスタック（プールから確保）。
-    std::size_t call_stack_size; ///< 確保済み要素数（WasmEngineConfig で設定）。
-    std::size_t call_stack_top;  ///< コールスタックの現在深さ。
+    WasmFrame* call_stack;   ///< WASM コールスタック（プールから確保）。
+    uint32_t call_stack_size; ///< 確保済み要素数（WasmEngineConfig で設定）。
+    uint32_t call_stack_top;  ///< コールスタックの現在深さ。
 
     /// @brief 全フレーム共有のラベルプール（プールから確保）。フレームごとに必要数を切り出します。
     WasmLabel* labels_pool;
-    std::size_t labels_pool_size; ///< 確保済み要素数（WasmEngineConfig で設定）。
-    std::size_t labels_pool_top;  ///< 現在の使用済み先頭インデックス。
+    uint32_t labels_pool_size; ///< 確保済み要素数（WasmEngineConfig で設定）。
+    uint32_t labels_pool_top;  ///< 現在の使用済み先頭インデックス。
 
     WaitKind  wait_kind;      ///< 待機種別（state == kWaiting 時のみ有効）。
     WaitParam wait_param;     ///< 待機パラメータ（wait_kind に応じて使用するフィールドが異なる）。
-    bool      notify_pending; ///< ThreadNotify が ThreadWait より先に届いた場合のフラグ。
+    uint8_t   notify_pending; ///< ThreadNotify が ThreadWait より先に届いた場合のフラグ。
 
     uint32_t start_func_index;     ///< 初回 `ExecuteInternal` に渡す関数インデックス。
     WasmModuleInstance* start_module; ///< 初回 `ExecuteInternal` に渡すモジュールインスタンス。
@@ -108,9 +108,9 @@ struct WasmThreadContext {
 
 /// @brief WasmEngine 初期化設定。Init() の第2引数として渡す。
 struct WasmEngineConfig {
-    std::size_t stack_size       = kDefaultUnifiedStackSize;
-    std::size_t call_stack_size  = kDefaultWasmCallStackSize;
-    std::size_t labels_pool_size = kDefaultLabelsPoolSize;
+    uint32_t stack_size       = kDefaultUnifiedStackSize;
+    uint32_t call_stack_size  = kDefaultWasmCallStackSize;
+    uint32_t labels_pool_size = kDefaultLabelsPoolSize;
 };
 
 /// @brief WASM 関数の種別。
@@ -148,10 +148,10 @@ struct WasmHostFunction {
 
 /// @brief インポート宣言（ロード時に未解決、`Execute()` 時に解決される）。
 struct WasmImportFunction {
-    const char* module_name;     ///< インポートモジュール名（ROM を指す）。
-    size_t module_name_len;      ///< モジュール名の長さ（バイト数）。
-    const char* field_name;      ///< インポートフィールド名（ROM を指す）。
-    size_t field_name_len;       ///< フィールド名の長さ（バイト数）。
+    const char* module_name;       ///< インポートモジュール名（ROM を指す）。
+    uint32_t module_name_len;      ///< モジュール名の長さ（バイト数）。
+    const char* field_name;        ///< インポートフィールド名（ROM を指す）。
+    uint32_t field_name_len;       ///< フィールド名の長さ（バイト数）。
     WasmFunction* resolved_func; ///< 解決後の関数へのポインタ。未解決時は `nullptr`。
 };
 
@@ -174,81 +174,81 @@ inline WasmModuleInstance* WasmThreadContext::GetCurrentModule() const noexcept 
 /// @brief WASM グローバル変数。
 struct WasmGlobal {
     WasmType type;             ///< 値の型。
-    bool is_mutable;           ///< ミュータブルフラグ。
+    uint8_t is_mutable;        ///< ミュータブルフラグ。
     WasmValue value;           ///< 現在値。
     uint32_t init_global_ref;  ///< global.get 初期化の参照先インデックス。UINT32_MAX なら定数初期化。
 };
 
 /// @brief WASM エクスポートエントリ。
 struct WasmExportEntry {
-    const char* name;    ///< エクスポート名（ROM を指す）。
-    std::size_t name_len; ///< エクスポート名の長さ（バイト数）。
+    const char* name;     ///< エクスポート名（ROM を指す）。
+    uint32_t name_len;    ///< エクスポート名の長さ（バイト数）。
     uint8_t kind;        ///< エクスポート種別（0=Func, 1=Table, 2=Mem, 3=Global）。
     uint32_t index;      ///< エクスポート対象のインデックス。
 };
 
 /// @brief ロード済み WASM モジュールのインスタンス情報。
 struct WasmModuleInstance {
-    bool is_active;         ///< スロットが使用中かどうか。
-    bool imports_resolved;  ///< 関数インポート解決済みフラグ。
-    bool is_instantiated;   ///< InstantiateModules() 完了後 true。
-    bool has_memory;        ///< Memory/MemoryImport 宣言あり（バリデーション・インスタンス化用）。
-    char name[64];          ///< モジュール名。
-    std::size_t name_len;   ///< モジュール名の長さ。
+    uint8_t is_active;         ///< スロットが使用中かどうか。
+    uint8_t imports_resolved;  ///< 関数インポート解決済みフラグ。
+    uint8_t is_instantiated;   ///< InstantiateModules() 完了後 true。
+    uint8_t has_memory;        ///< Memory/MemoryImport 宣言あり（バリデーション・インスタンス化用）。
+    char name[64];             ///< モジュール名。
+    uint32_t name_len;         ///< モジュール名の長さ。
 
     WasmTypeSignature** signatures;  ///< 型シグネチャのポインタ配列（各要素はプールから可変長確保）。
-    std::size_t signature_count;
+    uint32_t signature_count;
 
     WasmFunction* functions;         ///< 関数配列（プールから確保）。
-    std::size_t function_count;
+    uint32_t function_count;
 
     WasmExportEntry* exports;        ///< エクスポートエントリ配列（プールから確保）。
-    std::size_t export_count;
+    uint32_t export_count;
 
     WasmImportEntry* imports;        ///< インポートエントリ配列（プールから確保）。
-    std::size_t import_count;
+    uint32_t import_count;
 
     WasmGlobal* globals;             ///< グローバル変数配列（プールから確保）。
-    std::size_t global_count;
+    uint32_t global_count;
 
-    uint8_t* linear_memory_ptr;             ///< 線形メモリの先頭ポインタ（インスタンス化後に確保）。
-    std::size_t linear_memory_size;         ///< 現在のサイズ（min_pages * 65536）。
-    std::size_t linear_memory_capacity;     ///< プールから確保した実際のバイト数。
+    uint8_t* linear_memory_ptr;       ///< 線形メモリの先頭ポインタ（インスタンス化後に確保）。
+    uint32_t linear_memory_size;      ///< 現在のサイズ（min_pages * 65536）。
+    uint32_t linear_memory_capacity;  ///< プールから確保した実際のバイト数。
     uint32_t max_linear_memory_pages;       ///< メモリセクションで指定された最大ページ数（0 = 制限なし）。
     uint32_t memory_min_pages;              ///< メモリ初期ページ数（インスタンス化前に有効）。
-    bool is_memory_shared;
-    bool memory_is_imported;               ///< メモリがインポート由来の場合 true。
+    uint8_t is_memory_shared;
+    uint8_t memory_is_imported;            ///< メモリがインポート由来の場合 true。
 
     uint32_t** tables;
-    std::size_t* table_sizes;
+    uint32_t* table_sizes;
     uint32_t* table_max_sizes;
     WasmType* table_types;
-    bool* is_table_shared;
+    uint8_t* is_table_shared;
     const char** table_import_modules;      ///< テーブルインポートのモジュール名（バイナリを指す）。own テーブルは nullptr。
-    std::size_t* table_import_module_lens;
+    uint32_t* table_import_module_lens;
     const char** table_import_fields;       ///< テーブルインポートのフィールド名（バイナリを指す）。own テーブルは nullptr。
-    std::size_t* table_import_field_lens;
-    std::size_t table_count;
-    std::size_t table_capacity;
+    uint32_t* table_import_field_lens;
+    uint32_t table_count;
+    uint32_t table_capacity;
 
     const uint8_t** data_segments;
     uint32_t* data_segment_sizes;
-    bool* data_segment_dropped;
+    uint8_t* data_segment_dropped;
     uint32_t* data_segment_offsets;              ///< アクティブセグメントのメモリオフセット。
     uint32_t* data_segment_offset_global_refs;  ///< オフセット式が global.get のときのグローバルインデックス（0xFFFFFFFF = i32.const）。
-    bool* data_segment_is_active;               ///< true=アクティブ、false=パッシブ。
-    std::size_t data_segment_count;
-    std::size_t data_segment_capacity;
+    uint8_t* data_segment_is_active;             ///< true=アクティブ、false=パッシブ。
+    uint32_t data_segment_count;
+    uint32_t data_segment_capacity;
 
     uint32_t** elem_segments;
     uint32_t* elem_segment_sizes;
-    bool* elem_segment_dropped;
+    uint8_t* elem_segment_dropped;
     uint32_t* elem_segment_table_indices; ///< アクティブセグメントのターゲットテーブル。
     uint32_t* elem_segment_offsets;              ///< アクティブセグメントのテーブルオフセット。
     uint32_t* elem_segment_offset_global_refs;  ///< オフセット式が global.get のときのグローバルインデックス（0xFFFFFFFF = i32.const）。
-    bool* elem_segment_is_active;               ///< true=アクティブ、false=パッシブ/宣言的。
-    std::size_t elem_segment_count;
-    std::size_t elem_segment_capacity;
+    uint8_t* elem_segment_is_active;             ///< true=アクティブ、false=パッシブ/宣言的。
+    uint32_t elem_segment_count;
+    uint32_t elem_segment_capacity;
 
     int32_t start_function_index; ///< Start セクションで指定された関数インデックス（-1 = なし）。
     uint32_t self_index;          ///< modules_[] 上の自身のインデックス。EncodeFuncRef で使用。
@@ -278,7 +278,7 @@ class WasmEngine;
 /// @brief スレッド間同期用イベント（セマフォ / フラグ相当）。
 struct WasmEvent {
     uint32_t id;    ///< イベント ID（1-based）。
-    bool signaled;  ///< シグナル済みフラグ。
+    uint8_t signaled;  ///< シグナル済みフラグ。
 
     /// @brief イベントを未シグナル状態にリセットします。
     void Reset() noexcept {
@@ -295,7 +295,7 @@ struct WasmEvent {
 class WasmScheduler {
 public:
     /// @brief メインスレッド専用スロットのインデックス（slot 0）。
-    static constexpr std::size_t kMainThreadIndex = 0;
+    static constexpr uint32_t kMainThreadIndex = 0;
 
     /// @brief コンストラクタ。`WasmEngine` の初期化時に自動的に呼ばれます。
     /// @param engine  所属するエンジンインスタンスへの参照。
@@ -392,7 +392,7 @@ private:
     WasmEngine& engine_;
     WasmThreadContext** threads_;
     WasmEvent events_[kMaxEvents];
-    std::size_t current_thread_index_;
+    uint32_t current_thread_index_;
 };
 
 #endif // EMBWASM_ENABLE_MULTITHREADING
@@ -585,12 +585,12 @@ private:
 
     struct NameAlias {
         ListNode node;
-        std::size_t alias_len;
+        uint32_t alias_len;
         WasmModuleInstance* module;
         char alias[1];
     };
     ListNode name_aliases_;
-    std::size_t name_alias_count_;
+    uint32_t name_alias_count_;
 
     WasmEngineConfig config_;
     WasmMemoryPool* pool_;
@@ -603,8 +603,8 @@ private:
 #endif
 
     int32_t last_loaded_id_;
-    std::size_t max_call_stack_depth_;
-    std::size_t max_stack_depth_;
+    uint32_t max_call_stack_depth_;
+    uint32_t max_stack_depth_;
     void* user_data_;
     void* platform_data_;
     void** module_user_datas_;

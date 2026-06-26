@@ -2417,28 +2417,28 @@ namespace embwasm {
         mod->table_count    = 0;
         if (counts.table_count > 0) {
             mod->tables              = static_cast<uint32_t**>(pool->Allocate(counts.table_count * sizeof(uint32_t*)));
-            mod->table_sizes         = static_cast<std::size_t*>(pool->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_sizes         = static_cast<uint32_t*>(pool->Allocate(counts.table_count * sizeof(uint32_t)));
             mod->table_max_sizes     = static_cast<uint32_t*>(pool->Allocate(counts.table_count * sizeof(uint32_t)));
             mod->table_types         = static_cast<WasmType*>(pool->Allocate(counts.table_count * sizeof(WasmType)));
-            mod->is_table_shared     = static_cast<bool*>(pool->Allocate(counts.table_count * sizeof(bool)));
+            mod->is_table_shared     = static_cast<uint8_t*>(pool->Allocate(counts.table_count * sizeof(uint8_t)));
             mod->table_import_modules     = static_cast<const char**>(pool->Allocate(counts.table_count * sizeof(const char*)));
-            mod->table_import_module_lens = static_cast<std::size_t*>(pool->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_import_module_lens = static_cast<uint32_t*>(pool->Allocate(counts.table_count * sizeof(uint32_t)));
             mod->table_import_fields      = static_cast<const char**>(pool->Allocate(counts.table_count * sizeof(const char*)));
-            mod->table_import_field_lens  = static_cast<std::size_t*>(pool->Allocate(counts.table_count * sizeof(std::size_t)));
+            mod->table_import_field_lens  = static_cast<uint32_t*>(pool->Allocate(counts.table_count * sizeof(uint32_t)));
             if (!mod->tables || !mod->table_sizes || !mod->table_max_sizes || !mod->table_types ||
                 !mod->is_table_shared || !mod->table_import_modules || !mod->table_import_module_lens ||
                 !mod->table_import_fields || !mod->table_import_field_lens) {
                 return WasmResult::kErrorOutOfMemory;
             }
             std::memset(mod->tables, 0, counts.table_count * sizeof(uint32_t*));
-            std::memset(mod->table_sizes, 0, counts.table_count * sizeof(std::size_t));
+            std::memset(mod->table_sizes, 0, counts.table_count * sizeof(uint32_t));
             for (std::size_t i = 0; i < counts.table_count; ++i) mod->table_max_sizes[i] = 0xFFFFFFFF;
             std::memset(mod->table_types, 0, counts.table_count * sizeof(WasmType));
-            std::memset(mod->is_table_shared, 0, counts.table_count * sizeof(bool));
+            std::memset(mod->is_table_shared, 0, counts.table_count * sizeof(uint8_t));
             std::memset(mod->table_import_modules, 0, counts.table_count * sizeof(const char*));
-            std::memset(mod->table_import_module_lens, 0, counts.table_count * sizeof(std::size_t));
+            std::memset(mod->table_import_module_lens, 0, counts.table_count * sizeof(uint32_t));
             std::memset(mod->table_import_fields, 0, counts.table_count * sizeof(const char*));
-            std::memset(mod->table_import_field_lens, 0, counts.table_count * sizeof(std::size_t));
+            std::memset(mod->table_import_field_lens, 0, counts.table_count * sizeof(uint32_t));
         } else {
             mod->tables = nullptr; mod->table_sizes = nullptr; mod->table_max_sizes = nullptr;
             mod->table_types = nullptr; mod->is_table_shared = nullptr;
@@ -2451,20 +2451,20 @@ namespace embwasm {
         if (counts.data_count > 0) {
             mod->data_segments                 = static_cast<const uint8_t**>(pool->Allocate(counts.data_count * sizeof(const uint8_t*)));
             mod->data_segment_sizes            = static_cast<uint32_t*>(pool->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_dropped          = static_cast<bool*>(pool->Allocate(counts.data_count * sizeof(bool)));
+            mod->data_segment_dropped          = static_cast<uint8_t*>(pool->Allocate(counts.data_count * sizeof(uint8_t)));
             mod->data_segment_offsets          = static_cast<uint32_t*>(pool->Allocate(counts.data_count * sizeof(uint32_t)));
             mod->data_segment_offset_global_refs = static_cast<uint32_t*>(pool->Allocate(counts.data_count * sizeof(uint32_t)));
-            mod->data_segment_is_active        = static_cast<bool*>(pool->Allocate(counts.data_count * sizeof(bool)));
+            mod->data_segment_is_active        = static_cast<uint8_t*>(pool->Allocate(counts.data_count * sizeof(uint8_t)));
             if (!mod->data_segments || !mod->data_segment_sizes || !mod->data_segment_dropped ||
                 !mod->data_segment_offsets || !mod->data_segment_offset_global_refs || !mod->data_segment_is_active) {
                 return WasmResult::kErrorOutOfMemory;
             }
             std::memset(mod->data_segments, 0, counts.data_count * sizeof(const uint8_t*));
             std::memset(mod->data_segment_sizes, 0, counts.data_count * sizeof(uint32_t));
-            std::memset(mod->data_segment_dropped, 0, counts.data_count * sizeof(bool));
+            std::memset(mod->data_segment_dropped, 0, counts.data_count * sizeof(uint8_t));
             std::memset(mod->data_segment_offsets, 0, counts.data_count * sizeof(uint32_t));
             std::memset(mod->data_segment_offset_global_refs, 0xFF, counts.data_count * sizeof(uint32_t));
-            std::memset(mod->data_segment_is_active, 0, counts.data_count * sizeof(bool));
+            std::memset(mod->data_segment_is_active, 0, counts.data_count * sizeof(uint8_t));
         } else {
             mod->data_segments = nullptr; mod->data_segment_sizes = nullptr;
             mod->data_segment_dropped = nullptr; mod->data_segment_offsets = nullptr;
@@ -2476,11 +2476,11 @@ namespace embwasm {
         if (counts.elem_count > 0) {
             mod->elem_segments              = static_cast<uint32_t**>(pool->Allocate(counts.elem_count * sizeof(uint32_t*)));
             mod->elem_segment_sizes         = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_dropped       = static_cast<bool*>(pool->Allocate(counts.elem_count * sizeof(bool)));
+            mod->elem_segment_dropped       = static_cast<uint8_t*>(pool->Allocate(counts.elem_count * sizeof(uint8_t)));
             mod->elem_segment_table_indices = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
             mod->elem_segment_offsets              = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
             mod->elem_segment_offset_global_refs   = static_cast<uint32_t*>(pool->Allocate(counts.elem_count * sizeof(uint32_t)));
-            mod->elem_segment_is_active            = static_cast<bool*>(pool->Allocate(counts.elem_count * sizeof(bool)));
+            mod->elem_segment_is_active            = static_cast<uint8_t*>(pool->Allocate(counts.elem_count * sizeof(uint8_t)));
             if (!mod->elem_segments || !mod->elem_segment_sizes || !mod->elem_segment_dropped ||
                 !mod->elem_segment_table_indices || !mod->elem_segment_offsets ||
                 !mod->elem_segment_offset_global_refs || !mod->elem_segment_is_active) {
@@ -2488,11 +2488,11 @@ namespace embwasm {
             }
             std::memset(mod->elem_segments, 0, counts.elem_count * sizeof(uint32_t*));
             std::memset(mod->elem_segment_sizes, 0, counts.elem_count * sizeof(uint32_t));
-            std::memset(mod->elem_segment_dropped, 0, counts.elem_count * sizeof(bool));
+            std::memset(mod->elem_segment_dropped, 0, counts.elem_count * sizeof(uint8_t));
             std::memset(mod->elem_segment_table_indices, 0, counts.elem_count * sizeof(uint32_t));
             std::memset(mod->elem_segment_offsets, 0, counts.elem_count * sizeof(uint32_t));
             std::memset(mod->elem_segment_offset_global_refs, 0xFF, counts.elem_count * sizeof(uint32_t));
-            std::memset(mod->elem_segment_is_active, 0, counts.elem_count * sizeof(bool));
+            std::memset(mod->elem_segment_is_active, 0, counts.elem_count * sizeof(uint8_t));
         } else {
             mod->elem_segments = nullptr; mod->elem_segment_sizes = nullptr;
             mod->elem_segment_dropped = nullptr; mod->elem_segment_table_indices = nullptr;
@@ -2770,7 +2770,7 @@ namespace embwasm {
         const WasmFunction *target_func,
         WasmModuleInstance *target_mod,
         std::size_t &sp,
-        std::size_t &max_call_stack_depth,
+        uint32_t &max_call_stack_depth,
         WasmResult call_stack_error
     ) noexcept {
         if (ctx->call_stack_top >= ctx->call_stack_size)
@@ -2937,17 +2937,17 @@ namespace embwasm {
         WasmFunction         *functions            = nullptr;
         WasmGlobal           *globals              = nullptr;
         uint32_t            **tables               = nullptr;
-        std::size_t          *table_sizes          = nullptr;
+        uint32_t             *table_sizes          = nullptr;
         uint32_t             *table_max_sizes      = nullptr;
         WasmType             *table_types          = nullptr;
         std::size_t           table_count          = 0;
         const uint8_t       **data_segments        = nullptr;
         uint32_t             *data_segment_sizes   = nullptr;
-        bool                 *data_segment_dropped = nullptr;
+        uint8_t              *data_segment_dropped = nullptr;
         std::size_t           data_segment_count   = 0;
         uint32_t            **elem_segments        = nullptr;
         uint32_t             *elem_segment_sizes   = nullptr;
-        bool                 *elem_segment_dropped = nullptr;
+        uint8_t              *elem_segment_dropped = nullptr;
         std::size_t           elem_segment_count   = 0;
 
         // コールスタックが空になるまで実行ループを回す
