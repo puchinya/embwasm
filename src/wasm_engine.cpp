@@ -410,14 +410,8 @@ namespace embwasm {
 #if !EMBWASM_ENABLE_MULTITHREADING
         ctx_ = static_cast<WasmThreadContext*>(pool_->Allocate(sizeof(WasmThreadContext)));
         if (ctx_) {
-            ctx_->stack       = static_cast<WasmValue*>(pool_->Allocate(config_.stack_size * sizeof(WasmValue)));
-            ctx_->call_stack  = static_cast<WasmFrame*>(pool_->Allocate(config_.call_stack_size * sizeof(WasmFrame)));
-            ctx_->labels_pool = static_cast<WasmLabel*>(pool_->Allocate(config_.labels_pool_size * sizeof(WasmLabel)));
-            ctx_->stack_size       = config_.stack_size;
-            ctx_->call_stack_size  = config_.call_stack_size;
-            ctx_->labels_pool_size = config_.labels_pool_size;
+            ctx_->Init(*pool_, config_);
             ctx_->id = 1;
-            ctx_->Reset();
         }
 #endif
         last_loaded_id_ = -1;
@@ -972,6 +966,13 @@ namespace embwasm {
                 pool_->Free(module_user_datas_);
             }
             PlatformEngineDeinit(*this);
+#if !EMBWASM_ENABLE_MULTITHREADING
+            if (ctx_) {
+                ctx_->DeInit(*pool_);
+                pool_->Free(ctx_);
+                ctx_ = nullptr;
+            }
+#endif
         }
         module_user_datas_ = nullptr;
         user_data_ = nullptr;
@@ -4976,6 +4977,26 @@ namespace embwasm {
 
 #if EMBWASM_ENABLE_MULTITHREADING
 
+bool WasmThreadContext::Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept {
+    stack       = static_cast<WasmValue*>(pool.Allocate(cfg.stack_size * sizeof(WasmValue)));
+    call_stack  = static_cast<WasmFrame*>(pool.Allocate(cfg.call_stack_size * sizeof(WasmFrame)));
+    labels_pool = static_cast<WasmLabel*>(pool.Allocate(cfg.labels_pool_size * sizeof(WasmLabel)));
+    if (!stack || !call_stack || !labels_pool) return false;
+    stack_size       = cfg.stack_size;
+    call_stack_size  = cfg.call_stack_size;
+    labels_pool_size = cfg.labels_pool_size;
+    Reset();
+    return true;
+}
+
+void WasmThreadContext::DeInit(WasmMemoryPool& pool) noexcept {
+    if (labels_pool) { pool.Free(labels_pool); labels_pool = nullptr; }
+    if (call_stack)  { pool.Free(call_stack);  call_stack  = nullptr; }
+    if (stack)       { pool.Free(stack);       stack       = nullptr; }
+    stack_size = call_stack_size = labels_pool_size = 0;
+    Reset();
+}
+
 WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept
     : engine_(engine), threads_(nullptr), current_thread_index_(0) {
     for (std::size_t i = 0; i < kMaxEvents; ++i) {
@@ -4997,20 +5018,22 @@ void WasmScheduler::Init() noexcept {
     if (!main_ctx) return;
     WasmThreadContext* ctx = static_cast<WasmThreadContext*>(main_ctx);
     threads_[kMainThreadIndex] = ctx;
-    {
-        const WasmEngineConfig& cfg = engine_.GetConfig();
-        ctx->stack       = static_cast<WasmValue*>(pool->Allocate(cfg.stack_size * sizeof(WasmValue)));
-        ctx->call_stack  = static_cast<WasmFrame*>(pool->Allocate(cfg.call_stack_size * sizeof(WasmFrame)));
-        ctx->labels_pool = static_cast<WasmLabel*>(pool->Allocate(cfg.labels_pool_size * sizeof(WasmLabel)));
-        ctx->stack_size       = cfg.stack_size;
-        ctx->call_stack_size  = cfg.call_stack_size;
-        ctx->labels_pool_size = cfg.labels_pool_size;
-    }
-    ctx->Reset();
+    ctx->Init(*pool, engine_.GetConfig());
     ctx->id = static_cast<uint32_t>(kMainThreadIndex + 1);
 }
 
 void WasmScheduler::Deinit() noexcept {
+    WasmMemoryPool* pool = engine_.GetMemoryPool();
+    if (pool && threads_) {
+        for (std::size_t i = 0; i < kMaxThreads; ++i) {
+            if (threads_[i]) {
+                threads_[i]->DeInit(*pool);
+                pool->Free(threads_[i]);
+                threads_[i] = nullptr;
+            }
+        }
+        pool->Free(threads_);
+    }
     threads_ = nullptr;
     current_thread_index_ = 0;
     for (std::size_t i = 0; i < kMaxEvents; ++i) {
@@ -5044,17 +5067,7 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
                 if (!allocated) return 0;
                 WasmThreadContext* tctx = static_cast<WasmThreadContext*>(allocated);
                 threads_[i] = tctx;
-                {
-                    const WasmEngineConfig& cfg = engine_.GetConfig();
-                    WasmMemoryPool* tpool = engine_.GetMemoryPool();
-                    tctx->stack       = static_cast<WasmValue*>(tpool->Allocate(cfg.stack_size * sizeof(WasmValue)));
-                    tctx->call_stack  = static_cast<WasmFrame*>(tpool->Allocate(cfg.call_stack_size * sizeof(WasmFrame)));
-                    tctx->labels_pool = static_cast<WasmLabel*>(tpool->Allocate(cfg.labels_pool_size * sizeof(WasmLabel)));
-                    tctx->stack_size       = cfg.stack_size;
-                    tctx->call_stack_size  = cfg.call_stack_size;
-                    tctx->labels_pool_size = cfg.labels_pool_size;
-                }
-                tctx->Reset();
+                tctx->Init(*pool, engine_.GetConfig());
                 tctx->id = static_cast<uint32_t>(i + 1);
             }
             threads_[i]->state = ThreadState::kReady;

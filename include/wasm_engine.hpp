@@ -10,6 +10,7 @@ namespace embwasm {
 
 struct WasmModuleInstance;
 struct WasmFunction;
+struct WasmEngineConfig;
 
 /// @brief 制御ブロック（`block` / `loop` / `if`）のラベル情報。
 ///
@@ -102,6 +103,9 @@ struct WasmThreadContext {
         start_func_index = 0;
         start_module = nullptr;
     }
+
+    bool Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept;
+    void DeInit(WasmMemoryPool& pool) noexcept;
 
     WasmModuleInstance *GetCurrentModule() const noexcept;
 };
