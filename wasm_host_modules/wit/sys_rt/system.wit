@@ -1,0 +1,6 @@
+package sys:rt;
+
+/// @cpp-header: "embwasm_hostmodule_system.hpp"
+interface system {
+  exit: func(code: s32);
+}

@@ -507,6 +507,12 @@ public:
     /// @brief プラットフォーム層が使用するデータポインタを設定します。
     void SetPlatformData(void* data) noexcept { platform_data_ = data; }
 
+    /// @brief sys:rt::system::exit で設定された終了コードを返します。
+    int32_t GetExitCode() const noexcept { return exit_code_; }
+
+    /// @brief 終了コードを設定します（sys:rt::system::exit ホスト関数から呼び出されます）。
+    void SetExitCode(int32_t code) noexcept { exit_code_ = code; }
+
     /// @brief 指定ホストモジュールのユーザーデータポインタを返します。
     /// @param module_id  対象のホストモジュール ID。
     void* GetModuleUserData(HostModuleId module_id) const noexcept;
@@ -607,6 +613,7 @@ private:
 #endif
 
     int32_t last_loaded_id_;
+    int32_t exit_code_;
     uint32_t max_call_stack_depth_;
     uint32_t max_stack_depth_;
     void* user_data_;

@@ -47,6 +47,7 @@ struct WasmValue {
 enum class WasmResult : int32_t {
     kOk = 0,
     kYield = 1,                  ///< 実行を一時中断（協調スケジューラへ戻る）。
+    kExit = 2,                   ///< sys:rt::system::exit により実行を終了。
 
     kErrorInvalidArgument = -1, ///< 引数エラー
     kErrorInvalidOperation = -2, ///< 不正な操作

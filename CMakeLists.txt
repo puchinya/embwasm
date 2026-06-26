@@ -16,6 +16,7 @@ endif()
 
 add_subdirectory(wasm_host_modules/src/sockets)
 add_subdirectory(wasm_host_modules/src/sys_rt/stdio)
+add_subdirectory(wasm_host_modules/src/sys_rt/system)
 
 add_subdirectory(src)
 
@@ -24,6 +25,9 @@ if(TARGET embwasm_sockets)
 endif()
 if(TARGET embwasm_stdio)
     target_link_libraries(embwasm PUBLIC embwasm_stdio)
+endif()
+if(TARGET embwasm_system)
+    target_link_libraries(embwasm PUBLIC embwasm_system)
 endif()
 
 add_subdirectory(demo)

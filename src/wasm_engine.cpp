@@ -384,6 +384,7 @@ namespace embwasm {
           scheduler_(*this),
 #endif
           last_loaded_id_(-1),
+          exit_code_(0),
           max_call_stack_depth_(0), max_stack_depth_(0),
           user_data_(nullptr),
           platform_data_(nullptr),
@@ -415,6 +416,7 @@ namespace embwasm {
         }
 #endif
         last_loaded_id_ = -1;
+        exit_code_ = 0;
         max_call_stack_depth_ = 0;
         max_stack_depth_ = 0;
 

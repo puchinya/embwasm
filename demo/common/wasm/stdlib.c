@@ -149,7 +149,8 @@ void* realloc(void* ptr, size_t size) {
 
 // 異常終了時のループ
 void abort(void) {
-    while (1) {}
+    extern void sys_rt_system_exit(int32_t code);
+    sys_rt_system_exit(0);
 }
 
 // 文字列長取得
@@ -162,6 +163,7 @@ size_t strlen(const char* s) {
 }
 
 // メモリコピー
+/*
 void* memcpy(void* dest, const void* src, size_t n) {
     char* d = (char*)dest;
     const char* s = (const char*)src;
@@ -169,4 +171,4 @@ void* memcpy(void* dest, const void* src, size_t n) {
         d[i] = s[i];
     }
     return dest;
-}
+}*/

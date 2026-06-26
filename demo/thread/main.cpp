@@ -51,6 +51,7 @@ int main() {
     std::cout << "Max VM stack depth reached: " << engine.GetMaxStackDepth() << std::endl;
     std::cout << "Memory Used: " << pool.GetUsedBytes() << " / " << pool.GetTotalBytes() << " bytes" << std::endl;
     engine.Deinit();
+    std::cout << "Memory Used: " << pool.GetUsedBytes() << " / " << pool.GetTotalBytes() << " bytes" << std::endl;
     pool.Deinit();
     return 0;
 }

@@ -70,10 +70,12 @@ set(WASM_COMMON_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../common/wasm/stdlib.c)
 set(WASM_OBJ_DIR ${CMAKE_CURRENT_BINARY_DIR}/wasm_objs)
 file(MAKE_DIRECTORY ${WASM_OBJ_DIR})
 
+set(WASM_CFLAGS -mbulk-memory -mmultivalue -msign-ext -mreference-types)
+
 # コンパイル: main.c → main.o (-fstack-usage で静的スタック解析用 .su を生成)
 add_custom_command(
     OUTPUT ${WASM_OBJ_DIR}/main.o
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib -fstack-usage -c
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib -fstack-usage ${WASM_CFLAGS} -c
             -o ${WASM_OBJ_DIR}/main.o
             ${WASM_SRC}
             -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
@@ -84,7 +86,7 @@ add_custom_command(
 # コンパイル: stdlib.c → stdlib.o
 add_custom_command(
     OUTPUT ${WASM_OBJ_DIR}/stdlib.o
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib -fstack-usage -c
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib -fstack-usage ${WASM_CFLAGS} -c
             -o ${WASM_OBJ_DIR}/stdlib.o
             ${WASM_COMMON_SRC}
             -I${WASM_COMMON_INC}
@@ -95,7 +97,7 @@ add_custom_command(
 # コンパイル: wasm_host_api.c → wasm_host_api.o
 add_custom_command(
     OUTPUT ${WASM_OBJ_DIR}/wasm_host_api.o
-    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib -fstack-usage -c
+    COMMAND ${WASM_CLANG} --target=wasm32 -O3 -nostdlib -fstack-usage ${WASM_CFLAGS} -c
             -o ${WASM_OBJ_DIR}/wasm_host_api.o
             ${GEN_WASM_C}
             -I${GEN_WASM_DIR} -I${WASM_COMMON_INC}
