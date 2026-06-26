@@ -20,9 +20,9 @@ int main() {
     // 3. WASMエンジンの構築
     embwasm::WasmEngine engine;
     embwasm::WasmEngineConfig config;
-    config.stack_size = 512;
-    config.call_stack_size = 32;
-    config.labels_pool_size = 128;
+    config.stack_size = 256;
+    config.call_stack_size = 16;
+    config.labels_pool_size = 64;
     engine.Init(pool, config);
 
     // 5. WASMバイナリのロード
@@ -33,7 +33,6 @@ int main() {
         return 1;
     }
     std::cout << "WASM Loaded successfully." << std::endl;
-    std::cout << "Memory Used: " << pool.GetUsedBytes() << " / " << pool.GetTotalBytes() << " bytes" << std::endl;
 
     // 6. エクスポートされた関数の実行
     std::cout << "\nExecuting Exported Function 'main'..." << std::endl;
@@ -48,6 +47,7 @@ int main() {
     std::cout << "Execution finished successfully." << std::endl;
     std::cout << "Max function nesting depth reached: " << engine.GetMaxCallStackDepth() << std::endl;
     std::cout << "Max VM stack depth reached: " << engine.GetMaxStackDepth() << std::endl;
+    std::cout << "Memory Used: " << pool.GetUsedBytes() << " / " << pool.GetTotalBytes() << " bytes" << std::endl;
     engine.Deinit();
     pool.Deinit();
     return 0;
