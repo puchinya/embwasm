@@ -6,10 +6,16 @@
 // scratch using uITRON standard kernel API primitives.
 // =============================================================================
 
+#include "wasm_engine.hpp"
 #include "wasm_platform.hpp"
+#include "wasm_types.hpp"
 #include <kernel.h>
 
 namespace embwasm {
+
+struct WasmEnginePlatformData {
+    ID scheduler_task_id;
+};
 
 uint32_t DisableInterrupts() noexcept {
     // uITRON 標準のディスパッチ禁止状態へ移行します。
@@ -30,7 +36,37 @@ uint32_t PlatformGetTimeMs() noexcept {
     return static_cast<uint32_t>(tim);
 }
 
-void PlatformWaitForActivity(uint32_t timeout_ms) noexcept {
+WasmResult PlatformEngineInit(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(
+        engine.GetMemoryPool()->Allocate(sizeof(WasmEnginePlatformData)));
+    if (!d) return WasmResult::kErrorOutOfMemory;
+    d->scheduler_task_id = 0;
+    engine.SetPlatformData(d);
+    return WasmResult::kOk;
+}
+
+void PlatformEngineDeinit(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (!d) return;
+    engine.GetMemoryPool()->Free(d);
+    engine.SetPlatformData(nullptr);
+}
+
+WasmResult PlatformEngineExecuteBegin(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (!d) return WasmResult::kErrorPlatformInit;
+    ER err = get_tid(&d->scheduler_task_id);
+    if (err != E_OK) return WasmResult::kErrorPlatformInit;
+    return WasmResult::kOk;
+}
+
+void PlatformEngineExecuteEnd(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (d) d->scheduler_task_id = 0;
+}
+
+void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept {
+    (void)engine;
     if (timeout_ms == UINT32_MAX) {
         slp_tsk();
     } else {
@@ -38,11 +74,10 @@ void PlatformWaitForActivity(uint32_t timeout_ms) noexcept {
     }
 }
 
-// スケジューラタスク ID（アプリ層で定義する）
-extern ID g_scheduler_task_id;
-
-void PlatformNotifyActivity() noexcept {
-    iwup_tsk(g_scheduler_task_id);
+void PlatformNotifyActivity(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (!d || d->scheduler_task_id == 0) return;
+    iwup_tsk(d->scheduler_task_id);
 }
 
 } // namespace embwasm

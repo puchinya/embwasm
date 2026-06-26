@@ -386,6 +386,7 @@ namespace embwasm {
           last_loaded_id_(-1),
           max_call_stack_depth_(0), max_stack_depth_(0),
           user_data_(nullptr),
+          platform_data_(nullptr),
           module_user_datas_(nullptr) {
         InitListNode(&name_aliases_);
         for (std::size_t i = 0; i < kMaxModules; ++i) {
@@ -397,7 +398,7 @@ namespace embwasm {
         Deinit();
     }
 
-    void WasmEngine::Init(WasmMemoryPool &pool, const WasmEngineConfig &config) noexcept {
+    WasmResult WasmEngine::Init(WasmMemoryPool &pool, const WasmEngineConfig &config) noexcept {
         Deinit();
 
         config_ = config;
@@ -435,6 +436,12 @@ namespace embwasm {
 #if EMBWASM_ENABLE_MULTITHREADING
         scheduler_.Init();
 #endif
+        WasmResult platform_result = PlatformEngineInit(*this);
+        if (platform_result != WasmResult::kOk) {
+            Deinit();
+            return platform_result;
+        }
+        return WasmResult::kOk;
     }
 
     WasmResult WasmEngine::ResolveImports(WasmModuleInstance *mod) noexcept {
@@ -964,9 +971,11 @@ namespace embwasm {
             if (module_user_datas_) {
                 pool_->Free(module_user_datas_);
             }
+            PlatformEngineDeinit(*this);
         }
         module_user_datas_ = nullptr;
         user_data_ = nullptr;
+        platform_data_ = nullptr;
         last_loaded_id_ = -1;
         pool_ = nullptr;
 #if EMBWASM_ENABLE_MULTITHREADING
@@ -2980,7 +2989,13 @@ namespace embwasm {
             }
         }
 
-        return RunLoop(ctx);
+        {
+            WasmResult begin_res = PlatformEngineExecuteBegin(*this);
+            if (begin_res != WasmResult::kOk) return begin_res;
+            WasmResult run_res = RunLoop(ctx);
+            PlatformEngineExecuteEnd(*this);
+            return run_res;
+        }
     }
 
     WasmResult WasmEngine::RunLoop(WasmThreadContext *ctx) noexcept {

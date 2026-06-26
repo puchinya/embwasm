@@ -129,7 +129,7 @@ void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
             t->wait_kind = WaitKind::kNone;
         }
     }
-    PlatformNotifyActivity();
+    PlatformNotifyActivity(engine_);
 }
 
 void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
@@ -168,7 +168,7 @@ void WasmScheduler::ThreadNotify(uint32_t thread_id) noexcept {
     if (ctx->state == ThreadState::kWaiting && ctx->wait_kind == WaitKind::kNotify) {
         ctx->state    = ThreadState::kReady;
         ctx->wait_kind = WaitKind::kNone;
-        PlatformNotifyActivity();
+        PlatformNotifyActivity(engine_);
     } else {
         ctx->notify_pending = true;
     }
@@ -235,7 +235,7 @@ WasmResult WasmScheduler::Run() noexcept {
         } else {
             PollSleeps();
             if (!HasReadyThread()) {
-                PlatformWaitForActivity(ComputeMinSleepTimeout());
+                PlatformWaitForActivity(engine_, ComputeMinSleepTimeout());
                 PollSleeps();
             }
         }

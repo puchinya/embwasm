@@ -185,7 +185,8 @@ public:
     /// @brief エンジンを初期化します。使用前に必ず呼んでください。
     /// @param pool    エンジンが使用するメモリプール。
     /// @param config  実行時設定（省略時はデフォルト値）。
-    void Init(WasmMemoryPool& pool, const WasmEngineConfig& config = WasmEngineConfig{}) noexcept;
+    /// @return kOk（成功）またはエラーコード。失敗時はリソースを解放済み。
+    WasmResult Init(WasmMemoryPool& pool, const WasmEngineConfig& config = WasmEngineConfig{}) noexcept;
 
     /// @brief エンジンを終了し、すべてのリソースを解放します。
     void Deinit() noexcept;
@@ -271,6 +272,12 @@ public:
     /// @brief ホスト関数向けユーザーデータポインタを設定します。
     /// @param user_data  任意のポインタ。
     void SetUserData(void* user_data) noexcept { user_data_ = user_data; }
+
+    /// @brief プラットフォーム層が使用するデータポインタを返します。
+    void* GetPlatformData() const noexcept { return platform_data_; }
+
+    /// @brief プラットフォーム層が使用するデータポインタを設定します。
+    void SetPlatformData(void* data) noexcept { platform_data_ = data; }
 
     /// @brief 指定ホストモジュールのユーザーデータポインタを返します。
     /// @param module_id  対象のホストモジュール ID。
@@ -413,6 +420,7 @@ private:
     std::size_t max_call_stack_depth_;
     std::size_t max_stack_depth_;
     void* user_data_;
+    void* platform_data_;
     void** module_user_datas_;
 };
 

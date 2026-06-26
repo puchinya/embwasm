@@ -51,6 +51,7 @@ enum class WasmResult : int32_t {
     kErrorInvalidArgument = -1, ///< 引数エラー
     kErrorInvalidOperation = -2, ///< 不正な操作
     kErrorOutOfMemory = -3,      ///< メモリプールが枯渇。
+    kErrorPlatformInit = -5,     ///< プラットフォームリソースの初期化失敗。
 
     kErrorModuleNotFound = -10, ///< 指定したモジュールが見つからない。
     kErrorFunctionNotFound = -11, ///< 指定した関数が見つからない。

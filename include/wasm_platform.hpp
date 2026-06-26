@@ -10,6 +10,9 @@
 
 namespace embwasm {
 
+class WasmEngine;
+enum class WasmResult : int32_t;
+
 // =============================================================================
 // 1. OS依存の処理（プラットフォーム別 cpp に実装されます）
 // =============================================================================
@@ -33,17 +36,47 @@ void RestoreInterrupts(uint32_t primask_val) noexcept;
 uint32_t PlatformGetTimeMs() noexcept;
 
 /**
+ * @brief WasmEngine インスタンス単位のプラットフォームリソースを確保・初期化します。
+ *        WasmEngine::Init() から呼ばれます。
+ * @param engine  初期化対象のエンジン。
+ * @return kOk（成功）またはエラーコード。失敗時は engine.SetPlatformData(nullptr) 済み。
+ */
+WasmResult PlatformEngineInit(WasmEngine& engine) noexcept;
+
+/**
+ * @brief WasmEngine インスタンス単位のプラットフォームリソースを解放します。
+ *        WasmEngine::Deinit() から呼ばれます。
+ */
+void PlatformEngineDeinit(WasmEngine& engine) noexcept;
+
+/**
+ * @brief 実行スレッドの開始をプラットフォームに通知します。
+ *        WasmEngine::ExecuteInternal() の RunLoop 直前から呼ばれます。
+ *        FreeRTOS/uITRON ではここで実行タスクのハンドル／ID を取得します。
+ * @return kOk（成功）またはエラーコード。
+ */
+WasmResult PlatformEngineExecuteBegin(WasmEngine& engine) noexcept;
+
+/**
+ * @brief 実行スレッドの終了をプラットフォームに通知します。
+ *        WasmEngine::ExecuteInternal() の RunLoop 直後から呼ばれます。
+ */
+void PlatformEngineExecuteEnd(WasmEngine& engine) noexcept;
+
+/**
  * @brief ネイティブスレッドを最大 timeout_ms ミリ秒スリープさせます。
  *        PlatformNotifyActivity() が呼ばれると即時復帰します。
- * @param timeout_ms タイムアウト（ms）。UINT32_MAX の場合は無期限待機。
+ * @param engine      対象エンジン。
+ * @param timeout_ms  タイムアウト（ms）。UINT32_MAX の場合は無期限待機。
  */
-void PlatformWaitForActivity(uint32_t timeout_ms) noexcept;
+void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept;
 
 /**
  * @brief PlatformWaitForActivity() で待機中のスレッドを即時起床させます。
  *        ISR やバックグラウンドスレッドから呼び出し可能です。
+ * @param engine  対象エンジン。
  */
-void PlatformNotifyActivity() noexcept;
+void PlatformNotifyActivity(WasmEngine& engine) noexcept;
 
 // =============================================================================
 // 2. OS非依存のコンパイラ・CPUアーキテクチャ最適化処理（ヘッダー共通定義）
