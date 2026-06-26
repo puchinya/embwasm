@@ -35,6 +35,7 @@ wasm_api.h
 .juine/
 .gemini/
 *.su
+*.ci
 
 # ==========================================
 # Claude Code (.claude) ホワイトリスト設定

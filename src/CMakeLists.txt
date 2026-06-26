@@ -38,10 +38,34 @@ else()
 endif()
 
 # 静的スタックサイズ解析ターゲット (cmake --build . --target embwasm_analyze_stack)
-add_custom_target(embwasm_analyze_stack
-    COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/analyze_wasm_stack.py
-            --label "libembwasm host"
-            --dir ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/embwasm.dir
-    DEPENDS embwasm
-    COMMENT "Analyzing libembwasm static stack usage"
-)
+find_program(OPT_EXECUTABLE NAMES opt
+    PATHS /opt/homebrew/bin /usr/local/bin
+    DOC "LLVM opt tool for call-graph extraction")
+
+if(OPT_EXECUTABLE AND CMAKE_EXPORT_COMPILE_COMMANDS)
+    add_custom_target(embwasm_analyze_stack
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/analyze_wasm_stack.py
+                --label "libembwasm host"
+                --dir ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/embwasm.dir
+                --compile-commands ${CMAKE_BINARY_DIR}/compile_commands.json
+                --opt ${OPT_EXECUTABLE}
+                --cc-include "*/src/*.cpp"
+                --cc-include "*/src/hostmodule/**/*.cpp"
+                --cc-include "*/platform/**/*.cpp"
+                --demangle
+        DEPENDS embwasm
+        COMMENT "Analyzing libembwasm static stack usage (with call graph via opt)"
+    )
+else()
+    add_custom_target(embwasm_analyze_stack
+        COMMAND python3 ${CMAKE_SOURCE_DIR}/tools/analyze_wasm_stack.py
+                --label "libembwasm host"
+                --dir ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/embwasm.dir
+        DEPENDS embwasm
+        COMMENT "Analyzing libembwasm static stack usage"
+    )
+    if(NOT OPT_EXECUTABLE)
+        message(STATUS "opt not found; embwasm_analyze_stack will use simple frame sum. "
+                       "Install LLVM (brew install llvm) for call-graph analysis.")
+    endif()
+endif()
