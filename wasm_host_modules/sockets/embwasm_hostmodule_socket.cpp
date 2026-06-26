@@ -105,9 +105,10 @@ static void FreeHandle(int32_t handle) noexcept {
 
 static bool ReadMemory(WasmEngine& engine, int32_t offset, uint8_t* dst, uint32_t len) noexcept {
     if (offset < 0) return false;
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem, mem_size);
     if (!mem) return false;
-    const std::size_t mem_size = engine.GetLinearMemorySize();
     if (static_cast<std::size_t>(static_cast<uint32_t>(offset)) + len > mem_size) return false;
     std::memcpy(dst, mem + static_cast<uint32_t>(offset), len);
     return true;
@@ -115,9 +116,10 @@ static bool ReadMemory(WasmEngine& engine, int32_t offset, uint8_t* dst, uint32_
 
 static bool WriteMemory(WasmEngine& engine, int32_t offset, const uint8_t* src, uint32_t len) noexcept {
     if (offset < 0) return false;
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem, mem_size);
     if (!mem) return false;
-    const std::size_t mem_size = engine.GetLinearMemorySize();
     if (static_cast<std::size_t>(static_cast<uint32_t>(offset)) + len > mem_size) return false;
     std::memcpy(mem + static_cast<uint32_t>(offset), src, len);
     return true;
@@ -488,9 +490,10 @@ WasmResult socket_send(WasmEngine& engine,
         out_result = -1;
         return WasmResult::kOk;
     }
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem, mem_size);
     if (!mem) { out_result = -1; return WasmResult::kOk; }
-    const std::size_t mem_size = engine.GetLinearMemorySize();
     const uint32_t u_ptr = static_cast<uint32_t>(buf_ptr);
     const uint32_t u_len = static_cast<uint32_t>(buf_len);
     if (static_cast<std::size_t>(u_ptr) + u_len > mem_size) {
@@ -510,9 +513,10 @@ WasmResult socket_recv(WasmEngine& engine,
         out_result = -1;
         return WasmResult::kOk;
     }
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem, mem_size);
     if (!mem) { out_result = -1; return WasmResult::kOk; }
-    const std::size_t mem_size = engine.GetLinearMemorySize();
     const uint32_t u_ptr = static_cast<uint32_t>(buf_ptr);
     const uint32_t u_len = static_cast<uint32_t>(buf_len);
     if (static_cast<std::size_t>(u_ptr) + u_len > mem_size) {
@@ -546,9 +550,10 @@ WasmResult socket_send_to(WasmEngine& engine,
         out_result = -1;
         return WasmResult::kOk;
     }
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem, mem_size);
     if (!mem) { out_result = -1; return WasmResult::kOk; }
-    const std::size_t mem_size = engine.GetLinearMemorySize();
     const uint32_t u_ptr = static_cast<uint32_t>(buf_ptr);
     const uint32_t u_len = static_cast<uint32_t>(buf_len);
     if (static_cast<std::size_t>(u_ptr) + u_len > mem_size) {
@@ -582,9 +587,10 @@ WasmResult socket_recv_from(WasmEngine& engine,
         out_result = -1;
         return WasmResult::kOk;
     }
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem, mem_size);
     if (!mem) { out_result = -1; return WasmResult::kOk; }
-    const std::size_t mem_size = engine.GetLinearMemorySize();
     const uint32_t u_ptr = static_cast<uint32_t>(buf_ptr);
     const uint32_t u_len = static_cast<uint32_t>(buf_len);
     if (static_cast<std::size_t>(u_ptr) + u_len > mem_size) {
@@ -689,7 +695,9 @@ WasmResult inet_addr(WasmEngine& engine,
         out_result = 0;
         return WasmResult::kOk;
     }
-    uint8_t* mem = engine.GetLinearMemory();
+    uint8_t* mem;
+    std::size_t mem_size_unused;
+    GetLinearMemoryForHostApi(engine, mem, mem_size_unused);
     if (!mem) { out_result = 0; return WasmResult::kOk; }
     const char* addr_str = reinterpret_cast<const char*>(mem + static_cast<uint32_t>(addr_str_ptr));
     out_result = static_cast<int32_t>(PlatformInetAddr(addr_str));

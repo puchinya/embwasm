@@ -12,16 +12,15 @@ namespace threads {
 // [embwasm-proto:func:thread_spawn]
 WasmResult thread_spawn(WasmEngine& engine, const char* name, uint32_t name_len, int32_t& out_result) noexcept {
 
-    uint8_t* mem_base;
-    size_t mem_size;
-
-    GetLinearMemoryForHostApi(engine, mem_base, mem_size);
-    WasmScheduler* scheduler = engine.GetScheduler();
-
     if (name_len == 0) {
         out_result = -1;
         return WasmResult::kOk;
     }
+
+    uint8_t* mem_base;
+    size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem_base, mem_size);
+    WasmScheduler* scheduler = engine.GetScheduler();
 
     if (reinterpret_cast<const uint8_t *>(name) < mem_base ||
         reinterpret_cast<const uint8_t *>(name) + name_len > mem_base + mem_size) {

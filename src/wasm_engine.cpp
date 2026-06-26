@@ -4965,8 +4965,9 @@ namespace embwasm {
     }
 
     void GetLinearMemoryForHostApi(WasmEngine& engine, uint8_t *&mem_base, size_t &mem_size) noexcept {
-        mem_base = engine.GetLinearMemory();
-        mem_size = engine.GetLinearMemorySize();
+        auto module = engine.GetScheduler()->GetCurrentThreadContext()->GetCurrentModule();
+        mem_base = module->GetLinearMemory();
+        mem_size = module->GetLinearMemorySize();
     }
 
 // -----------------------------------------------------------------------------

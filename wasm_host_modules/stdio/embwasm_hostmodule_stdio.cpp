@@ -16,8 +16,9 @@ WasmResult printf(
     const int32_t* args,
     uint32_t args_len) noexcept
 {
-    uint8_t* mem_base = engine.GetLinearMemory();
-    size_t mem_size = engine.GetLinearMemorySize();
+    uint8_t* mem_base;
+    size_t mem_size;
+    GetLinearMemoryForHostApi(engine, mem_base, mem_size);
 
     // 境界チェック
     ptrdiff_t fmt_off = reinterpret_cast<const uint8_t*>(fmt) - mem_base;

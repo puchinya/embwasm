@@ -1061,7 +1061,9 @@ def _gen_dispatch_case(api: dict, const_name: str) -> str:
             name = param_names[j] if j < len(param_names) else f'arg{j}'
             lines.extend(_gen_param_pop_lines(name, param_wit_types[j], i, type_defs))
         if needs_mem:
-            lines.append(f'{i}uint8_t* _mem = engine.GetLinearMemory();')
+            lines.append(f'{i}uint8_t* _mem;')
+            lines.append(f'{i}std::size_t _mem_size_unused;')
+            lines.append(f'{i}GetLinearMemoryForHostApi(engine, _mem, _mem_size_unused);')
         lines.append(f'{i}{res_cpp} _result;')
         call_args = ['engine']
         for name, wt in zip(param_names, param_wit_types):
@@ -1084,7 +1086,9 @@ def _gen_dispatch_case(api: dict, const_name: str) -> str:
         # Pop self handle (last to pop = bottom of stack)
         lines.append(f'{i}{res_cpp} _self(static_cast<int32_t>(ctx->stack[--ctx->stack_top].value.i32));')
         if needs_mem:
-            lines.append(f'{i}uint8_t* _mem = engine.GetLinearMemory();')
+            lines.append(f'{i}uint8_t* _mem;')
+            lines.append(f'{i}std::size_t _mem_size_unused;')
+            lines.append(f'{i}GetLinearMemoryForHostApi(engine, _mem, _mem_size_unused);')
         for idx, rt in enumerate(result_wit_types):
             out_name = '_out_result' if idx == 0 else f'_out_result{idx}'
             lines.append(f'{i}{_wit_to_out_var_type(rt, type_defs)} {out_name}{{}};')
@@ -1112,7 +1116,9 @@ def _gen_dispatch_case(api: dict, const_name: str) -> str:
             name = param_names[j] if j < len(param_names) else f'arg{j}'
             lines.extend(_gen_param_pop_lines(name, param_wit_types[j], i, type_defs))
         if needs_mem:
-            lines.append(f'{i}uint8_t* _mem = engine.GetLinearMemory();')
+            lines.append(f'{i}uint8_t* _mem;')
+            lines.append(f'{i}std::size_t _mem_size_unused;')
+            lines.append(f'{i}GetLinearMemoryForHostApi(engine, _mem, _mem_size_unused);')
         for idx, rt in enumerate(result_wit_types):
             out_name = '_out_result' if idx == 0 else f'_out_result{idx}'
             lines.append(f'{i}{_wit_to_out_var_type(rt, type_defs)} {out_name}{{}};')
@@ -1138,7 +1144,9 @@ def _gen_dispatch_case(api: dict, const_name: str) -> str:
         lines.extend(_gen_param_pop_lines(name, param_wit_types[j], i, type_defs))
 
     if needs_mem:
-        lines.append(f'{i}uint8_t* _mem = engine.GetLinearMemory();')
+        lines.append(f'{i}uint8_t* _mem;')
+        lines.append(f'{i}std::size_t _mem_size_unused;')
+        lines.append(f'{i}GetLinearMemoryForHostApi(engine, _mem, _mem_size_unused);')
 
     for idx, rt in enumerate(result_wit_types):
         out_name = '_out_result' if idx == 0 else f'_out_result{idx}'

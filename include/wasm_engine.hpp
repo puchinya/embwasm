@@ -539,48 +539,6 @@ public:
             ? modules_[instance_id]->linear_memory_size : 0;
     }
 
-    /// @brief 現在実行中のモジュールの線形メモリ先頭ポインタを返します（ホストモジュール向け後方互換 API）。
-    uint8_t* GetLinearMemory() const noexcept {
-#if EMBWASM_ENABLE_MULTITHREADING
-        const WasmThreadContext* ctx = scheduler_.GetCurrentThreadContext();
-#else
-        const WasmThreadContext* ctx = ctx_;
-#endif
-        if (ctx && ctx->call_stack_top > 0) {
-            const WasmFrame& frame = ctx->call_stack[ctx->call_stack_top - 1];
-            if (frame.func && frame.func->module) {
-                return frame.func->module->linear_memory_ptr;
-            }
-        }
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i] && modules_[i]->is_active && modules_[i]->linear_memory_ptr) {
-                return modules_[i]->linear_memory_ptr;
-            }
-        }
-        return nullptr;
-    }
-
-    /// @brief 現在実行中のモジュールの線形メモリサイズを返します（ホストモジュール向け後方互換 API）。
-    std::size_t GetLinearMemorySize() const noexcept {
-#if EMBWASM_ENABLE_MULTITHREADING
-        const WasmThreadContext* ctx = scheduler_.GetCurrentThreadContext();
-#else
-        const WasmThreadContext* ctx = ctx_;
-#endif
-        if (ctx && ctx->call_stack_top > 0) {
-            const WasmFrame& frame = ctx->call_stack[ctx->call_stack_top - 1];
-            if (frame.func && frame.func->module) {
-                return frame.func->module->linear_memory_size;
-            }
-        }
-        for (std::size_t i = 0; i < kMaxModules; ++i) {
-            if (modules_[i] && modules_[i]->is_active && modules_[i]->linear_memory_ptr) {
-                return modules_[i]->linear_memory_size;
-            }
-        }
-        return 0;
-    }
-
     /// @brief エンジンが使用するメモリプールへのポインタを返します。
     WasmMemoryPool* GetMemoryPool() const noexcept { return pool_; }
 
