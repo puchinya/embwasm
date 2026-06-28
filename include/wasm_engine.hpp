@@ -306,148 +306,6 @@ struct WasmEvent {
     }
 };
 
-/// @brief 協調型マルチスレッドスケジューラ。
-///
-/// `WasmEngine` に内包されており、ユーザーが直接インスタンス化する必要はありません。
-/// `engine.GetScheduler()` で参照を取得できます。
-/// ラウンドロビン方式で `kReady` 状態のスレッドを順に実行します。
-class WasmScheduler {
-public:
-    /// @brief メインスレッド専用スロットのインデックス（slot 0）。
-    static constexpr uint32_t kMainThreadIndex = 0;
-
-    /// @brief コンストラクタ。`WasmEngine` の初期化時に自動的に呼ばれます。
-    /// @param engine  所属するエンジンインスタンスへの参照。
-    WasmScheduler(WasmEngine& engine) noexcept;
-
-    /// @brief スレッドプールを確保しメインスレッドを初期化します。`WasmEngine::Init()` から呼ばれます。
-    void Init() noexcept;
-
-    /// @brief スケジューラをクリーンアップします。`WasmEngine::Deinit()` から呼ばれます。
-    void Deinit() noexcept;
-
-    /// @brief ワーカースレッドを作成します（slot 1 以降を使用）。ホスト API から呼ばれます。
-    /// @param func_index  実行する WASM 関数のインデックス。
-    /// @return 作成されたスレッドの ID（1-based）。作成失敗時は 0 を返します。
-    uint32_t CreateThread(uint32_t func_index) noexcept;
-
-    /// @brief ホストがスレッドを生成します（kCreated 状態・未開始）。
-    ///        SetThreadCallback() → PushThreadArg() → StartThread() の順で設定後、
-    ///        RunUntilThreadDone() を呼んで実行します。
-    /// @param module     実行するモジュールインスタンス。
-    /// @param func_index 実行する関数インデックス。
-    /// @return スレッド ID（1-based）。失敗時は 0。
-    uint32_t CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept;
-
-    /// @brief スレッドの完了コールバックとユーザーデータを設定します。
-    ///        コールバック引数: (WasmThreadContext*, user_data, WasmResult)。
-    void SetThreadCallback(uint32_t thread_id,
-                           WasmThreadCompletionCallback callback,
-                           void* user_data) noexcept;
-
-    /// @brief スレッドのスタックに引数を 1 つ積みます（StartThread() より前に呼ぶ）。
-    /// @return kOk または kErrorExecuteTrapStackOverflow（スタック溢れ時）。
-    WasmResult PushThreadArg(uint32_t thread_id, WasmValue value) noexcept;
-
-    /// @brief スレッドを kReady 状態にして実行を開始します。
-    void StartThread(uint32_t thread_id) noexcept;
-
-    /// @brief 指定スレッドの実行結果を返します（kTerminated 後のみ有効）。
-    WasmResult GetThreadResult(uint32_t thread_id) const noexcept;
-
-    /// @brief インタプリタメインループを実行します（専用 OS スレッドで呼ぶ）。
-    ///        StopInterpreterLoop() が呼ばれるまでブロックします。
-    ///        CreateHostThread() はこのループ実行中のみ別 OS スレッドから呼び出し可能です。
-    /// @return kOk（正常停止）またはエラーコード。
-    WasmResult RunInterpreterLoop() noexcept;
-
-    /// @brief RunInterpreterLoop() を停止させます（別 OS スレッドから呼び出し可能）。
-    void StopInterpreterLoop() noexcept;
-
-    /// @brief 新しいイベントを取得します。
-    /// @return イベント ID（1-based）。取得失敗時は 0 を返します。
-    uint32_t CreateEvent() noexcept;
-
-    /// @brief 指定イベントをシグナルし、待機中のスレッドを `kReady` にします。
-    /// @param event_id  シグナルするイベント ID。
-    void SignalEvent(uint32_t event_id) noexcept;
-
-    /// @brief 指定スレッドを指定イベントの待機状態（`kWaiting`）に移行します。
-    ///        既にシグナル済みの場合は待機せずに `kReady` のままにします。
-    /// @param thread_id  対象スレッドの ID（1-based）。
-    /// @param event_id   待機するイベント ID。
-    void WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept;
-
-    /// @brief 指定スレッドを `kNotify` 待機状態（`kWaiting`）に移行します。
-    ///        `notify_pending` が立っていた場合は即 `kReady` に戻します。
-    ///        非同期 I/O 待ちホスト関数から呼ばれます。
-    void ThreadWait(uint32_t thread_id) noexcept;
-
-    /// @brief 指定スレッドの `kNotify` 待機を解除して `kReady` にします。
-    ///        完了ハンドラ（I/O マネージャスレッド）からスタックに結果を積んだ後に呼びます。
-    ///        この関数は他のネイティブスレッドから実行可能です。
-    void ThreadNotify(uint32_t thread_id) noexcept;
-
-    /// @brief 指定スレッドを `duration_ms` ミリ秒スリープさせます。
-    void ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept;
-
-    /// @brief すべてのスレッドが終了するまでラウンドロビンで実行します。
-    /// @return 正常終了時は kOk。いずれかのスレッドでエラーが発生した場合はそのエラーコード。
-    WasmResult Run() noexcept;
-
-    /// @brief メインスレッドにモジュールと関数を割り当て `kReady` 状態にします。
-    ///        `WasmEngine::Execute()` および Start 関数実行時に内部から呼ばれます。
-    /// @param mod         実行するモジュールインスタンス。
-    /// @param func_index  実行する関数のインデックス。
-    /// @return メインスレッドの ID。
-    uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
-
-    /// @brief メインスレッドのコンテキストを返します。未初期化時は `nullptr` を返します。
-    WasmThreadContext* GetMainThreadContext() noexcept {
-        return (threads_) ? threads_[kMainThreadIndex] : nullptr;
-    }
-
-    /// @brief 指定 ID のスレッドコンテキストを返します。
-    /// @param thread_id  スレッド ID（`CreateThread` の戻り値、1-based）。
-    /// @return 対応する WasmThreadContext へのポインタ。無効な ID の場合は `nullptr`。
-    WasmThreadContext* GetThreadContext(uint32_t thread_id) noexcept {
-        if (thread_id == 0 || thread_id > kMaxThreads || !threads_) return nullptr;
-        return threads_[thread_id - 1];
-    }
-
-    /// @brief 所属するエンジンインスタンスへの参照を返します。
-    WasmEngine& GetEngine() noexcept { return engine_; }
-
-    /// @brief 現在実行中のスレッドコンテキストを返します。
-    WasmThreadContext* GetCurrentThreadContext() noexcept {
-        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
-    }
-    /// @brief 現在実行中のスレッドコンテキストを返します（const 版）。
-    const WasmThreadContext* GetCurrentThreadContext() const noexcept {
-        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
-    }
-
-private:
-    /// @brief ラウンドロビンで kReady なスレッドを 1 つ選び 1 ステップ実行します。
-    WasmResult Step() noexcept;
-
-    /// @brief kReady 状態のスレッドが 1 つでも存在するか確認します。
-    bool HasReadyThread() noexcept;
-
-    /// @brief kSleep スレッドの次の起床時刻までの残時間（ms）を返します。
-    ///        sleep スレッドが 1 つもない場合は UINT32_MAX を返します。
-    uint32_t ComputeMinSleepTimeout() noexcept;
-
-    /// @brief 起床時刻を過ぎた kSleep スレッドを kReady に移行します。
-    void PollSleeps() noexcept;
-
-    WasmEngine& engine_;
-    WasmThreadContext** threads_;
-    WasmEvent events_[kMaxEvents];
-    uint32_t current_thread_index_;
-    bool stop_requested_;  ///< RunInterpreterLoop 停止フラグ（PlatformLock 下でアクセス）。
-};
-
 #endif // EMBWASM_ENABLE_MULTITHREADING
 
 /// @brief ベアメタル環境向け極小 WASM 実行エンジン。
@@ -572,15 +430,42 @@ public:
     void SetModuleUserData(HostModuleId module_id, void* user_data) noexcept;
 
 #if EMBWASM_ENABLE_MULTITHREADING
-    /// @brief エンジン内蔵の協調スケジューラへのポインタを返します。
-    WasmScheduler* GetScheduler() noexcept { return &scheduler_; }
+    static constexpr uint32_t kMainThreadIndex = 0;
 
-    /// @brief インタプリタメインループを実行します（専用 OS スレッドで呼ぶ）。
-    ///        StopInterpreterLoop() が呼ばれるまでブロックします。
-    WasmResult RunInterpreterLoop() noexcept { return scheduler_.RunInterpreterLoop(); }
+    uint32_t CreateThread(uint32_t func_index) noexcept;
+    uint32_t CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept;
+    void SetThreadCallback(uint32_t thread_id, WasmThreadCompletionCallback callback, void* user_data) noexcept;
+    WasmResult PushThreadArg(uint32_t thread_id, WasmValue value) noexcept;
+    void StartThread(uint32_t thread_id) noexcept;
+    WasmResult GetThreadResult(uint32_t thread_id) const noexcept;
 
-    /// @brief RunInterpreterLoop() を停止させます（別 OS スレッドから呼び出し可能）。
-    void StopInterpreterLoop() noexcept { scheduler_.StopInterpreterLoop(); }
+    uint32_t CreateEvent() noexcept;
+    void SignalEvent(uint32_t event_id) noexcept;
+    void WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept;
+
+    void ThreadWait(uint32_t thread_id) noexcept;
+    void ThreadNotify(uint32_t thread_id) noexcept;
+    void ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept;
+
+    WasmResult Run() noexcept;
+    WasmResult RunInterpreterLoop() noexcept;
+    void StopInterpreterLoop() noexcept;
+
+    uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
+
+    WasmThreadContext* GetMainThreadContext() noexcept {
+        return (threads_) ? threads_[kMainThreadIndex] : nullptr;
+    }
+    WasmThreadContext* GetThreadContext(uint32_t thread_id) noexcept {
+        if (thread_id == 0 || thread_id > kMaxThreads || !threads_) return nullptr;
+        return threads_[thread_id - 1];
+    }
+    WasmThreadContext* GetCurrentThreadContext() noexcept {
+        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
+    }
+    const WasmThreadContext* GetCurrentThreadContext() const noexcept {
+        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
+    }
 #endif
 
     /// @brief 指定モジュール・関数インデックスで実行ループを起動します（内部 API）。
@@ -634,8 +519,6 @@ public:
     void RegisterAlias(const char* real_name, std::size_t real_name_len, const char* alias_name, std::size_t alias_name_len) noexcept;
 
 private:
-    friend class WasmScheduler;
-
     WasmResult ExecuteResolved(WasmModuleInstance* mod, uint32_t func_idx,
                                const WasmValue* args, uint32_t arg_count,
                                WasmValue* results, uint32_t result_count) noexcept;
@@ -663,7 +546,15 @@ private:
     WasmModuleInstance* modules_[kMaxModules];
 
 #if EMBWASM_ENABLE_MULTITHREADING
-    WasmScheduler scheduler_;
+    WasmThreadContext** threads_;
+    WasmEvent events_[kMaxEvents];
+    uint32_t current_thread_index_;
+    bool stop_requested_;
+
+    WasmResult Step() noexcept;
+    bool HasReadyThread() noexcept;
+    uint32_t ComputeMinSleepTimeout() noexcept;
+    void PollSleeps() noexcept;
 #else
     WasmThreadContext* ctx_;
 #endif

@@ -20,14 +20,12 @@ WasmResult thread_spawn(WasmEngine& engine, const char* name, uint32_t name_len,
     uint8_t* mem_base;
     size_t mem_size;
     GetLinearMemoryForHostApi(engine, mem_base, mem_size);
-    WasmScheduler* scheduler = engine.GetScheduler();
-
     if (reinterpret_cast<const uint8_t *>(name) < mem_base ||
         reinterpret_cast<const uint8_t *>(name) + name_len > mem_base + mem_size) {
         return WasmResult::kErrorExecuteTrapMemoryOutOfBounds;
     }
 
-    WasmThreadContext* ctx = scheduler->GetCurrentThreadContext();
+    WasmThreadContext* ctx = engine.GetCurrentThreadContext();
     WasmModuleInstance* calling_mod = ctx->GetCurrentModule();
     int32_t func_idx = calling_mod->GetExportFunctionIndex(name, name_len);
     if (func_idx < 0) {
@@ -35,7 +33,7 @@ WasmResult thread_spawn(WasmEngine& engine, const char* name, uint32_t name_len,
         return WasmResult::kOk;
     }
 
-    uint32_t thread_id = scheduler->CreateThread(func_idx);
+    uint32_t thread_id = engine.CreateThread(func_idx);
     out_result = static_cast<int32_t>(thread_id);
 
     return WasmResult::kOk;
@@ -49,19 +47,14 @@ WasmResult thread_yield(WasmEngine& engine) noexcept {
 
 // [embwasm-proto:func:event_wait]
 WasmResult event_wait(WasmEngine& engine, int32_t event_id) noexcept {
-    WasmScheduler* scheduler = engine.GetScheduler();
-    WasmThreadContext* current = scheduler->GetCurrentThreadContext();
-
-    scheduler->WaitEvent(current->id, static_cast<uint32_t>(event_id));
-
+    WasmThreadContext* current = engine.GetCurrentThreadContext();
+    engine.WaitEvent(current->id, static_cast<uint32_t>(event_id));
     return WasmResult::kYield;
 }
 
 // [embwasm-proto:func:event_signal]
 WasmResult event_signal(WasmEngine& engine, int32_t event_id) noexcept {
-    WasmScheduler* scheduler = engine.GetScheduler();
-    scheduler->SignalEvent(static_cast<uint32_t>(event_id));
-
+    engine.SignalEvent(static_cast<uint32_t>(event_id));
     return WasmResult::kOk;
 }
 

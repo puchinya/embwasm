@@ -17,9 +17,8 @@ class WasmThreadTest : public ::testing::Test {
 protected:
     WasmMemoryPool pool;
     WasmEngine engine;
-    WasmScheduler& scheduler;
 
-    WasmThreadTest() : engine(), scheduler(*engine.GetScheduler()) {}
+    WasmThreadTest() : engine() {}
 
     void SetUp() override {
         pool.Init(g_wasm_pool_buf, sizeof(g_wasm_pool_buf));
@@ -48,40 +47,40 @@ TEST_F(WasmThreadTest, EventReset) {
 
 TEST_F(WasmThreadTest, CreateThread) {
     // ワーカースレッド（slot 1 以降）が生成されることを確認
-    uint32_t tid = scheduler.CreateThread(0);
+    uint32_t tid = engine.CreateThread(0);
     EXPECT_NE(tid, 0);
-    WasmThreadContext* ctx = scheduler.GetThreadContext(tid);
+    WasmThreadContext* ctx = engine.GetThreadContext(tid);
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->id, tid);
 }
 
 TEST_F(WasmThreadTest, CreateEvent) {
-    uint32_t eid = scheduler.CreateEvent();
+    uint32_t eid = engine.CreateEvent();
     EXPECT_NE(eid, 0);
 }
 
 TEST_F(WasmThreadTest, SignalWaitEvent) {
-    uint32_t tid = scheduler.CreateThread(0);
-    uint32_t eid = scheduler.CreateEvent();
-    WasmThreadContext* ctx = scheduler.GetThreadContext(tid);
+    uint32_t tid = engine.CreateThread(0);
+    uint32_t eid = engine.CreateEvent();
+    WasmThreadContext* ctx = engine.GetThreadContext(tid);
     ASSERT_NE(ctx, nullptr);
 
-    scheduler.WaitEvent(tid, eid);
+    engine.WaitEvent(tid, eid);
     EXPECT_EQ(ctx->state, ThreadState::kWaiting);
     EXPECT_EQ(ctx->wait_param.event_id, eid);
 
-    scheduler.SignalEvent(eid);
+    engine.SignalEvent(eid);
     EXPECT_EQ(ctx->state, ThreadState::kReady);
 }
 
 TEST_F(WasmThreadTest, WaitSignaledEvent) {
-    uint32_t tid = scheduler.CreateThread(0);
-    uint32_t eid = scheduler.CreateEvent();
-    WasmThreadContext* ctx = scheduler.GetThreadContext(tid);
+    uint32_t tid = engine.CreateThread(0);
+    uint32_t eid = engine.CreateEvent();
+    WasmThreadContext* ctx = engine.GetThreadContext(tid);
     ASSERT_NE(ctx, nullptr);
 
-    scheduler.SignalEvent(eid);
-    scheduler.WaitEvent(tid, eid);
+    engine.SignalEvent(eid);
+    engine.WaitEvent(tid, eid);
     // シグナル済みなら即座にReadyに戻る
     EXPECT_EQ(ctx->state, ThreadState::kReady);
 }
@@ -99,16 +98,16 @@ TEST_F(WasmThreadTest, ThreadYieldApi) {
 }
 
 TEST_F(WasmThreadTest, EventWaitSignalApi) {
-    (void)scheduler.CreateThread(0);
-    uint32_t eid = scheduler.CreateEvent();
+    (void)engine.CreateThread(0);
+    uint32_t eid = engine.CreateEvent();
 
     WasmResult res = hostmodules::sys::rt::threads::event_wait(engine, static_cast<int32_t>(eid));
     EXPECT_EQ(res, WasmResult::kYield);
-    EXPECT_EQ(scheduler.GetCurrentThreadContext()->state, ThreadState::kWaiting);
+    EXPECT_EQ(engine.GetCurrentThreadContext()->state, ThreadState::kWaiting);
 
     res = hostmodules::sys::rt::threads::event_signal(engine, static_cast<int32_t>(eid));
     EXPECT_EQ(res, WasmResult::kOk);
-    EXPECT_EQ(scheduler.GetCurrentThreadContext()->state, ThreadState::kReady);
+    EXPECT_EQ(engine.GetCurrentThreadContext()->state, ThreadState::kReady);
 }
 
 } // namespace embwasm

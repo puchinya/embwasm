@@ -65,14 +65,13 @@ int main() {
         return 1;
     }
 
-    embwasm::WasmScheduler* sched = engine.GetScheduler();
     SyncData sync;
 
     std::cout << "\nCreating async Wasm thread..." << std::endl;
-    uint32_t tid = sched->CreateHostThread(mod, static_cast<uint32_t>(func_idx)); // Step 2
-    sched->SetThreadCallback(tid, on_task_done, &sync);                            // Step 2
-    sched->PushThreadArg(tid, embwasm::WasmValue::FromI32(3));                    // Step 3: n=3
-    sched->StartThread(tid);                                                       // Step 4
+    uint32_t tid = engine.CreateHostThread(mod, static_cast<uint32_t>(func_idx)); // Step 2
+    engine.SetThreadCallback(tid, on_task_done, &sync);                            // Step 2
+    engine.PushThreadArg(tid, embwasm::WasmValue::FromI32(3));                    // Step 3: n=3
+    engine.StartThread(tid);                                                       // Step 4
 
     // Step 5: コールバックが呼ばれるまで待機
     std::cout << "Waiting for async task to complete..." << std::endl;

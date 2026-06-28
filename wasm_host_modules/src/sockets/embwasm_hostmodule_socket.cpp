@@ -147,7 +147,7 @@ struct AsyncSocketOp {
     uint32_t buf_len;
     int flags;
     uint32_t thread_id;
-    WasmScheduler* sched;
+    WasmEngine* engine;
     WasmThreadContext* ctx;
     bool active;
 };
@@ -227,7 +227,7 @@ static void* IoManagerThread(void*) {
 
             // 結果をスタックへ積んでから ThreadNotify（IP 巻き戻し不要）
             op.ctx->stack[op.ctx->stack_top++] = WasmValue::FromI32(result);
-            op.sched->ThreadNotify(op.thread_id);
+            op.engine->ThreadNotify(op.thread_id);
 
             pthread_mutex_lock(&g_async_mutex);
         }
@@ -259,9 +259,7 @@ static bool RegisterAsyncAccept(WasmEngine& engine, int32_t handle) noexcept {
     PlatformSocket ps = GetPlatformSocket(handle);
     if (ps == kInvalidPlatformSocket) return false;
 
-    WasmScheduler* sched = engine.GetScheduler();
-    if (!sched) return false;
-    WasmThreadContext* ctx = sched->GetCurrentThreadContext();
+    WasmThreadContext* ctx = engine.GetCurrentThreadContext();
     if (!ctx) return false;
 
     pthread_mutex_lock(&g_async_mutex);
@@ -273,7 +271,7 @@ static bool RegisterAsyncAccept(WasmEngine& engine, int32_t handle) noexcept {
             g_async_ops[i].buf_len   = 0;
             g_async_ops[i].flags     = 0;
             g_async_ops[i].thread_id = ctx->id;
-            g_async_ops[i].sched     = sched;
+            g_async_ops[i].engine    = &engine;
             g_async_ops[i].ctx       = ctx;
             g_async_ops[i].active    = true;
             pthread_mutex_unlock(&g_async_mutex);
@@ -290,9 +288,7 @@ static bool RegisterAsyncRecv(WasmEngine& engine, int32_t handle,
     PlatformSocket ps = GetPlatformSocket(handle);
     if (ps == kInvalidPlatformSocket) return false;
 
-    WasmScheduler* sched = engine.GetScheduler();
-    if (!sched) return false;
-    WasmThreadContext* ctx = sched->GetCurrentThreadContext();
+    WasmThreadContext* ctx = engine.GetCurrentThreadContext();
     if (!ctx) return false;
 
     pthread_mutex_lock(&g_async_mutex);
@@ -304,7 +300,7 @@ static bool RegisterAsyncRecv(WasmEngine& engine, int32_t handle,
             g_async_ops[i].buf_len   = buf_len;
             g_async_ops[i].flags     = flags;
             g_async_ops[i].thread_id = ctx->id;
-            g_async_ops[i].sched     = sched;
+            g_async_ops[i].engine    = &engine;
             g_async_ops[i].ctx       = ctx;
             g_async_ops[i].active    = true;
             pthread_mutex_unlock(&g_async_mutex);
@@ -434,10 +430,9 @@ WasmResult socket_accept(WasmEngine& engine,
 #if !defined(_WIN32)
     // 非同期モード: I/O マネージャに委譲して kYield を返す
     if (RegisterAsyncAccept(engine, sock)) {
-        WasmScheduler* sched = engine.GetScheduler();
-        WasmThreadContext* ctx = sched ? sched->GetCurrentThreadContext() : nullptr;
+        WasmThreadContext* ctx = engine.GetCurrentThreadContext();
         if (ctx) {
-            sched->ThreadWait(ctx->id);
+            engine.ThreadWait(ctx->id);
             return WasmResult::kYield;
         }
     }
@@ -527,10 +522,9 @@ WasmResult socket_recv(WasmEngine& engine,
 #if !defined(_WIN32)
     // 非同期モード: I/O マネージャに委譲して kYield を返す
     if (RegisterAsyncRecv(engine, sock, mem + u_ptr, u_len, flags)) {
-        WasmScheduler* sched = engine.GetScheduler();
-        WasmThreadContext* ctx = sched ? sched->GetCurrentThreadContext() : nullptr;
+        WasmThreadContext* ctx = engine.GetCurrentThreadContext();
         if (ctx) {
-            sched->ThreadWait(ctx->id);
+            engine.ThreadWait(ctx->id);
             return WasmResult::kYield;
         }
     }

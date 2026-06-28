@@ -381,7 +381,9 @@ namespace embwasm {
           ctx_(nullptr),
 #endif
 #if EMBWASM_ENABLE_MULTITHREADING
-          scheduler_(*this),
+          threads_(nullptr),
+          current_thread_index_(0),
+          stop_requested_(false),
 #endif
           last_loaded_id_(-1),
           exit_code_(0),
@@ -393,6 +395,12 @@ namespace embwasm {
         for (std::size_t i = 0; i < kMaxModules; ++i) {
             modules_[i] = nullptr;
         }
+#if EMBWASM_ENABLE_MULTITHREADING
+        for (std::size_t i = 0; i < kMaxEvents; ++i) {
+            events_[i].Reset();
+            events_[i].id = static_cast<uint32_t>(i + 1);
+        }
+#endif
     }
 
     WasmEngine::~WasmEngine() noexcept {
@@ -430,7 +438,27 @@ namespace embwasm {
         }
         InitializeAllHostModules(*this);
 #if EMBWASM_ENABLE_MULTITHREADING
-        scheduler_.Init();
+        stop_requested_ = false;
+        {
+            void* allocated = pool_->Allocate(sizeof(WasmThreadContext*) * kMaxThreads);
+            if (allocated) {
+                threads_ = static_cast<WasmThreadContext**>(allocated);
+                for (std::size_t i = 0; i < kMaxThreads; ++i) {
+                    threads_[i] = nullptr;
+                }
+                void* main_ctx = pool_->Allocate(sizeof(WasmThreadContext));
+                if (main_ctx) {
+                    WasmThreadContext* ctx = static_cast<WasmThreadContext*>(main_ctx);
+                    threads_[kMainThreadIndex] = ctx;
+                    ctx->Init(*pool_, config_);
+                    ctx->id = static_cast<uint32_t>(kMainThreadIndex + 1);
+                }
+            }
+        }
+        for (std::size_t i = 0; i < kMaxEvents; ++i) {
+            events_[i].Reset();
+            events_[i].id = static_cast<uint32_t>(i + 1);
+        }
 #endif
         WasmResult platform_result = PlatformEngineInit(*this);
         if (platform_result != WasmResult::kOk) {
@@ -778,9 +806,9 @@ namespace embwasm {
             if (mod->start_function_index != -1) {
                 WasmResult res;
 #if EMBWASM_ENABLE_MULTITHREADING
-                uint32_t tid = scheduler_.SetupMainThread(mod, static_cast<uint32_t>(mod->start_function_index));
+                uint32_t tid = SetupMainThread(mod, static_cast<uint32_t>(mod->start_function_index));
                 if (tid == 0) return WasmResult::kErrorOutOfMemory;
-                res = scheduler_.Run();
+                res = Run();
 #else
                 if (ctx_) {
                     ctx_->Reset();
@@ -975,6 +1003,18 @@ namespace embwasm {
                 ctx_ = nullptr;
             }
 #endif
+#if EMBWASM_ENABLE_MULTITHREADING
+            if (threads_) {
+                for (std::size_t i = 0; i < kMaxThreads; ++i) {
+                    if (threads_[i]) {
+                        threads_[i]->DeInit(*pool_);
+                        pool_->Free(threads_[i]);
+                        threads_[i] = nullptr;
+                    }
+                }
+                pool_->Free(threads_);
+            }
+#endif
         }
         module_user_datas_ = nullptr;
         user_data_ = nullptr;
@@ -982,7 +1022,12 @@ namespace embwasm {
         last_loaded_id_ = -1;
         pool_ = nullptr;
 #if EMBWASM_ENABLE_MULTITHREADING
-        scheduler_.Deinit();
+        threads_ = nullptr;
+        current_thread_index_ = 0;
+        for (std::size_t i = 0; i < kMaxEvents; ++i) {
+            events_[i].Reset();
+            events_[i].id = static_cast<uint32_t>(i + 1);
+        }
 #endif
     }
 
@@ -2597,10 +2642,10 @@ namespace embwasm {
                                            const WasmValue* args, uint32_t arg_count,
                                            WasmValue* results, uint32_t result_count) noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
-        uint32_t thread_id = scheduler_.SetupMainThread(mod, func_idx);
+        uint32_t thread_id = SetupMainThread(mod, func_idx);
         if (thread_id == 0) return WasmResult::kErrorOutOfMemory;
 
-        WasmThreadContext* exec_ctx = scheduler_.GetMainThreadContext();
+        WasmThreadContext* exec_ctx = GetMainThreadContext();
         if (!exec_ctx) return WasmResult::kErrorOutOfMemory;
 
         exec_ctx->stack_top = 0;
@@ -2612,7 +2657,7 @@ namespace embwasm {
             exec_ctx->stack[exec_ctx->stack_top++] = args[i];
         }
 
-        WasmResult res = scheduler_.Run();
+        WasmResult res = Run();
 
         if (res == WasmResult::kOk) {
             const WasmFunction& func = mod->functions[func_idx];
@@ -2828,7 +2873,7 @@ namespace embwasm {
     WasmResult WasmEngine::
     ExecuteInternal(WasmModuleInstance *module, uint32_t func_index) noexcept {
 #if EMBWASM_ENABLE_MULTITHREADING
-        WasmThreadContext *ctx = scheduler_.GetCurrentThreadContext();
+        WasmThreadContext *ctx = GetCurrentThreadContext();
 #else
         WasmThreadContext *ctx = ctx_;
 #endif
@@ -4968,7 +5013,7 @@ namespace embwasm {
     }
 
     void GetLinearMemoryForHostApi(WasmEngine& engine, uint8_t *&mem_base, size_t &mem_size) noexcept {
-        auto module = engine.GetScheduler()->GetCurrentThreadContext()->GetCurrentModule();
+        auto module = engine.GetCurrentThreadContext()->GetCurrentModule();
         mem_base = module->GetLinearMemory();
         mem_size = module->GetLinearMemorySize();
     }
@@ -4999,53 +5044,7 @@ void WasmThreadContext::DeInit(WasmMemoryPool& pool) noexcept {
     Reset();
 }
 
-WasmScheduler::WasmScheduler(WasmEngine& engine) noexcept
-    : engine_(engine), threads_(nullptr), current_thread_index_(0) {
-    for (std::size_t i = 0; i < kMaxEvents; ++i) {
-        events_[i].Reset();
-        events_[i].id = static_cast<uint32_t>(i + 1);
-    }
-}
-
-void WasmScheduler::Init() noexcept {
-    stop_requested_ = false;
-    WasmMemoryPool* pool = engine_.GetMemoryPool();
-    if (!pool) return;
-    void* allocated = pool->Allocate(sizeof(WasmThreadContext*) * kMaxThreads);
-    if (!allocated) return;
-    threads_ = static_cast<WasmThreadContext**>(allocated);
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        threads_[i] = nullptr;
-    }
-    void* main_ctx = pool->Allocate(sizeof(WasmThreadContext));
-    if (!main_ctx) return;
-    WasmThreadContext* ctx = static_cast<WasmThreadContext*>(main_ctx);
-    threads_[kMainThreadIndex] = ctx;
-    ctx->Init(*pool, engine_.GetConfig());
-    ctx->id = static_cast<uint32_t>(kMainThreadIndex + 1);
-}
-
-void WasmScheduler::Deinit() noexcept {
-    WasmMemoryPool* pool = engine_.GetMemoryPool();
-    if (pool && threads_) {
-        for (std::size_t i = 0; i < kMaxThreads; ++i) {
-            if (threads_[i]) {
-                threads_[i]->DeInit(*pool);
-                pool->Free(threads_[i]);
-                threads_[i] = nullptr;
-            }
-        }
-        pool->Free(threads_);
-    }
-    threads_ = nullptr;
-    current_thread_index_ = 0;
-    for (std::size_t i = 0; i < kMaxEvents; ++i) {
-        events_[i].Reset();
-        events_[i].id = static_cast<uint32_t>(i + 1);
-    }
-}
-
-uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept {
+uint32_t WasmEngine::SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept {
     if (!threads_ || !threads_[kMainThreadIndex]) return 0;
     WasmThreadContext& main = *threads_[kMainThreadIndex];
     main.Reset();
@@ -5059,18 +5058,18 @@ uint32_t WasmScheduler::SetupMainThread(WasmModuleInstance* mod, uint32_t func_i
     return main.id;
 }
 
-uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
+uint32_t WasmEngine::CreateThread(uint32_t func_index) noexcept {
     if (!threads_) return 0;
     for (std::size_t i = kMainThreadIndex + 1; i < kMaxThreads; ++i) {
         if (!threads_[i] || threads_[i]->state == ThreadState::kTerminated) {
             if (!threads_[i]) {
-                WasmMemoryPool* pool = engine_.GetMemoryPool();
+                WasmMemoryPool* pool = GetMemoryPool();
                 if (!pool) return 0;
                 void* allocated = pool->Allocate(sizeof(WasmThreadContext));
                 if (!allocated) return 0;
                 WasmThreadContext* tctx = static_cast<WasmThreadContext*>(allocated);
                 threads_[i] = tctx;
-                tctx->Init(*pool, engine_.GetConfig());
+                tctx->Init(*pool, config_);
                 tctx->id = static_cast<uint32_t>(i + 1);
             }
             threads_[i]->state = ThreadState::kReady;
@@ -5093,7 +5092,7 @@ uint32_t WasmScheduler::CreateThread(uint32_t func_index) noexcept {
     return 0;
 }
 
-uint32_t WasmScheduler::CreateEvent() noexcept {
+uint32_t WasmEngine::CreateEvent() noexcept {
     for (std::size_t i = 0; i < kMaxEvents; ++i) {
         if (events_[i].id != 0 && !events_[i].signaled) {
             return events_[i].id;
@@ -5102,7 +5101,7 @@ uint32_t WasmScheduler::CreateEvent() noexcept {
     return 0;
 }
 
-void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
+void WasmEngine::SignalEvent(uint32_t event_id) noexcept {
     if (!threads_ || event_id == 0 || event_id > kMaxEvents) return;
     events_[event_id - 1].signaled = true;
 
@@ -5115,10 +5114,10 @@ void WasmScheduler::SignalEvent(uint32_t event_id) noexcept {
             t->wait_kind = WaitKind::kNone;
         }
     }
-    PlatformNotifyActivity(engine_);
+    PlatformNotifyActivity(*this);
 }
 
-void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
+void WasmEngine::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
     if (!threads_ || thread_id == 0 || thread_id > kMaxThreads) return;
     if (event_id == 0 || event_id > kMaxEvents) return;
 
@@ -5135,7 +5134,7 @@ void WasmScheduler::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
     }
 }
 
-void WasmScheduler::ThreadWait(uint32_t thread_id) noexcept {
+void WasmEngine::ThreadWait(uint32_t thread_id) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
     if (!ctx) return;
     if (ctx->notify_pending) {
@@ -5148,19 +5147,19 @@ void WasmScheduler::ThreadWait(uint32_t thread_id) noexcept {
     }
 }
 
-void WasmScheduler::ThreadNotify(uint32_t thread_id) noexcept {
+void WasmEngine::ThreadNotify(uint32_t thread_id) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
     if (!ctx) return;
     if (ctx->state == ThreadState::kWaiting && ctx->wait_kind == WaitKind::kNotify) {
         ctx->state    = ThreadState::kReady;
         ctx->wait_kind = WaitKind::kNone;
-        PlatformNotifyActivity(engine_);
+        PlatformNotifyActivity(*this);
     } else {
         ctx->notify_pending = true;
     }
 }
 
-void WasmScheduler::ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept {
+void WasmEngine::ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
     if (!ctx) return;
     ctx->state    = ThreadState::kWaiting;
@@ -5168,14 +5167,14 @@ void WasmScheduler::ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexce
     ctx->wait_param.wake_time_ms = PlatformGetTimeMs() + duration_ms;
 }
 
-bool WasmScheduler::HasReadyThread() noexcept {
+bool WasmEngine::HasReadyThread() noexcept {
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         if (threads_[i] && threads_[i]->state == ThreadState::kReady) return true;
     }
     return false;
 }
 
-uint32_t WasmScheduler::ComputeMinSleepTimeout() noexcept {
+uint32_t WasmEngine::ComputeMinSleepTimeout() noexcept {
     uint32_t now = PlatformGetTimeMs();
     uint32_t min_timeout = UINT32_MAX;
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
@@ -5189,7 +5188,7 @@ uint32_t WasmScheduler::ComputeMinSleepTimeout() noexcept {
     return min_timeout;
 }
 
-void WasmScheduler::PollSleeps() noexcept {
+void WasmEngine::PollSleeps() noexcept {
     uint32_t now = PlatformGetTimeMs();
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         WasmThreadContext* t = threads_[i];
@@ -5202,7 +5201,7 @@ void WasmScheduler::PollSleeps() noexcept {
     }
 }
 
-WasmResult WasmScheduler::Run() noexcept {
+WasmResult WasmEngine::Run() noexcept {
     if (!threads_) return WasmResult::kErrorOutOfMemory;
     while (true) {
         bool any_active = false;
@@ -5221,7 +5220,7 @@ WasmResult WasmScheduler::Run() noexcept {
         } else {
             PollSleeps();
             if (!HasReadyThread()) {
-                PlatformWaitForActivity(engine_, ComputeMinSleepTimeout());
+                PlatformWaitForActivity(*this, ComputeMinSleepTimeout());
                 PollSleeps();
             }
         }
@@ -5229,7 +5228,7 @@ WasmResult WasmScheduler::Run() noexcept {
     return WasmResult::kOk;
 }
 
-WasmResult WasmScheduler::Step() noexcept {
+WasmResult WasmEngine::Step() noexcept {
     for (std::size_t i = 0; i < kMaxThreads; ++i) {
         std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
         if (threads_[idx] && threads_[idx]->state == ThreadState::kReady) {
@@ -5239,9 +5238,9 @@ WasmResult WasmScheduler::Step() noexcept {
 
             WasmResult res;
             if (ctx.call_stack_top == 0) {
-                res = engine_.ExecuteInternal(ctx.start_module, ctx.start_func_index);
+                res = ExecuteInternal(ctx.start_module, ctx.start_func_index);
             } else {
-                res = engine_.RunLoop(&ctx);
+                res = RunLoop(&ctx);
             }
 
             if (res == WasmResult::kYield) {
@@ -5271,20 +5270,20 @@ WasmResult WasmScheduler::Step() noexcept {
     return WasmResult::kOk;
 }
 
-uint32_t WasmScheduler::CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept {
+uint32_t WasmEngine::CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept {
     if (!threads_ || !module) return 0;
-    PlatformLock(engine_);
+    PlatformLock(*this);
     uint32_t result_id = 0;
     for (std::size_t i = kMainThreadIndex + 1; i < kMaxThreads; ++i) {
         if (!threads_[i] || threads_[i]->state == ThreadState::kTerminated) {
             if (!threads_[i]) {
-                WasmMemoryPool* pool = engine_.GetMemoryPool();
+                WasmMemoryPool* pool = GetMemoryPool();
                 if (!pool) break;
                 void* allocated = pool->Allocate(sizeof(WasmThreadContext));
                 if (!allocated) break;
                 WasmThreadContext* tctx = static_cast<WasmThreadContext*>(allocated);
                 threads_[i] = tctx;
-                tctx->Init(*pool, engine_.GetConfig());
+                tctx->Init(*pool, config_);
             }
             WasmThreadContext* ctx = threads_[i];
             ctx->Reset();
@@ -5296,12 +5295,12 @@ uint32_t WasmScheduler::CreateHostThread(WasmModuleInstance* module, uint32_t fu
             break;
         }
     }
-    PlatformUnlock(engine_);
-    if (result_id != 0) PlatformNotifyActivity(engine_);
+    PlatformUnlock(*this);
+    if (result_id != 0) PlatformNotifyActivity(*this);
     return result_id;
 }
 
-void WasmScheduler::SetThreadCallback(uint32_t thread_id,
+void WasmEngine::SetThreadCallback(uint32_t thread_id,
                                       WasmThreadCompletionCallback callback,
                                       void* user_data) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
@@ -5310,7 +5309,7 @@ void WasmScheduler::SetThreadCallback(uint32_t thread_id,
     ctx->thread_user_data    = user_data;
 }
 
-WasmResult WasmScheduler::PushThreadArg(uint32_t thread_id, WasmValue value) noexcept {
+WasmResult WasmEngine::PushThreadArg(uint32_t thread_id, WasmValue value) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
     if (!ctx) return WasmResult::kErrorInvalidArgument;
     if (ctx->stack_top >= ctx->stack_size) return WasmResult::kErrorExecuteTrapStackOverflow;
@@ -5318,40 +5317,40 @@ WasmResult WasmScheduler::PushThreadArg(uint32_t thread_id, WasmValue value) noe
     return WasmResult::kOk;
 }
 
-void WasmScheduler::StartThread(uint32_t thread_id) noexcept {
+void WasmEngine::StartThread(uint32_t thread_id) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
     if (!ctx || ctx->state != ThreadState::kCreated) return;
-    PlatformLock(engine_);
+    PlatformLock(*this);
     ctx->state = ThreadState::kReady;
-    PlatformUnlock(engine_);
-    PlatformNotifyActivity(engine_);
+    PlatformUnlock(*this);
+    PlatformNotifyActivity(*this);
 }
 
-WasmResult WasmScheduler::GetThreadResult(uint32_t thread_id) const noexcept {
+WasmResult WasmEngine::GetThreadResult(uint32_t thread_id) const noexcept {
     if (thread_id == 0 || thread_id > kMaxThreads || !threads_) return WasmResult::kErrorInvalidArgument;
     const WasmThreadContext* ctx = threads_[thread_id - 1];
     if (!ctx) return WasmResult::kErrorInvalidArgument;
     return ctx->execution_result;
 }
 
-void WasmScheduler::StopInterpreterLoop() noexcept {
-    PlatformLock(engine_);
+void WasmEngine::StopInterpreterLoop() noexcept {
+    PlatformLock(*this);
     stop_requested_ = true;
-    PlatformUnlock(engine_);
-    PlatformNotifyActivity(engine_);
+    PlatformUnlock(*this);
+    PlatformNotifyActivity(*this);
 }
 
-WasmResult WasmScheduler::RunInterpreterLoop() noexcept {
+WasmResult WasmEngine::RunInterpreterLoop() noexcept {
     if (!threads_) return WasmResult::kErrorOutOfMemory;
 
-    WasmResult init_res = PlatformEngineExecuteBegin(engine_);
+    WasmResult init_res = PlatformEngineExecuteBegin(*this);
     if (IsError(init_res)) return init_res;
 
     while (true) {
-        PlatformLock(engine_);
+        PlatformLock(*this);
 
         if (stop_requested_) {
-            PlatformUnlock(engine_);
+            PlatformUnlock(*this);
             break;
         }
 
@@ -5369,14 +5368,14 @@ WasmResult WasmScheduler::RunInterpreterLoop() noexcept {
         }
 
         uint32_t sleep_timeout = ctx ? 0 : ComputeMinSleepTimeout();
-        PlatformUnlock(engine_);
+        PlatformUnlock(*this);
 
         if (ctx) {
             WasmResult res = (ctx->call_stack_top == 0)
-                ? engine_.ExecuteInternal(ctx->start_module, ctx->start_func_index)
-                : engine_.RunLoop(ctx);
+                ? ExecuteInternal(ctx->start_module, ctx->start_func_index)
+                : RunLoop(ctx);
 
-            PlatformLock(engine_);
+            PlatformLock(*this);
             if (res == WasmResult::kYield) {
                 if (ctx->state == ThreadState::kRunning) ctx->state = ThreadState::kReady;
             } else {
@@ -5387,22 +5386,22 @@ WasmResult WasmScheduler::RunInterpreterLoop() noexcept {
             void* ud = ctx->thread_user_data;
             WasmResult result_for_cb = ctx->execution_result;
             current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
-            PlatformUnlock(engine_);
+            PlatformUnlock(*this);
 
             if (res != WasmResult::kYield && cb) {
                 cb(ctx, ud, result_for_cb);
             }
 
             if (IsError(res)) {
-                PlatformEngineExecuteEnd(engine_);
+                PlatformEngineExecuteEnd(*this);
                 return res;
             }
         } else {
-            PlatformWaitForActivity(engine_, sleep_timeout);
+            PlatformWaitForActivity(*this, sleep_timeout);
         }
     }
 
-    PlatformEngineExecuteEnd(engine_);
+    PlatformEngineExecuteEnd(*this);
     return WasmResult::kOk;
 }
 
