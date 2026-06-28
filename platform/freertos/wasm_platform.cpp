@@ -51,7 +51,7 @@ void PlatformEngineDeinit(WasmEngine& engine) noexcept {
     engine.SetPlatformData(nullptr);
 }
 
-WasmResult PlatformEngineExecuteBegin(WasmEngine& engine) noexcept {
+WasmResult PlatformEngineRunBegin(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (!d) return WasmResult::kErrorPlatformInit;
     d->scheduler_task = xTaskGetCurrentTaskHandle();
@@ -59,7 +59,7 @@ WasmResult PlatformEngineExecuteBegin(WasmEngine& engine) noexcept {
     return WasmResult::kOk;
 }
 
-void PlatformEngineExecuteEnd(WasmEngine& engine) noexcept {
+void PlatformEngineRunEnd(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (d) d->scheduler_task = nullptr;
 }

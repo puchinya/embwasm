@@ -50,18 +50,18 @@ WasmResult PlatformEngineInit(WasmEngine& engine) noexcept;
 void PlatformEngineDeinit(WasmEngine& engine) noexcept;
 
 /**
- * @brief 実行スレッドの開始をプラットフォームに通知します。
- *        WasmEngine::ExecuteInternal() の RunLoop 直前から呼ばれます。
+ * @brief 実行ループの開始をプラットフォームに通知します。
+ *        WasmEngine::RunInternal() / Run() から呼ばれます。
  *        FreeRTOS/uITRON ではここで実行タスクのハンドル／ID を取得します。
  * @return kOk（成功）またはエラーコード。
  */
-WasmResult PlatformEngineExecuteBegin(WasmEngine& engine) noexcept;
+WasmResult PlatformEngineRunBegin(WasmEngine& engine) noexcept;
 
 /**
- * @brief 実行スレッドの終了をプラットフォームに通知します。
- *        WasmEngine::ExecuteInternal() の RunLoop 直後から呼ばれます。
+ * @brief 実行ループの終了をプラットフォームに通知します。
+ *        WasmEngine::RunInternal() / Run() から呼ばれます。
  */
-void PlatformEngineExecuteEnd(WasmEngine& engine) noexcept;
+void PlatformEngineRunEnd(WasmEngine& engine) noexcept;
 
 /**
  * @brief ネイティブスレッドを最大 timeout_ms ミリ秒スリープさせます。

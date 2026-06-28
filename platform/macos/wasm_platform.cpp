@@ -65,12 +65,12 @@ void PlatformEngineDeinit(WasmEngine& engine) noexcept {
     engine.SetPlatformData(nullptr);
 }
 
-WasmResult PlatformEngineExecuteBegin(WasmEngine& engine) noexcept {
+WasmResult PlatformEngineRunBegin(WasmEngine& engine) noexcept {
     (void)engine;
     return WasmResult::kOk;
 }
 
-void PlatformEngineExecuteEnd(WasmEngine& engine) noexcept {
+void PlatformEngineRunEnd(WasmEngine& engine) noexcept {
     (void)engine;
 }
 

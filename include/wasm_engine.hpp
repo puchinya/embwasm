@@ -448,8 +448,7 @@ public:
     void ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept;
 
     WasmResult Run() noexcept;
-    WasmResult RunInterpreterLoop() noexcept;
-    void StopInterpreterLoop() noexcept;
+    void Stop() noexcept;
 
     uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
 
@@ -551,6 +550,18 @@ private:
     uint32_t current_thread_index_;
     bool stop_requested_;
 
+    enum class RunInternalFlags : uint32_t {
+        kNone          = 0,
+        kUseLock       = 1 << 0,
+        kWithLifecycle = 1 << 1,
+        kAbortable     = 1 << 2,
+        kLoopForever   = 1 << 3,
+    };
+    friend inline RunInternalFlags operator|(RunInternalFlags a, RunInternalFlags b) noexcept {
+        return static_cast<RunInternalFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+    }
+
+    WasmResult RunInternal(RunInternalFlags flags) noexcept;
     WasmResult Step() noexcept;
     bool HasReadyThread() noexcept;
     uint32_t ComputeMinSleepTimeout() noexcept;

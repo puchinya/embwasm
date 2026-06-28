@@ -52,7 +52,7 @@ int main() {
 
     // Step 1: インタプリタループを専用OSスレッドで起動
     std::thread interp_thread([&engine]() {
-        engine.RunInterpreterLoop();
+        engine.Run();
     });
 
     // Steps 2-4: メインOSスレッドからWasmスレッドを非同期生成・起動
@@ -60,7 +60,7 @@ int main() {
     int32_t func_idx = engine.GetExportFunctionIndex("main", 4, "async_task", 10);
     if (!mod || func_idx < 0) {
         std::cerr << "Function 'async_task' not found." << std::endl;
-        engine.StopInterpreterLoop();
+        engine.Stop();
         interp_thread.join();
         return 1;
     }
@@ -84,7 +84,7 @@ int main() {
               << (sync.result == embwasm::WasmResult::kOk ? "OK" : "ERROR")
               << std::endl;
 
-    engine.StopInterpreterLoop();
+    engine.Stop();
     interp_thread.join();
 
     std::cout << "\nMax call stack depth: " << engine.GetMaxCallStackDepth() << std::endl;

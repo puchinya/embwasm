@@ -808,7 +808,7 @@ namespace embwasm {
 #if EMBWASM_ENABLE_MULTITHREADING
                 uint32_t tid = SetupMainThread(mod, static_cast<uint32_t>(mod->start_function_index));
                 if (tid == 0) return WasmResult::kErrorOutOfMemory;
-                res = Run();
+                res = RunInternal(RunInternalFlags::kNone);
 #else
                 if (ctx_) {
                     ctx_->Reset();
@@ -2657,7 +2657,7 @@ namespace embwasm {
             exec_ctx->stack[exec_ctx->stack_top++] = args[i];
         }
 
-        WasmResult res = Run();
+        WasmResult res = RunInternal(RunInternalFlags::kNone);
 
         if (res == WasmResult::kOk) {
             const WasmFunction& func = mod->functions[func_idx];
@@ -2964,10 +2964,10 @@ namespace embwasm {
         }
 
         {
-            WasmResult begin_res = PlatformEngineExecuteBegin(*this);
+            WasmResult begin_res = PlatformEngineRunBegin(*this);
             if (begin_res != WasmResult::kOk) return begin_res;
             WasmResult run_res = RunLoop(ctx);
-            PlatformEngineExecuteEnd(*this);
+            PlatformEngineRunEnd(*this);
             return run_res;
         }
     }
@@ -5202,30 +5202,133 @@ void WasmEngine::PollSleeps() noexcept {
 }
 
 WasmResult WasmEngine::Run() noexcept {
-    if (!threads_) return WasmResult::kErrorOutOfMemory;
-    while (true) {
-        bool any_active = false;
-        bool any_ready  = false;
-        for (std::size_t i = 0; i < kMaxThreads; ++i) {
-            WasmThreadContext* t = threads_[i];
-            if (!t || t->state == ThreadState::kTerminated || t->state == ThreadState::kCreated) continue;
-            any_active = true;
-            if (t->state == ThreadState::kReady) any_ready = true;
-        }
-        if (!any_active) break;
+    return RunInternal(RunInternalFlags::kUseLock |
+                       RunInternalFlags::kWithLifecycle |
+                       RunInternalFlags::kAbortable |
+                       RunInternalFlags::kLoopForever);
+}
 
-        if (any_ready) {
-            WasmResult res = Step();
-            if (res != WasmResult::kOk && res != WasmResult::kYield) return res;
-        } else {
+WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
+    if (!threads_) return WasmResult::kErrorOutOfMemory;
+
+    const bool use_lock       = (static_cast<uint32_t>(flags) & static_cast<uint32_t>(RunInternalFlags::kUseLock)) != 0;
+    const bool with_lifecycle = (static_cast<uint32_t>(flags) & static_cast<uint32_t>(RunInternalFlags::kWithLifecycle)) != 0;
+    const bool abortable      = (static_cast<uint32_t>(flags) & static_cast<uint32_t>(RunInternalFlags::kAbortable)) != 0;
+    const bool loop_forever   = (static_cast<uint32_t>(flags) & static_cast<uint32_t>(RunInternalFlags::kLoopForever)) != 0;
+
+    if (with_lifecycle) {
+        WasmResult res = PlatformEngineRunBegin(*this);
+        if (IsError(res)) return res;
+    }
+
+    WasmResult final_result = WasmResult::kOk;
+
+    if (use_lock) {
+        while (true) {
+            PlatformLock(*this);
+
+            if (abortable && stop_requested_) {
+                PlatformUnlock(*this);
+                break;
+            }
+
             PollSleeps();
-            if (!HasReadyThread()) {
-                PlatformWaitForActivity(*this, ComputeMinSleepTimeout());
+
+            bool any_active = false;
+            for (std::size_t i = 0; i < kMaxThreads; ++i) {
+                WasmThreadContext* t = threads_[i];
+                if (t && t->state != ThreadState::kTerminated && t->state != ThreadState::kCreated) {
+                    any_active = true;
+                    break;
+                }
+            }
+            if (!any_active) {
+                if (!loop_forever) {
+                    PlatformUnlock(*this);
+                    break;
+                }
+                PlatformUnlock(*this);
+                PlatformWaitForActivity(*this, UINT32_MAX);
+                continue;
+            }
+
+            WasmThreadContext* ctx = nullptr;
+            for (std::size_t i = 0; i < kMaxThreads; ++i) {
+                std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
+                if (threads_[idx] && threads_[idx]->state == ThreadState::kReady) {
+                    current_thread_index_ = idx;
+                    ctx = threads_[idx];
+                    ctx->state = ThreadState::kRunning;
+                    break;
+                }
+            }
+
+            uint32_t sleep_timeout = ctx ? 0 : ComputeMinSleepTimeout();
+            PlatformUnlock(*this);
+
+            if (ctx) {
+                WasmResult res = (ctx->call_stack_top == 0)
+                    ? ExecuteInternal(ctx->start_module, ctx->start_func_index)
+                    : RunLoop(ctx);
+
+                PlatformLock(*this);
+                if (res == WasmResult::kYield) {
+                    if (ctx->state == ThreadState::kRunning) ctx->state = ThreadState::kReady;
+                } else {
+                    ctx->execution_result = res;
+                    ctx->state = ThreadState::kTerminated;
+                }
+                WasmThreadCompletionCallback cb = ctx->completion_callback;
+                void* ud = ctx->thread_user_data;
+                WasmResult result_for_cb = ctx->execution_result;
+                current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
+                PlatformUnlock(*this);
+
+                if (res != WasmResult::kYield && cb) {
+                    cb(ctx, ud, result_for_cb);
+                }
+
+                if (IsError(res)) {
+                    final_result = res;
+                    break;
+                }
+            } else {
+                PlatformWaitForActivity(*this, sleep_timeout);
+            }
+        }
+    } else {
+        while (true) {
+            bool any_active = false;
+            bool any_ready  = false;
+            for (std::size_t i = 0; i < kMaxThreads; ++i) {
+                WasmThreadContext* t = threads_[i];
+                if (!t || t->state == ThreadState::kTerminated || t->state == ThreadState::kCreated) continue;
+                any_active = true;
+                if (t->state == ThreadState::kReady) any_ready = true;
+            }
+            if (!any_active) break;
+
+            if (any_ready) {
+                WasmResult res = Step();
+                if (res != WasmResult::kOk && res != WasmResult::kYield) {
+                    final_result = res;
+                    break;
+                }
+            } else {
                 PollSleeps();
+                if (!HasReadyThread()) {
+                    PlatformWaitForActivity(*this, ComputeMinSleepTimeout());
+                    PollSleeps();
+                }
             }
         }
     }
-    return WasmResult::kOk;
+
+    if (with_lifecycle) {
+        PlatformEngineRunEnd(*this);
+    }
+
+    return final_result;
 }
 
 WasmResult WasmEngine::Step() noexcept {
@@ -5333,77 +5436,13 @@ WasmResult WasmEngine::GetThreadResult(uint32_t thread_id) const noexcept {
     return ctx->execution_result;
 }
 
-void WasmEngine::StopInterpreterLoop() noexcept {
+void WasmEngine::Stop() noexcept {
     PlatformLock(*this);
     stop_requested_ = true;
     PlatformUnlock(*this);
     PlatformNotifyActivity(*this);
 }
 
-WasmResult WasmEngine::RunInterpreterLoop() noexcept {
-    if (!threads_) return WasmResult::kErrorOutOfMemory;
-
-    WasmResult init_res = PlatformEngineExecuteBegin(*this);
-    if (IsError(init_res)) return init_res;
-
-    while (true) {
-        PlatformLock(*this);
-
-        if (stop_requested_) {
-            PlatformUnlock(*this);
-            break;
-        }
-
-        PollSleeps();
-
-        WasmThreadContext* ctx = nullptr;
-        for (std::size_t i = 0; i < kMaxThreads; ++i) {
-            std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
-            if (threads_[idx] && threads_[idx]->state == ThreadState::kReady) {
-                current_thread_index_ = idx;
-                ctx = threads_[idx];
-                ctx->state = ThreadState::kRunning;
-                break;
-            }
-        }
-
-        uint32_t sleep_timeout = ctx ? 0 : ComputeMinSleepTimeout();
-        PlatformUnlock(*this);
-
-        if (ctx) {
-            WasmResult res = (ctx->call_stack_top == 0)
-                ? ExecuteInternal(ctx->start_module, ctx->start_func_index)
-                : RunLoop(ctx);
-
-            PlatformLock(*this);
-            if (res == WasmResult::kYield) {
-                if (ctx->state == ThreadState::kRunning) ctx->state = ThreadState::kReady;
-            } else {
-                ctx->execution_result = res;
-                ctx->state = ThreadState::kTerminated;
-            }
-            WasmThreadCompletionCallback cb = ctx->completion_callback;
-            void* ud = ctx->thread_user_data;
-            WasmResult result_for_cb = ctx->execution_result;
-            current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
-            PlatformUnlock(*this);
-
-            if (res != WasmResult::kYield && cb) {
-                cb(ctx, ud, result_for_cb);
-            }
-
-            if (IsError(res)) {
-                PlatformEngineExecuteEnd(*this);
-                return res;
-            }
-        } else {
-            PlatformWaitForActivity(*this, sleep_timeout);
-        }
-    }
-
-    PlatformEngineExecuteEnd(*this);
-    return WasmResult::kOk;
-}
 
 #endif // EMBWASM_ENABLE_MULTITHREADING
 
