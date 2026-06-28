@@ -946,6 +946,9 @@ namespace embwasm {
 
         // signatures, functions, exports, globals の解放
         if (mod->signatures) {
+            for (std::size_t i = 0; i < mod->signature_count; ++i) {
+                if (mod->signatures[i]) pool_->Free(mod->signatures[i]);
+            }
             pool_->Free(mod->signatures);
             mod->signatures = nullptr;
         }
@@ -1038,6 +1041,11 @@ namespace embwasm {
                 FreeModuleInstance(modules_[i]);
                 modules_[i] = nullptr;
             }
+        }
+        for (ListNode* n = name_aliases_.next; n != &name_aliases_; ) {
+            ListNode* next_n = n->next;
+            pool_->Free(n);
+            n = next_n;
         }
         name_alias_count_ = 0;
         InitListNode(&name_aliases_);
@@ -5025,6 +5033,7 @@ namespace embwasm {
 #if EMBWASM_ENABLE_MULTITHREADING
 
 bool WasmThreadContext::Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept {
+    stack = nullptr; call_stack = nullptr; labels_pool = nullptr;
     stack       = static_cast<WasmValue*>(pool.Allocate(cfg.stack_size * sizeof(WasmValue)));
     call_stack  = static_cast<WasmFrame*>(pool.Allocate(cfg.call_stack_size * sizeof(WasmFrame)));
     labels_pool = static_cast<WasmLabel*>(pool.Allocate(cfg.labels_pool_size * sizeof(WasmLabel)));
