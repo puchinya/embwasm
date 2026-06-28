@@ -18,6 +18,7 @@ namespace embwasm {
 
 struct WasmEnginePlatformData {
     HANDLE idle_event;
+    CRITICAL_SECTION cs;
 };
 
 uint32_t DisableInterrupts() noexcept {
@@ -42,6 +43,7 @@ WasmResult PlatformEngineInit(WasmEngine& engine) noexcept {
         engine.GetMemoryPool()->Free(d);
         return WasmResult::kErrorPlatformInit;
     }
+    InitializeCriticalSection(&d->cs);
     engine.SetPlatformData(d);
     return WasmResult::kOk;
 }
@@ -49,6 +51,7 @@ WasmResult PlatformEngineInit(WasmEngine& engine) noexcept {
 void PlatformEngineDeinit(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (!d) return;
+    DeleteCriticalSection(&d->cs);
     if (d->idle_event) CloseHandle(d->idle_event);
     engine.GetMemoryPool()->Free(d);
     engine.SetPlatformData(nullptr);
@@ -68,6 +71,16 @@ void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept {
     if (!d || !d->idle_event) return;
     DWORD ms = (timeout_ms == UINT32_MAX) ? INFINITE : static_cast<DWORD>(timeout_ms);
     WaitForSingleObject(d->idle_event, ms);
+}
+
+void PlatformLock(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (d) EnterCriticalSection(&d->cs);
+}
+
+void PlatformUnlock(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (d) LeaveCriticalSection(&d->cs);
 }
 
 void PlatformNotifyActivity(WasmEngine& engine) noexcept {

@@ -72,6 +72,19 @@ void PlatformEngineExecuteEnd(WasmEngine& engine) noexcept;
 void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept;
 
 /**
+ * @brief インタプリタループと CreateHostThread の排他制御を開始します。
+ *        PlatformWaitForActivity() を呼ぶ前に必ず解放してください。
+ * @param engine  対象エンジン。
+ */
+void PlatformLock(WasmEngine& engine) noexcept;
+
+/**
+ * @brief PlatformLock() で取得した排他制御を解放します。
+ * @param engine  対象エンジン。
+ */
+void PlatformUnlock(WasmEngine& engine) noexcept;
+
+/**
  * @brief PlatformWaitForActivity() で待機中のスレッドを即時起床させます。
  *        ISR やバックグラウンドスレッドから呼び出し可能です。
  * @param engine  対象エンジン。

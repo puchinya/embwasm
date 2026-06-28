@@ -74,6 +74,16 @@ void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept {
     }
 }
 
+void PlatformLock(WasmEngine& engine) noexcept {
+    (void)engine;
+    dis_dsp();
+}
+
+void PlatformUnlock(WasmEngine& engine) noexcept {
+    (void)engine;
+    ena_dsp();
+}
+
 void PlatformNotifyActivity(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (!d || d->scheduler_task_id == 0) return;

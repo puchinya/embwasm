@@ -71,6 +71,16 @@ void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept {
     ulTaskNotifyTake(pdTRUE, ticks);
 }
 
+void PlatformLock(WasmEngine& engine) noexcept {
+    (void)engine;
+    vTaskSuspendAll();
+}
+
+void PlatformUnlock(WasmEngine& engine) noexcept {
+    (void)engine;
+    xTaskResumeAll();
+}
+
 void PlatformNotifyActivity(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (!d || !d->scheduler_task) return;

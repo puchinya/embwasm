@@ -40,6 +40,7 @@ struct WasmFrame {
 
 /// @brief スレッドの実行状態。
 enum class ThreadState : uint8_t {
+    kCreated,    ///< 生成済み・未開始。ホストが StartThread() を呼ぶまで選択されない。
     kReady,      ///< 実行可能状態。スケジューラに選択される待ち。
     kRunning,    ///< 現在実行中。
     kWaiting,    ///< 何らかの待機中（WaitKind で詳細を判別）。
@@ -59,6 +60,13 @@ union WaitParam {
     uint32_t event_id;      ///< kEvent: 待機するイベント ID。
     uint32_t wake_time_ms;  ///< kSleep: 起床する絶対時刻（ms）。
 };
+
+/// @brief Wasm スレッド完了時に呼ばれるコールバック型。
+/// @param thread     終了したスレッドのコンテキスト。
+/// @param user_data  SetThreadCallback で設定したユーザーデータ。
+/// @param result     実行結果 (WasmResult)。
+using WasmThreadCompletionCallback =
+    void (*)(WasmThreadContext* thread, void* user_data, WasmResult result);
 
 /// @brief スレッドごとの実行コンテキスト。
 ///
@@ -90,6 +98,10 @@ struct WasmThreadContext {
     uint32_t start_func_index;     ///< 初回 `ExecuteInternal` に渡す関数インデックス。
     WasmModuleInstance* start_module; ///< 初回 `ExecuteInternal` に渡すモジュールインスタンス。
 
+    WasmThreadCompletionCallback completion_callback; ///< 終了時コールバック。nullptr なら呼ばれない。
+    void*      thread_user_data;  ///< コールバックおよびエントリ関数に渡すユーザーデータ。
+    WasmResult execution_result;  ///< 実行結果（kTerminated 後に GetThreadResult() で取得可能）。
+
     /// @brief コンテキストを初期状態（`kTerminated`）にリセットします。
     void Reset() noexcept {
         id = 0;
@@ -102,6 +114,9 @@ struct WasmThreadContext {
         notify_pending = false;
         start_func_index = 0;
         start_module = nullptr;
+        completion_callback = nullptr;
+        thread_user_data    = nullptr;
+        execution_result    = WasmResult::kOk;
     }
 
     bool Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept;
@@ -316,6 +331,39 @@ public:
     /// @return 作成されたスレッドの ID（1-based）。作成失敗時は 0 を返します。
     uint32_t CreateThread(uint32_t func_index) noexcept;
 
+    /// @brief ホストがスレッドを生成します（kCreated 状態・未開始）。
+    ///        SetThreadCallback() → PushThreadArg() → StartThread() の順で設定後、
+    ///        RunUntilThreadDone() を呼んで実行します。
+    /// @param module     実行するモジュールインスタンス。
+    /// @param func_index 実行する関数インデックス。
+    /// @return スレッド ID（1-based）。失敗時は 0。
+    uint32_t CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept;
+
+    /// @brief スレッドの完了コールバックとユーザーデータを設定します。
+    ///        コールバック引数: (WasmThreadContext*, user_data, WasmResult)。
+    void SetThreadCallback(uint32_t thread_id,
+                           WasmThreadCompletionCallback callback,
+                           void* user_data) noexcept;
+
+    /// @brief スレッドのスタックに引数を 1 つ積みます（StartThread() より前に呼ぶ）。
+    /// @return kOk または kErrorExecuteTrapStackOverflow（スタック溢れ時）。
+    WasmResult PushThreadArg(uint32_t thread_id, WasmValue value) noexcept;
+
+    /// @brief スレッドを kReady 状態にして実行を開始します。
+    void StartThread(uint32_t thread_id) noexcept;
+
+    /// @brief 指定スレッドの実行結果を返します（kTerminated 後のみ有効）。
+    WasmResult GetThreadResult(uint32_t thread_id) const noexcept;
+
+    /// @brief インタプリタメインループを実行します（専用 OS スレッドで呼ぶ）。
+    ///        StopInterpreterLoop() が呼ばれるまでブロックします。
+    ///        CreateHostThread() はこのループ実行中のみ別 OS スレッドから呼び出し可能です。
+    /// @return kOk（正常停止）またはエラーコード。
+    WasmResult RunInterpreterLoop() noexcept;
+
+    /// @brief RunInterpreterLoop() を停止させます（別 OS スレッドから呼び出し可能）。
+    void StopInterpreterLoop() noexcept;
+
     /// @brief 新しいイベントを取得します。
     /// @return イベント ID（1-based）。取得失敗時は 0 を返します。
     uint32_t CreateEvent() noexcept;
@@ -397,6 +445,7 @@ private:
     WasmThreadContext** threads_;
     WasmEvent events_[kMaxEvents];
     uint32_t current_thread_index_;
+    bool stop_requested_;  ///< RunInterpreterLoop 停止フラグ（PlatformLock 下でアクセス）。
 };
 
 #endif // EMBWASM_ENABLE_MULTITHREADING
@@ -525,6 +574,13 @@ public:
 #if EMBWASM_ENABLE_MULTITHREADING
     /// @brief エンジン内蔵の協調スケジューラへのポインタを返します。
     WasmScheduler* GetScheduler() noexcept { return &scheduler_; }
+
+    /// @brief インタプリタメインループを実行します（専用 OS スレッドで呼ぶ）。
+    ///        StopInterpreterLoop() が呼ばれるまでブロックします。
+    WasmResult RunInterpreterLoop() noexcept { return scheduler_.RunInterpreterLoop(); }
+
+    /// @brief RunInterpreterLoop() を停止させます（別 OS スレッドから呼び出し可能）。
+    void StopInterpreterLoop() noexcept { scheduler_.StopInterpreterLoop(); }
 #endif
 
     /// @brief 指定モジュール・関数インデックスで実行ループを起動します（内部 API）。

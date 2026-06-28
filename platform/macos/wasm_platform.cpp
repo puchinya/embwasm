@@ -97,6 +97,16 @@ void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept {
     pthread_mutex_unlock(&d->mutex);
 }
 
+void PlatformLock(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (d) pthread_mutex_lock(&d->mutex);
+}
+
+void PlatformUnlock(WasmEngine& engine) noexcept {
+    auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
+    if (d) pthread_mutex_unlock(&d->mutex);
+}
+
 void PlatformNotifyActivity(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (!d) return;
