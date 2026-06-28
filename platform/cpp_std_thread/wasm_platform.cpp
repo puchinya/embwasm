@@ -2,27 +2,30 @@
 // Copyright (c) 2026 embwasm Project. All rights reserved.
 //
 // [Clean-room Implementation Notice]
-// This Windows platform adapter has been designed and implemented entirely from
-// scratch to mock embedded behavior on Windows test systems.
+// This platform adapter uses C++ standard library primitives (std::mutex,
+// std::condition_variable) to mock embedded behavior on PC environments
+// (Windows, macOS, Linux). It replaces the separate Windows/macOS adapters.
 // =============================================================================
 
 #include "wasm_engine.hpp"
 #include "wasm_platform.hpp"
 #include "wasm_types.hpp"
 
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <condition_variable>
+#include <chrono>
+#include <mutex>
+#include <new>
 #include <cstdint>
 
 namespace embwasm {
 
 struct WasmEnginePlatformData {
-    HANDLE idle_event;
-    CRITICAL_SECTION cs;
+    std::mutex              mutex;
+    std::condition_variable cond;
+    bool                    notified = false;
 };
 
 uint32_t DisableInterrupts() noexcept {
-    // Windowsユーザー空間シミュレータ用モック：割り込み禁止は行いません
     return 0;
 }
 
@@ -31,19 +34,15 @@ void RestoreInterrupts(uint32_t primask_val) noexcept {
 }
 
 uint32_t PlatformGetTimeMs() noexcept {
-    return static_cast<uint32_t>(GetTickCount64());
+    using namespace std::chrono;
+    return static_cast<uint32_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
 WasmResult PlatformEngineInit(WasmEngine& engine) noexcept {
-    auto* d = static_cast<WasmEnginePlatformData*>(
-        engine.GetMemoryPool()->Allocate(sizeof(WasmEnginePlatformData)));
-    if (!d) return WasmResult::kErrorOutOfMemory;
-    d->idle_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    if (!d->idle_event) {
-        engine.GetMemoryPool()->Free(d);
-        return WasmResult::kErrorPlatformInit;
-    }
-    InitializeCriticalSection(&d->cs);
+    void* mem = engine.GetMemoryPool()->Allocate(sizeof(WasmEnginePlatformData));
+    if (!mem) return WasmResult::kErrorOutOfMemory;
+    auto* d = new(mem) WasmEnginePlatformData{};
     engine.SetPlatformData(d);
     return WasmResult::kOk;
 }
@@ -51,8 +50,7 @@ WasmResult PlatformEngineInit(WasmEngine& engine) noexcept {
 void PlatformEngineDeinit(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
     if (!d) return;
-    DeleteCriticalSection(&d->cs);
-    if (d->idle_event) CloseHandle(d->idle_event);
+    d->~WasmEnginePlatformData();
     engine.GetMemoryPool()->Free(d);
     engine.SetPlatformData(nullptr);
 }
@@ -68,24 +66,34 @@ void PlatformEngineRunEnd(WasmEngine& engine) noexcept {
 
 void PlatformWaitForActivity(WasmEngine& engine, uint32_t timeout_ms) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
-    if (!d || !d->idle_event) return;
-    DWORD ms = (timeout_ms == UINT32_MAX) ? INFINITE : static_cast<DWORD>(timeout_ms);
-    WaitForSingleObject(d->idle_event, ms);
+    if (!d) return;
+    std::unique_lock<std::mutex> lk(d->mutex);
+    if (timeout_ms == UINT32_MAX) {
+        d->cond.wait(lk, [d] { return d->notified; });
+    } else {
+        d->cond.wait_for(lk, std::chrono::milliseconds(timeout_ms), [d] { return d->notified; });
+    }
+    d->notified = false;
 }
 
 void PlatformLock(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
-    if (d) EnterCriticalSection(&d->cs);
+    if (d) d->mutex.lock();
 }
 
 void PlatformUnlock(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
-    if (d) LeaveCriticalSection(&d->cs);
+    if (d) d->mutex.unlock();
 }
 
 void PlatformNotifyActivity(WasmEngine& engine) noexcept {
     auto* d = static_cast<WasmEnginePlatformData*>(engine.GetPlatformData());
-    if (d && d->idle_event) SetEvent(d->idle_event);
+    if (!d) return;
+    {
+        std::lock_guard<std::mutex> lk(d->mutex);
+        d->notified = true;
+    }
+    d->cond.notify_one();
 }
 
 } // namespace embwasm
