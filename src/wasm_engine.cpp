@@ -382,7 +382,8 @@ namespace embwasm {
 #endif
 #if EMBWASM_ENABLE_MULTITHREADING
           threads_(nullptr),
-          current_thread_index_(0),
+          ready_list_({nullptr, nullptr}),
+          timeout_list_({nullptr, nullptr}),
           stop_requested_(false),
 #endif
           last_loaded_id_(-1),
@@ -396,6 +397,8 @@ namespace embwasm {
             modules_[i] = nullptr;
         }
 #if EMBWASM_ENABLE_MULTITHREADING
+        InitListNode(&ready_list_);
+        InitListNode(&timeout_list_);
         for (std::size_t i = 0; i < kMaxEvents; ++i) {
             events_[i].Reset();
             events_[i].id = static_cast<uint32_t>(i + 1);
@@ -439,6 +442,8 @@ namespace embwasm {
         InitializeAllHostModules(*this);
 #if EMBWASM_ENABLE_MULTITHREADING
         stop_requested_ = false;
+        InitListNode(&ready_list_);
+        InitListNode(&timeout_list_);
         {
             void* allocated = pool_->Allocate(sizeof(WasmThreadContext*) * kMaxThreads);
             if (allocated) {
@@ -1026,7 +1031,8 @@ namespace embwasm {
         pool_ = nullptr;
 #if EMBWASM_ENABLE_MULTITHREADING
         threads_ = nullptr;
-        current_thread_index_ = 0;
+        InitListNode(&ready_list_);
+        InitListNode(&timeout_list_);
         for (std::size_t i = 0; i < kMaxEvents; ++i) {
             events_[i].Reset();
             events_[i].id = static_cast<uint32_t>(i + 1);
@@ -5064,6 +5070,7 @@ uint32_t WasmEngine::SetupMainThread(WasmModuleInstance* mod, uint32_t func_inde
     main.labels_pool_top = 0;
     main.start_func_index = func_index;
     main.start_module = mod;
+    AddLastListNode(&ready_list_, &main.list_node);
     return main.id;
 }
 
@@ -5086,6 +5093,7 @@ uint32_t WasmEngine::CreateThread(uint32_t func_index) noexcept {
             threads_[i]->call_stack_top = 0;
             threads_[i]->labels_pool_top = 0;
             threads_[i]->start_func_index = func_index;
+            AddLastListNode(&ready_list_, &threads_[i]->list_node);
 
             WasmThreadContext* active_ctx = GetCurrentThreadContext();
             WasmModuleInstance* caller_mod = nullptr;
@@ -5114,14 +5122,16 @@ void WasmEngine::SignalEvent(uint32_t event_id) noexcept {
     if (!threads_ || event_id == 0 || event_id > kMaxEvents) return;
     events_[event_id - 1].signaled = true;
 
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        WasmThreadContext* t = threads_[i];
-        if (t && t->state == ThreadState::kWaiting
-               && t->wait_kind == WaitKind::kEvent
-               && t->wait_param.event_id == event_id) {
-            t->state    = ThreadState::kReady;
-            t->wait_kind = WaitKind::kNone;
-        }
+    ListNode* wq = &events_[event_id - 1].wait_list_;
+    ListNode* node = wq->next;
+    while (node != wq) {
+        ListNode* next_node = node->next;
+        RemoveListNode(node);
+        WasmThreadContext* t = thread_from_node(node);
+        t->state     = ThreadState::kReady;
+        t->wait_kind = WaitKind::kNone;
+        AddLastListNode(&ready_list_, node);
+        node = next_node;
     }
     PlatformNotifyActivity(*this);
 }
@@ -5140,6 +5150,7 @@ void WasmEngine::WaitEvent(uint32_t thread_id, uint32_t event_id) noexcept {
         ctx->state    = ThreadState::kWaiting;
         ctx->wait_kind = WaitKind::kEvent;
         ctx->wait_param.event_id = event_id;
+        AddLastListNode(&events_[event_id - 1].wait_list_, &ctx->list_node);
     }
 }
 
@@ -5160,8 +5171,9 @@ void WasmEngine::ThreadNotify(uint32_t thread_id) noexcept {
     WasmThreadContext* ctx = GetThreadContext(thread_id);
     if (!ctx) return;
     if (ctx->state == ThreadState::kWaiting && ctx->wait_kind == WaitKind::kNotify) {
-        ctx->state    = ThreadState::kReady;
+        ctx->state     = ThreadState::kReady;
         ctx->wait_kind = WaitKind::kNone;
+        AddLastListNode(&ready_list_, &ctx->list_node);
         PlatformNotifyActivity(*this);
     } else {
         ctx->notify_pending = true;
@@ -5174,39 +5186,38 @@ void WasmEngine::ThreadSleep(uint32_t thread_id, uint32_t duration_ms) noexcept 
     ctx->state    = ThreadState::kWaiting;
     ctx->wait_kind = WaitKind::kSleep;
     ctx->wait_param.wake_time_ms = PlatformGetTimeMs() + duration_ms;
+    AddLastListNode(&timeout_list_, &ctx->list_node);
 }
 
 bool WasmEngine::HasReadyThread() noexcept {
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        if (threads_[i] && threads_[i]->state == ThreadState::kReady) return true;
-    }
-    return false;
+    return !IsEmptyListNode(&ready_list_);
 }
 
 uint32_t WasmEngine::ComputeMinSleepTimeout() noexcept {
     uint32_t now = PlatformGetTimeMs();
     uint32_t min_timeout = UINT32_MAX;
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        WasmThreadContext* t = threads_[i];
-        if (t && t->state == ThreadState::kWaiting && t->wait_kind == WaitKind::kSleep) {
-            uint32_t rem = (t->wait_param.wake_time_ms > now)
-                           ? t->wait_param.wake_time_ms - now : 0;
-            if (rem < min_timeout) min_timeout = rem;
-        }
+    for (ListNode* node = timeout_list_.next; node != &timeout_list_; node = node->next) {
+        WasmThreadContext* t = thread_from_node(node);
+        uint32_t rem = (t->wait_param.wake_time_ms > now)
+                       ? t->wait_param.wake_time_ms - now : 0;
+        if (rem < min_timeout) min_timeout = rem;
     }
     return min_timeout;
 }
 
 void WasmEngine::PollSleeps() noexcept {
     uint32_t now = PlatformGetTimeMs();
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        WasmThreadContext* t = threads_[i];
-        if (t && t->state == ThreadState::kWaiting
-               && t->wait_kind == WaitKind::kSleep
-               && now >= t->wait_param.wake_time_ms) {
-            t->state    = ThreadState::kReady;
+    ListNode* node = timeout_list_.next;
+    while (node != &timeout_list_) {
+        ListNode* next_node = node->next;
+        WasmThreadContext* t = thread_from_node(node);
+        if (now >= t->wait_param.wake_time_ms) {
+            RemoveListNode(node);
+            t->state     = ThreadState::kReady;
             t->wait_kind = WaitKind::kNone;
+            AddLastListNode(&ready_list_, node);
         }
+        node = next_node;
     }
 }
 
@@ -5262,13 +5273,11 @@ WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
             }
 
             WasmThreadContext* ctx = nullptr;
-            for (std::size_t i = 0; i < kMaxThreads; ++i) {
-                std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
-                if (threads_[idx] && threads_[idx]->state == ThreadState::kReady) {
-                    current_thread_index_ = idx;
-                    ctx = threads_[idx];
+            {
+                ListNode* node = PopFrontListNode(&ready_list_);
+                if (node) {
+                    ctx = thread_from_node(node);
                     ctx->state = ThreadState::kRunning;
-                    break;
                 }
             }
 
@@ -5282,7 +5291,12 @@ WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
 
                 PlatformLock(*this);
                 if (res == WasmResult::kYield) {
-                    if (ctx->state == ThreadState::kRunning) ctx->state = ThreadState::kReady;
+                    if (ctx->state == ThreadState::kRunning) {
+                        ctx->state = ThreadState::kReady;
+                    }
+                    if (ctx->state == ThreadState::kReady) {
+                        AddLastListNode(&ready_list_, &ctx->list_node);
+                    }
                 } else {
                     ctx->execution_result = res;
                     ctx->state = ThreadState::kTerminated;
@@ -5290,7 +5304,6 @@ WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
                 WasmThreadCompletionCallback cb = ctx->completion_callback;
                 void* ud = ctx->thread_user_data;
                 WasmResult result_for_cb = ctx->execution_result;
-                current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
                 PlatformUnlock(*this);
 
                 if (res != WasmResult::kYield && cb) {
@@ -5308,16 +5321,15 @@ WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
     } else {
         while (true) {
             bool any_active = false;
-            bool any_ready  = false;
             for (std::size_t i = 0; i < kMaxThreads; ++i) {
                 WasmThreadContext* t = threads_[i];
                 if (!t || t->state == ThreadState::kTerminated || t->state == ThreadState::kCreated) continue;
                 any_active = true;
-                if (t->state == ThreadState::kReady) any_ready = true;
+                break;
             }
             if (!any_active) break;
 
-            if (any_ready) {
+            if (!IsEmptyListNode(&ready_list_)) {
                 WasmResult res = Step();
                 if (res != WasmResult::kOk && res != WasmResult::kYield) {
                     final_result = res;
@@ -5341,44 +5353,35 @@ WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
 }
 
 WasmResult WasmEngine::Step() noexcept {
-    for (std::size_t i = 0; i < kMaxThreads; ++i) {
-        std::size_t idx = (current_thread_index_ + i) % kMaxThreads;
-        if (threads_[idx] && threads_[idx]->state == ThreadState::kReady) {
-            current_thread_index_ = idx;
-            WasmThreadContext& ctx = *threads_[idx];
-            ctx.state = ThreadState::kRunning;
+    ListNode* node = PopFrontListNode(&ready_list_);
+    if (!node) return WasmResult::kOk;
 
-            WasmResult res;
-            if (ctx.call_stack_top == 0) {
-                res = ExecuteInternal(ctx.start_module, ctx.start_func_index);
-            } else {
-                res = RunLoop(&ctx);
-            }
+    WasmThreadContext& ctx = *thread_from_node(node);
+    ctx.state = ThreadState::kRunning;
 
-            if (res == WasmResult::kYield) {
-                if (ctx.state == ThreadState::kRunning) {
-                    ctx.state = ThreadState::kReady;
-                }
-            } else if (res == WasmResult::kOk) {
-                ctx.execution_result = res;
-                ctx.state = ThreadState::kTerminated;
-                if (ctx.completion_callback) {
-                    ctx.completion_callback(&ctx, ctx.thread_user_data, res);
-                }
-            } else {
-                ctx.execution_result = res;
-                ctx.state = ThreadState::kTerminated;
-                if (ctx.completion_callback) {
-                    ctx.completion_callback(&ctx, ctx.thread_user_data, res);
-                }
-                current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
-                return res;
-            }
-
-            current_thread_index_ = (current_thread_index_ + 1) % kMaxThreads;
-            return WasmResult::kOk;
-        }
+    WasmResult res;
+    if (ctx.call_stack_top == 0) {
+        res = ExecuteInternal(ctx.start_module, ctx.start_func_index);
+    } else {
+        res = RunLoop(&ctx);
     }
+
+    if (res == WasmResult::kYield) {
+        if (ctx.state == ThreadState::kRunning) {
+            ctx.state = ThreadState::kReady;
+        }
+        if (ctx.state == ThreadState::kReady) {
+            AddLastListNode(&ready_list_, &ctx.list_node);
+        }
+    } else {
+        ctx.execution_result = res;
+        ctx.state = ThreadState::kTerminated;
+        if (ctx.completion_callback) {
+            ctx.completion_callback(&ctx, ctx.thread_user_data, res);
+        }
+        if (res != WasmResult::kOk) return res;
+    }
+
     return WasmResult::kOk;
 }
 
@@ -5451,6 +5454,7 @@ void WasmEngine::StartThread(uint32_t thread_id) noexcept {
     if (!ctx || ctx->state != ThreadState::kCreated) return;
     PlatformLock(*this);
     ctx->state = ThreadState::kReady;
+    AddLastListNode(&ready_list_, &ctx->list_node);
     PlatformUnlock(*this);
     PlatformNotifyActivity(*this);
 }

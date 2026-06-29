@@ -73,6 +73,7 @@ using WasmThreadCompletionCallback =
 /// データスタック・コールスタック・ラベルプールは WasmMemoryPool から確保したバッファを指します。
 /// Init() / CreateThread() 時にサイズ分だけ確保し、以後は再確保しません。
 struct WasmThreadContext {
+    ListNode list_node; ///< ready_list_ / sync オブジェクトの wait_list_ / timeout_list_ に繋ぐノード（先頭フィールド必須）。
     uint32_t id;        ///< スレッド ID（1-based）。
     ThreadState state;  ///< 現在の実行状態。
 
@@ -119,6 +120,7 @@ struct WasmThreadContext {
         thread_user_data    = nullptr;
         execution_result    = WasmResult::kOk;
         requires_destroy    = false;
+        list_node.next = list_node.prev = nullptr;
     }
 
     bool Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept;
@@ -300,11 +302,13 @@ class WasmEngine;
 struct WasmEvent {
     uint32_t id;    ///< イベント ID（1-based）。
     uint8_t signaled;  ///< シグナル済みフラグ。
+    ListNode wait_list_; ///< このイベントを待つスレッドのリスト（センチネル）。
 
     /// @brief イベントを未シグナル状態にリセットします。
     void Reset() noexcept {
         id = 0;
         signaled = false;
+        InitListNode(&wait_list_);
     }
 };
 
@@ -463,10 +467,18 @@ public:
         return threads_[thread_id - 1];
     }
     WasmThreadContext* GetCurrentThreadContext() noexcept {
-        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
+        if (!threads_) return nullptr;
+        for (std::size_t i = 0; i < kMaxThreads; ++i) {
+            if (threads_[i] && threads_[i]->state == ThreadState::kRunning) return threads_[i];
+        }
+        return threads_[kMainThreadIndex];
     }
     const WasmThreadContext* GetCurrentThreadContext() const noexcept {
-        return (current_thread_index_ < kMaxThreads && threads_) ? threads_[current_thread_index_] : nullptr;
+        if (!threads_) return nullptr;
+        for (std::size_t i = 0; i < kMaxThreads; ++i) {
+            if (threads_[i] && threads_[i]->state == ThreadState::kRunning) return threads_[i];
+        }
+        return threads_[kMainThreadIndex];
     }
 #endif
 
@@ -550,8 +562,13 @@ private:
 #if EMBWASM_ENABLE_MULTITHREADING
     WasmThreadContext** threads_;
     WasmEvent events_[kMaxEvents];
-    uint32_t current_thread_index_;
+    ListNode ready_list_;
+    ListNode timeout_list_;
     bool stop_requested_;
+
+    static WasmThreadContext* thread_from_node(ListNode* node) noexcept {
+        return reinterpret_cast<WasmThreadContext*>(node);
+    }
 
     enum class RunInternalFlags : uint32_t {
         kNone          = 0,

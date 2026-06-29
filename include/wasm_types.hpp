@@ -123,6 +123,18 @@ static inline void AddFirstListNode(ListNode *list, ListNode *node) {
 static inline void RemoveListNode(ListNode *node) {
     node->prev->next = node->next;
     node->next->prev = node->prev;
+    node->next = node->prev = nullptr;
+}
+
+static inline bool IsEmptyListNode(const ListNode *list) {
+    return list->next == list;
+}
+
+static inline ListNode* PopFrontListNode(ListNode *list) {
+    if (IsEmptyListNode(list)) return nullptr;
+    ListNode* node = list->next;
+    RemoveListNode(node);
+    return node;
 }
 
 /// @brief ホスト関数のシグネチャ型。
