@@ -5387,7 +5387,7 @@ uint32_t WasmEngine::CreateHostThread(WasmModuleInstance* module, uint32_t func_
     PlatformLock(*this);
     uint32_t result_id = 0;
     for (std::size_t i = kMainThreadIndex + 1; i < kMaxThreads; ++i) {
-        if (!threads_[i] || threads_[i]->state == ThreadState::kTerminated) {
+        if (!threads_[i] || (threads_[i]->state == ThreadState::kTerminated && !threads_[i]->requires_destroy)) {
             if (!threads_[i]) {
                 WasmMemoryPool* pool = GetMemoryPool();
                 if (!pool) break;
@@ -5403,6 +5403,7 @@ uint32_t WasmEngine::CreateHostThread(WasmModuleInstance* module, uint32_t func_
             ctx->state            = ThreadState::kCreated;
             ctx->start_module     = module;
             ctx->start_func_index = func_index;
+            ctx->requires_destroy = true;
             result_id = ctx->id;
             break;
         }
@@ -5410,6 +5411,22 @@ uint32_t WasmEngine::CreateHostThread(WasmModuleInstance* module, uint32_t func_
     PlatformUnlock(*this);
     if (result_id != 0) PlatformNotifyActivity(*this);
     return result_id;
+}
+
+bool WasmEngine::DestroyHostThread(uint32_t thread_id) noexcept {
+    if (!threads_ || thread_id == 0) return false;
+    const auto idx = static_cast<std::size_t>(thread_id - 1);
+    if (idx < kMainThreadIndex + 1 || idx >= kMaxThreads) return false;
+    PlatformLock(*this);
+    WasmThreadContext* ctx = threads_[idx];
+    bool ok = false;
+    if (ctx && ctx->requires_destroy &&
+        (ctx->state == ThreadState::kTerminated || ctx->state == ThreadState::kCreated)) {
+        ctx->Reset();
+        ok = true;
+    }
+    PlatformUnlock(*this);
+    return ok;
 }
 
 void WasmEngine::SetThreadCallback(uint32_t thread_id,

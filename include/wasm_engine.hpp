@@ -101,6 +101,7 @@ struct WasmThreadContext {
     WasmThreadCompletionCallback completion_callback; ///< 終了時コールバック。nullptr なら呼ばれない。
     void*      thread_user_data;  ///< コールバックおよびエントリ関数に渡すユーザーデータ。
     WasmResult execution_result;  ///< 実行結果（kTerminated 後に GetThreadResult() で取得可能）。
+    bool requires_destroy; ///< true なら DestroyHostThread() を呼ぶまでスロットを自動再利用しない。
 
     /// @brief コンテキストを初期状態（`kTerminated`）にリセットします。
     void Reset() noexcept {
@@ -117,6 +118,7 @@ struct WasmThreadContext {
         completion_callback = nullptr;
         thread_user_data    = nullptr;
         execution_result    = WasmResult::kOk;
+        requires_destroy    = false;
     }
 
     bool Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept;
@@ -434,6 +436,7 @@ public:
 
     uint32_t CreateThread(uint32_t func_index) noexcept;
     uint32_t CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept;
+    bool DestroyHostThread(uint32_t thread_id) noexcept;
     void SetThreadCallback(uint32_t thread_id, WasmThreadCompletionCallback callback, void* user_data) noexcept;
     WasmResult PushThreadArg(uint32_t thread_id, WasmValue value) noexcept;
     void StartThread(uint32_t thread_id) noexcept;
