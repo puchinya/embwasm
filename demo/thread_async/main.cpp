@@ -1,8 +1,6 @@
 #include <cstddef>
 #include <iostream>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
+#include "thread_compat/thread_compat.hpp"
 #include "embwasm.hpp"
 #include "main_wasm.hpp"
 
@@ -12,15 +10,15 @@ namespace {
 alignas(16) uint8_t g_wasm_pool_buf[kMemoryPoolSize];
 
 struct SyncData {
-    std::mutex mtx;
-    std::condition_variable cv;
+    compat::Mutex mtx;
+    compat::CondVar cv;
     bool done = false;
     embwasm::WasmResult result = embwasm::WasmResult::kOk;
 };
 
 void on_task_done(embwasm::WasmThreadContext*, void* ud, embwasm::WasmResult r) {
     auto* sync = static_cast<SyncData*>(ud);
-    std::lock_guard<std::mutex> lock(sync->mtx);
+    compat::LockGuard lock(sync->mtx);
     sync->result = r;
     sync->done   = true;
     sync->cv.notify_one();
@@ -50,10 +48,9 @@ int main() {
     engine.InstantiateModules();
     std::cout << "WASM Loaded successfully." << std::endl;
 
-    // Step 1: インタプリタループを専用OSスレッドで起動
-    std::thread interp_thread([&engine]() {
-        engine.Run();
-    });
+    // Step 1: インタプリタループを専用スレッドで起動
+    compat::Thread interp_thread;
+    interp_thread.start([&engine]() { engine.Run(); });
 
     // Steps 2-4: メインOSスレッドからWasmスレッドを非同期生成・起動
     embwasm::WasmModuleInstance* mod = engine.GetModuleInstanceById(instance_id);
@@ -76,7 +73,7 @@ int main() {
     // Step 5: コールバックが呼ばれるまで待機
     std::cout << "Waiting for async task to complete..." << std::endl;
     {
-        std::unique_lock<std::mutex> lock(sync.mtx);
+        compat::UniqueLock lock(sync.mtx);
         sync.cv.wait(lock, [&sync]{ return sync.done; });
     }
 

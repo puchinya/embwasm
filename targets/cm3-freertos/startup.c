@@ -6,8 +6,6 @@ extern uint32_t _edata;
 extern uint32_t _sbss;
 extern uint32_t _ebss;
 extern uint32_t _estack;
-extern uint32_t _init_array_start;
-extern uint32_t _init_array_end;
 
 extern void freertos_start(void);
 
@@ -52,13 +50,6 @@ const void * const g_vectors[] = {
     Default_Handler, Default_Handler,                                   /* 60-61 */
 };
 
-static void call_init_array(void) {
-    typedef void (*fn_t)(void);
-    fn_t *p = (fn_t*)&_init_array_start;
-    fn_t *e = (fn_t*)&_init_array_end;
-    while (p < e) (*p++)();
-}
-
 void Reset_Handler(void) {
     uint32_t *src = &_sidata;
     uint32_t *dst = &_sdata;
@@ -67,7 +58,6 @@ void Reset_Handler(void) {
     dst = &_sbss;
     while (dst < &_ebss) *dst++ = 0;
 
-    call_init_array();
     freertos_start();
     while (1) {}
 }

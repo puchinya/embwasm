@@ -13,6 +13,7 @@ target_include_directories(freertos PUBLIC
     ${FREERTOS_DIR}/portable/GCC/ARM_CM3
     ${CM3_DIR}
 )
+target_compile_definitions(freertos INTERFACE USE_FREERTOS)
 
 add_library(embwasm_cm3_bsp STATIC
     ${CM3_DIR}/startup.c

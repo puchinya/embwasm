@@ -133,11 +133,11 @@ add_custom_command(
 add_executable(embwasm_demo_thread_async main.cpp host_apis.cpp ${GEN_CPP} ${GEN_H} ${WASM_GEN_CPP} ${WASM_GEN_H})
 
 # ライブラリへのリンクおよびインクルードパスの設定
-target_link_libraries(embwasm_demo_thread_async PRIVATE embwasm)
+target_link_libraries(embwasm_demo_thread_async PRIVATE embwasm demo_thread_compat)
 target_include_directories(embwasm_demo_thread_async PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
 if(CMAKE_CROSSCOMPILING)
-    embwasm_cm3_freertos_setup_firmware(embwasm_demo_thread_async)
+    embwasm_cm3_freertos_setup_firmware(embwasm_demo_thread_async STACK_SIZE 4096)
 elseif(MSVC)
     target_compile_options(embwasm_demo_thread_async PRIVATE /W4 /WX)
 else()
