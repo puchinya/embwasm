@@ -245,6 +245,74 @@ namespace embwasm {
         return decoded_value;
     }
 
+    // Fast LEB128 decoders for validated bytecode — no bounds check, loop unrolled.
+    // Call only from the interpreter hot path where bytecode is already validated.
+
+    static inline uint32_t DecodeVarUint32Fast(const uint8_t*& p) noexcept {
+        uint32_t b = *p++;
+        if (!(b & 0x80)) return b;
+        uint32_t r = b & 0x7F;
+        b = *p++; r |= (b & 0x7F) << 7;
+        if (!(b & 0x80)) return r;
+        b = *p++; r |= (b & 0x7F) << 14;
+        if (!(b & 0x80)) return r;
+        b = *p++; r |= (b & 0x7F) << 21;
+        if (!(b & 0x80)) return r;
+        b = *p++; r |= (b & 0x0F) << 28;
+        return r;
+    }
+
+    static inline int32_t DecodeVarInt32Fast(const uint8_t*& p) noexcept {
+        uint32_t b = *p++;
+        if (!(b & 0x80))
+            return static_cast<int32_t>(b) | (b & 0x40 ? ~static_cast<int32_t>(0x7F) : 0);
+        uint32_t r = b & 0x7F;
+        b = *p++; r |= (b & 0x7F) << 7;
+        if (!(b & 0x80))
+            return static_cast<int32_t>(r) | (b & 0x40 ? static_cast<int32_t>(~0U << 14) : 0);
+        b = *p++; r |= (b & 0x7F) << 14;
+        if (!(b & 0x80))
+            return static_cast<int32_t>(r) | (b & 0x40 ? static_cast<int32_t>(~0U << 21) : 0);
+        b = *p++; r |= (b & 0x7F) << 21;
+        if (!(b & 0x80))
+            return static_cast<int32_t>(r) | (b & 0x40 ? static_cast<int32_t>(~0U << 28) : 0);
+        b = *p++; r |= (b & 0x0F) << 28;
+        return static_cast<int32_t>(r);
+    }
+
+    static inline int64_t DecodeVarInt64Fast(const uint8_t*& p) noexcept {
+        uint64_t b = *p++;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(b) | (b & 0x40 ? ~static_cast<int64_t>(0x7F) : 0LL);
+        uint64_t r = b & 0x7F;
+        b = *p++; r |= (b & 0x7F) << 7;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 14) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 14;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 21) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 21;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 28) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 28;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 35) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 35;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 42) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 42;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 49) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 49;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 56) : 0LL);
+        b = *p++; r |= (b & 0x7F) << 56;
+        if (!(b & 0x80))
+            return static_cast<int64_t>(r) | (b & 0x40 ? static_cast<int64_t>(~0ULL << 63) : 0LL);
+        b = *p++; r |= (b & 0x01ULL) << 63;
+        return static_cast<int64_t>(r);
+    }
+
     static uint32_t EncodeFuncRef(WasmEngine * /*current_engine*/, WasmModuleInstance *current_mod,
                                   uint32_t func_idx) noexcept {
         if (func_idx == 0xFFFFFFFF) return 0xFFFFFFFF;
@@ -356,6 +424,10 @@ namespace embwasm {
         m.elem_segment_capacity = 0;
         m.start_function_index = -1;
         m.self_index = 0;
+        m.stack_ptr_global_idx  = UINT32_MAX;
+        m.cabi_realloc_func_idx = UINT32_MAX;
+        m.data_end_global_idx   = UINT32_MAX;
+        m.thread_stack_size     = 0;
     }
 
     static inline bool StrEq(const char *a, std::size_t a_len, const char *b, std::size_t b_len) noexcept {
@@ -1971,6 +2043,40 @@ namespace embwasm {
             }
         }
 
+        // 7. __stack_pointer / __data_end / cabi_realloc の検索
+        mod->stack_ptr_global_idx  = UINT32_MAX;
+        mod->data_end_global_idx   = UINT32_MAX;
+        mod->cabi_realloc_func_idx = UINT32_MAX;
+        mod->thread_stack_size     = 0;
+        for (std::size_t i = 0; i < export_count; ++i) {
+            const WasmExportEntry& e = exports[i];
+            if (e.kind == 3 && StrEq(e.name, e.name_len, "__stack_pointer", 15))
+                mod->stack_ptr_global_idx = e.index;
+            else if (e.kind == 3 && StrEq(e.name, e.name_len, "__data_end", 10))
+                mod->data_end_global_idx = e.index;
+            else if (e.kind == 0 && StrEq(e.name, e.name_len, "cabi_realloc", 12))
+                mod->cabi_realloc_func_idx = e.index;
+        }
+        if (mod->stack_ptr_global_idx != UINT32_MAX) {
+            if (mod->cabi_realloc_func_idx == UINT32_MAX)
+                return WasmResult::kErrorValidationFailed;
+            uint32_t sp_init = static_cast<uint32_t>(
+                mod->globals[mod->stack_ptr_global_idx].value.value.i32);
+            if (mod->data_end_global_idx != UINT32_MAX) {
+                uint32_t de = static_cast<uint32_t>(
+                    mod->globals[mod->data_end_global_idx].value.value.i32);
+                if (sp_init > de) {
+                    // data-first layout: stack is placed after data
+                    mod->thread_stack_size = sp_init - de;
+                } else {
+                    // stack-first layout (LLVM default): sp_init == stack_size
+                    mod->thread_stack_size = sp_init;
+                }
+            } else {
+                mod->thread_stack_size = config_.thread_wasm_stack_size;
+            }
+        }
+
         return WasmResult::kOk;
     }
 
@@ -3053,7 +3159,7 @@ namespace embwasm {
             // [Opt 6] block/if ジャンプテーブル参照用に code_ptr をキャッシュ
             const uint8_t *code_base = frame.func->local.code_ptr;
 
-            while (ip < limit) {
+            for (;;) {
                 uint8_t op = *ip++;
                 switch (op) {
                     case 0x00: // unreachable
@@ -3066,7 +3172,7 @@ namespace embwasm {
                     case 0x02: // block
                     case 0x03: {
                         // loop
-                        int32_t block_type = DecodeVarInt32(ip, limit);
+                        int32_t block_type = DecodeVarInt32Fast(ip);
                         uint32_t param_count = 0;
                         uint32_t result_count = 0;
                         if (block_type >= 0) {
@@ -3104,7 +3210,7 @@ namespace embwasm {
 
                     case 0x04: {
                         // if
-                        int32_t block_type = DecodeVarInt32(ip, limit);
+                        int32_t block_type = DecodeVarInt32Fast(ip);
                         uint32_t result_count = 0;
                         if (block_type >= 0) {
                             if (static_cast<uint32_t>(block_type) < signature_count) {
@@ -3162,7 +3268,7 @@ namespace embwasm {
                     case 0x0C: // br <label_idx>
                     case 0x0D: {
                         // br_if <label_idx>
-                        uint32_t label_idx = DecodeVarUint32(ip, limit);
+                        uint32_t label_idx = DecodeVarUint32Fast(ip);
                         bool jump = true;
                         if (op == 0x0D) {
                             jump = (stack[--sp].value.i32 != 0);
@@ -3199,20 +3305,20 @@ namespace embwasm {
 
                     case 0x0E: {
                         // br_table
-                        uint32_t target_count = DecodeVarUint32(ip, limit);
+                        uint32_t target_count = DecodeVarUint32Fast(ip);
                         uint32_t idx = static_cast<uint32_t>(stack[--sp].value.i32);
 
                         uint32_t chosen_label_idx = 0;
                         bool found = false;
                         for (uint32_t i = 0; i < target_count; ++i) {
-                            uint32_t target = DecodeVarUint32(ip, limit);
+                            uint32_t target = DecodeVarUint32Fast(ip);
                             if (i == idx) {
                                 chosen_label_idx = target;
                                 found = true;
                                 break; // 常に goto frame_changed するため ip は不要
                             }
                         }
-                        uint32_t default_target = DecodeVarUint32(ip, limit);
+                        uint32_t default_target = DecodeVarUint32Fast(ip);
                         if (!found) {
                             chosen_label_idx = default_target;
                         }
@@ -3255,7 +3361,8 @@ namespace embwasm {
                             sp += arity;
 
                             label_top--;
-                            break;
+                            if (label_top > 0) break;
+                            // label_top == 0: func_label を pop した = 関数終端 → フォールスルー
                         }
                         // return (0x0F): 関数外側ブロックラベルでスタックを巻き戻す
                         if (op == 0x0F) {
@@ -3267,8 +3374,7 @@ namespace embwasm {
                                 StackUnwind(stack, sp, src, arity);
                             sp += arity;
                         }
-                        // 関数の終了 (end で label_stack_top == 0、または return)
-                        // locals はフレームの func_label.stack_top への巻き戻しで自動解放される
+                        // 関数の終了 (end で func_label pop、または return)
                         ctx->labels_pool_top -= frame.label_capacity;
                         ctx->stack_top = sp;
                         if (ctx->call_stack_top > 0) {
@@ -3281,7 +3387,7 @@ namespace embwasm {
 
                     case 0x10: {
                         // call <func_index>
-                        uint32_t target_idx = DecodeVarUint32(ip, limit);
+                        uint32_t target_idx = DecodeVarUint32Fast(ip);
 
                         // kImportのときはチェーンを辿って実際の関数を得る
                         WasmModuleInstance *call_mod = current_mod;
@@ -3324,7 +3430,7 @@ namespace embwasm {
                     }
                     case 0x11: {
                         // call_indirect
-                        uint32_t type_idx = DecodeVarUint32(ip, limit);
+                        uint32_t type_idx = DecodeVarUint32Fast(ip);
                         uint32_t table_idx = *ip++;
 
                         uint32_t elem_idx = static_cast<uint32_t>(stack[--sp].value.i32);
@@ -3416,7 +3522,7 @@ namespace embwasm {
                             result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
                             goto done;
                         }
-                        uint32_t type_count = DecodeVarUint32(ip, limit);
+                        uint32_t type_count = DecodeVarUint32Fast(ip);
                         if (type_count > static_cast<std::size_t>(limit - ip)) {
                             result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
                             goto done;
@@ -3431,28 +3537,28 @@ namespace embwasm {
 
                     case 0x20: {
                         // local.get <local_idx>
-                        uint32_t local_idx = DecodeVarUint32(ip, limit);
+                        uint32_t local_idx = DecodeVarUint32Fast(ip);
                         stack[sp++] = locals[local_idx];
                         break;
                     }
 
                     case 0x21: {
                         // local.set <local_idx>
-                        uint32_t local_idx = DecodeVarUint32(ip, limit);
+                        uint32_t local_idx = DecodeVarUint32Fast(ip);
                         locals[local_idx] = stack[--sp];
                         break;
                     }
 
                     case 0x22: {
                         // local.tee <local_idx>
-                        uint32_t local_idx = DecodeVarUint32(ip, limit);
+                        uint32_t local_idx = DecodeVarUint32Fast(ip);
                         locals[local_idx] = stack[sp - 1]; // ポップせずにコピー
                         break;
                     }
 
                     case 0x23: {
                         // global.get <global_idx>
-                        uint32_t idx = DecodeVarUint32(ip, limit);
+                        uint32_t idx = DecodeVarUint32Fast(ip);
                         stack[sp++] = globals[idx].value;
                         break;
                     }
@@ -3460,14 +3566,14 @@ namespace embwasm {
                     case 0x24: {
                         // global.set <global_idx>
                         // ValidateFunctionBody でイミュータブルへの書き込みは検証済み
-                        uint32_t idx = DecodeVarUint32(ip, limit);
+                        uint32_t idx = DecodeVarUint32Fast(ip);
                         globals[idx].value = stack[--sp];
                         break;
                     }
 
                     case 0x25: {
                         // table.get
-                        uint32_t table_idx = DecodeVarUint32(ip, limit);
+                        uint32_t table_idx = DecodeVarUint32Fast(ip);
                         uint32_t elem_idx = static_cast<uint32_t>(stack[--sp].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
                             result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
@@ -3487,7 +3593,7 @@ namespace embwasm {
 
                     case 0x26: {
                         // table.set
-                        uint32_t table_idx = DecodeVarUint32(ip, limit);
+                        uint32_t table_idx = DecodeVarUint32Fast(ip);
                         WasmValue val = stack[--sp];
                         uint32_t elem_idx = static_cast<uint32_t>(stack[--sp].value.i32);
                         if (table_idx >= table_count || !tables[table_idx] || elem_idx >= table_sizes[table_idx]) {
@@ -3521,8 +3627,8 @@ namespace embwasm {
                     case 0x35: {
                         // i64.load32_u
                         /* uint32_t align = */
-                        DecodeVarUint32(ip, limit);
-                        uint32_t offset = DecodeVarUint32(ip, limit);
+                        DecodeVarUint32Fast(ip);
+                        uint32_t offset = DecodeVarUint32Fast(ip);
                         uint32_t base = static_cast<uint32_t>(stack[--sp].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
 
@@ -3566,8 +3672,8 @@ namespace embwasm {
                     case 0x3E: {
                         // i64.store32
                         /* uint32_t align = */
-                        DecodeVarUint32(ip, limit);
-                        uint32_t offset = DecodeVarUint32(ip, limit);
+                        DecodeVarUint32Fast(ip);
+                        uint32_t offset = DecodeVarUint32Fast(ip);
                         WasmValue val = stack[--sp];
                         uint32_t base = static_cast<uint32_t>(stack[--sp].value.i32);
                         uint64_t addr = static_cast<uint64_t>(base) + offset;
@@ -3593,14 +3699,14 @@ namespace embwasm {
 
                     case 0x41: {
                         // i32.const <value>
-                        int32_t val = DecodeVarInt32(ip, limit);
+                        int32_t val = DecodeVarInt32Fast(ip);
                         stack[sp++].value.i32 = val;
                         break;
                     }
 
                     case 0x42: {
                         // i64.const <value>
-                        int64_t val = DecodeVarInt64(ip, limit);
+                        int64_t val = DecodeVarInt64Fast(ip);
                         stack[sp++].value.i64 = val;
                         break;
                     }
@@ -4574,7 +4680,7 @@ namespace embwasm {
 
                     // ref.null (0xD0): push null reference (stored as i64=-1)
                     case 0xD0: {
-                        int32_t heap_type = DecodeVarInt32(ip, limit);
+                        int32_t heap_type = DecodeVarInt32Fast(ip);
                         (void) heap_type;
                         WasmValue ref_val = {};
                         ref_val.value.i64 = -1;
@@ -4591,7 +4697,7 @@ namespace embwasm {
 
                     // ref.func (0xD2): push funcref
                     case 0xD2: {
-                        uint32_t func_idx = DecodeVarUint32(ip, limit);
+                        uint32_t func_idx = DecodeVarUint32Fast(ip);
                         WasmValue ref_val = {};
                         ref_val.value.i64 = static_cast<int64_t>(func_idx);
                         stack[sp++] = ref_val;
@@ -4600,7 +4706,7 @@ namespace embwasm {
 
                     case 0xFC: {
                         // saturating truncation and other extended instructions
-                        uint32_t sub_op = DecodeVarUint32(ip, limit);
+                        uint32_t sub_op = DecodeVarUint32Fast(ip);
                         switch (sub_op) {
                             case 0: {
                                 // i32.trunc_sat_f32_s
@@ -4692,7 +4798,7 @@ namespace embwasm {
                             }
                             case 8: {
                                 // memory.init
-                                uint32_t data_idx = DecodeVarUint32(ip, limit);
+                                uint32_t data_idx = DecodeVarUint32Fast(ip);
                                 ip++; // memory index (0)
                                 int32_t n = stack[--sp].value.i32;
                                 int32_t s = stack[--sp].value.i32;
@@ -4723,7 +4829,7 @@ namespace embwasm {
                             }
                             case 9: {
                                 // data.drop
-                                uint32_t data_idx = DecodeVarUint32(ip, limit);
+                                uint32_t data_idx = DecodeVarUint32Fast(ip);
                                 if (data_idx >= data_segment_count) {
                                     result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
                                     goto done;
@@ -4779,8 +4885,8 @@ namespace embwasm {
                             }
                             case 12: {
                                 // table.init
-                                uint32_t elem_idx = DecodeVarUint32(ip, limit);
-                                uint32_t table_idx = DecodeVarUint32(ip, limit);
+                                uint32_t elem_idx = DecodeVarUint32Fast(ip);
+                                uint32_t table_idx = DecodeVarUint32Fast(ip);
                                 int32_t n = stack[--sp].value.i32;
                                 int32_t s = stack[--sp].value.i32;
                                 int32_t d = stack[--sp].value.i32;
@@ -4822,7 +4928,7 @@ namespace embwasm {
                             }
                             case 13: {
                                 // elem.drop
-                                uint32_t elem_idx = DecodeVarUint32(ip, limit);
+                                uint32_t elem_idx = DecodeVarUint32Fast(ip);
                                 if (elem_idx >= elem_segment_count) {
                                     result = OnTrap(WasmResult::kErrorExecuteTrapDataOutOfBounds);
                                     goto done;
@@ -4837,8 +4943,8 @@ namespace embwasm {
                             }
                             case 14: {
                                 // table.copy
-                                uint32_t dst_table = DecodeVarUint32(ip, limit);
-                                uint32_t src_table = DecodeVarUint32(ip, limit);
+                                uint32_t dst_table = DecodeVarUint32Fast(ip);
+                                uint32_t src_table = DecodeVarUint32Fast(ip);
                                 int32_t n = stack[--sp].value.i32;
                                 int32_t s = stack[--sp].value.i32;
                                 int32_t d = stack[--sp].value.i32;
@@ -4866,7 +4972,7 @@ namespace embwasm {
                             }
                             case 15: {
                                 // table.grow
-                                uint32_t table_idx = DecodeVarUint32(ip, limit);
+                                uint32_t table_idx = DecodeVarUint32Fast(ip);
                                 int32_t n = stack[--sp].value.i32;
                                 WasmValue init_val = stack[--sp];
 
@@ -4932,7 +5038,7 @@ namespace embwasm {
                             }
                             case 16: {
                                 // table.size
-                                uint32_t table_idx = DecodeVarUint32(ip, limit);
+                                uint32_t table_idx = DecodeVarUint32Fast(ip);
                                 if (table_idx >= table_count) {
                                     result = OnTrap(WasmResult::kErrorExecuteTrapTableOutOfBounds);
                                     goto done;
@@ -4942,7 +5048,7 @@ namespace embwasm {
                             }
                             case 17: {
                                 // table.fill
-                                uint32_t table_idx = DecodeVarUint32(ip, limit);
+                                uint32_t table_idx = DecodeVarUint32Fast(ip);
                                 int32_t n = stack[--sp].value.i32;
                                 WasmValue val = stack[--sp];
                                 int32_t idx = stack[--sp].value.i32;
@@ -4985,15 +5091,6 @@ namespace embwasm {
                         result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
                         goto done;
                 }
-            }
-
-            // 関数の末尾に達した場合は暗黙のリターン
-            // locals は func_label.stack_top への巻き戻しで自動解放される
-            ctx->stack_top = sp;
-            frame.ip = ip;
-            if (ctx->call_stack_top > 0) {
-                ctx->labels_pool_top -= frame.label_capacity;
-                --ctx->call_stack_top;
             }
 
         frame_changed:
@@ -5285,9 +5382,31 @@ WasmResult WasmEngine::RunInternal(RunInternalFlags flags) noexcept {
             PlatformUnlock(*this);
 
             if (ctx) {
+                if (ctx->call_stack_top == 0 &&
+                    ctx->id != static_cast<uint32_t>(kMainThreadIndex + 1) &&
+                    ctx->wasm_stack_base == 0) {
+                    WasmResult alloc_res = AllocThreadWasmStack(ctx);
+                    if (alloc_res != WasmResult::kOk) {
+                        PlatformLock(*this);
+                        ctx->execution_result = alloc_res;
+                        ctx->state = ThreadState::kTerminated;
+                        PlatformUnlock(*this);
+                        if (ctx->completion_callback)
+                            ctx->completion_callback(ctx, ctx->thread_user_data, alloc_res);
+                        final_result = alloc_res;
+                        break;
+                    }
+                }
+                RestoreThreadStackPointer(ctx);
+
                 WasmResult res = (ctx->call_stack_top == 0)
                     ? ExecuteInternal(ctx->start_module, ctx->start_func_index)
                     : RunLoop(ctx);
+
+                SaveThreadStackPointer(ctx);
+                if (res != WasmResult::kYield) {
+                    FreeThreadWasmStack(ctx);
+                }
 
                 PlatformLock(*this);
                 if (res == WasmResult::kYield) {
@@ -5359,11 +5478,30 @@ WasmResult WasmEngine::Step() noexcept {
     WasmThreadContext& ctx = *thread_from_node(node);
     ctx.state = ThreadState::kRunning;
 
+    if (ctx.call_stack_top == 0 &&
+        ctx.id != static_cast<uint32_t>(kMainThreadIndex + 1) &&
+        ctx.wasm_stack_base == 0) {
+        WasmResult alloc_res = AllocThreadWasmStack(&ctx);
+        if (alloc_res != WasmResult::kOk) {
+            ctx.execution_result = alloc_res;
+            ctx.state = ThreadState::kTerminated;
+            if (ctx.completion_callback)
+                ctx.completion_callback(&ctx, ctx.thread_user_data, alloc_res);
+            return alloc_res;
+        }
+    }
+    RestoreThreadStackPointer(&ctx);
+
     WasmResult res;
     if (ctx.call_stack_top == 0) {
         res = ExecuteInternal(ctx.start_module, ctx.start_func_index);
     } else {
         res = RunLoop(&ctx);
+    }
+
+    SaveThreadStackPointer(&ctx);
+    if (res != WasmResult::kYield) {
+        FreeThreadWasmStack(&ctx);
     }
 
     if (res == WasmResult::kYield) {
@@ -5383,6 +5521,59 @@ WasmResult WasmEngine::Step() noexcept {
     }
 
     return WasmResult::kOk;
+}
+
+WasmResult WasmEngine::AllocThreadWasmStack(WasmThreadContext* ctx) noexcept {
+    WasmModuleInstance* mod = ctx->start_module;
+    if (!mod || mod->stack_ptr_global_idx == UINT32_MAX) return WasmResult::kOk;
+
+    const uint32_t size = mod->thread_stack_size
+                          ? mod->thread_stack_size
+                          : config_.thread_wasm_stack_size;
+    // ユーザー引数の上に cabi_realloc(0, 0, 16, size) の 4 引数を積む
+    ctx->stack[ctx->stack_top++].value.i32 = 0;
+    ctx->stack[ctx->stack_top++].value.i32 = 0;
+    ctx->stack[ctx->stack_top++].value.i32 = 16;
+    ctx->stack[ctx->stack_top++].value.i32 = static_cast<int32_t>(size);
+    WasmResult res = ExecuteInternal(mod, mod->cabi_realloc_func_idx);
+    uint32_t base_ptr = (res == WasmResult::kOk && ctx->stack_top > 0)
+        ? static_cast<uint32_t>(ctx->stack[--ctx->stack_top].value.i32) : 0;
+
+    if (res != WasmResult::kOk || base_ptr == 0) return WasmResult::kErrorOutOfMemory;
+
+    ctx->wasm_stack_base = base_ptr;
+    ctx->wasm_stack_size = size;
+    ctx->wasm_saved_sp   = base_ptr + size;
+    return WasmResult::kOk;
+}
+
+void WasmEngine::FreeThreadWasmStack(WasmThreadContext* ctx) noexcept {
+    if (!ctx->wasm_stack_base) return;
+    WasmModuleInstance* mod = ctx->start_module;
+    if (!mod || mod->cabi_realloc_func_idx == UINT32_MAX) return;
+
+    ctx->stack[ctx->stack_top++].value.i32 = static_cast<int32_t>(ctx->wasm_stack_base);
+    ctx->stack[ctx->stack_top++].value.i32 = static_cast<int32_t>(ctx->wasm_stack_size);
+    ctx->stack[ctx->stack_top++].value.i32 = 16;
+    ctx->stack[ctx->stack_top++].value.i32 = 0;
+    ExecuteInternal(mod, mod->cabi_realloc_func_idx);
+    ctx->stack_top = ctx->call_stack_top = 0;
+    ctx->wasm_stack_base = ctx->wasm_stack_size = ctx->wasm_saved_sp = 0;
+}
+
+void WasmEngine::SaveThreadStackPointer(WasmThreadContext* ctx) noexcept {
+    WasmModuleInstance* mod = ctx->start_module;
+    if (!mod || mod->stack_ptr_global_idx == UINT32_MAX) return;
+    ctx->wasm_saved_sp = static_cast<uint32_t>(
+        mod->globals[mod->stack_ptr_global_idx].value.value.i32);
+}
+
+void WasmEngine::RestoreThreadStackPointer(WasmThreadContext* ctx) noexcept {
+    if (!ctx->wasm_saved_sp) return;
+    WasmModuleInstance* mod = ctx->start_module;
+    if (!mod || mod->stack_ptr_global_idx == UINT32_MAX) return;
+    mod->globals[mod->stack_ptr_global_idx].value.value.i32 =
+        static_cast<int32_t>(ctx->wasm_saved_sp);
 }
 
 uint32_t WasmEngine::CreateHostThread(WasmModuleInstance* module, uint32_t func_index) noexcept {
