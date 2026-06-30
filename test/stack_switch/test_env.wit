@@ -1,0 +1,7 @@
+package embwasm:ss-test;
+
+/// @cpp-init: embwasm::SSTestEnvInit
+/// @cpp-deinit: embwasm::SSTestEnvDeinit
+/// @cpp-header: "host_apis.hpp"
+world ss-test-env {
+}
