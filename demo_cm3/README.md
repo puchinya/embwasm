@@ -20,7 +20,7 @@ demo_cm3/
 ├── bench_main.cpp                  # ベンチマークタスク
 ├── main.c                          # FreeRTOS スケジューラ起動
 ├── startup.c                       # ベクタテーブル・Reset_Handler
-├── syscalls.c                      # newlib _write / _sbrk
+├── syscalls.c                      # picolibc write / _exit
 ├── uart.c / uart.h                 # STM32 USART1 ドライバ
 └── host_apis.hpp
 ```
@@ -38,8 +38,11 @@ demo_cm3/
 
 ## ビルド要件
 
-- **Clang / LLVM** (`/opt/homebrew/bin/clang`)
-- **arm-none-eabi-gcc** (sysroot として使用、`/opt/homebrew/Cellar/arm-none-eabi-gcc/10.3-2021.10/gcc`)
+- **Arm LLVM Embedded Toolchain for Arm**  
+  [GitHub Releases](https://github.com/ARM-software/LLVM-embedded-toolchain-for-Arm/releases) から  
+  `LLVM-ET-Arm-<version>-Darwin-AArch64.tar.xz` をダウンロードして `/opt/LLVM-ET-Arm` に展開する。  
+  別パスに配置する場合は `cmake -DLLVM_ET=/path/to/toolchain` で指定。  
+  (picolibc + libc++ + compiler-rt を含む。arm-none-eabi-gcc は不要)
 - **CMake** 3.20 以上
 - **Python 3**
 - **Renode** (`~/Applications/Renode.app` または `/Applications/Renode.app`)

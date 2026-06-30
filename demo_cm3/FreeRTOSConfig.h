@@ -37,3 +37,5 @@
 #define INCLUDE_vTaskDelete               1
 #define INCLUDE_vTaskSuspend              1
 #define INCLUDE_xTaskGetCurrentTaskHandle 1
+
+#define configUSE_PICOLIBC_TLS  1

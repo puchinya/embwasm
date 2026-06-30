@@ -54,7 +54,9 @@ SECTIONS
     . = ALIGN(8);
     _end = .;
     PROVIDE(end = .);
+    __heap_start = .;
     . = . + 0x8000;
+    __heap_end = .;
     . = ALIGN(8);
     _estack = ORIGIN(SRAM) + LENGTH(SRAM);
   } > SRAM
