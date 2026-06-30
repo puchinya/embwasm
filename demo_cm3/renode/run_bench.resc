@@ -1,0 +1,10 @@
+mach create "cm3_bench"
+machine LoadPlatformDescription @demo_cm3/renode/custom_cm3.repl
+
+sysbus LoadELF @demo_cm3/build/bench_cm3.elf
+
+showAnalyzer sysbus.usart1 Antmicro.Renode.Analyzers.LoggingUartAnalyzer
+
+emulation RunFor "00:00:30"
+
+quit

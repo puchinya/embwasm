@@ -59,3 +59,6 @@ wasm_api.h
 .claude/logs/
 .claude/*.log
 .claude/audit-*.log
+
+wasm_api_impl.hpp
+wasm_api_impl.cpp

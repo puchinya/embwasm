@@ -104,6 +104,10 @@ struct WasmThreadContext {
     WasmResult execution_result;  ///< 実行結果（kTerminated 後に GetThreadResult() で取得可能）。
     bool requires_destroy; ///< true なら DestroyHostThread() を呼ぶまでスロットを自動再利用しない。
 
+    uint32_t wasm_stack_base; ///< ワーカーが確保した WASM スタックの base ptr（0 = 未確保/メインスレッド）。
+    uint32_t wasm_stack_size; ///< 確保済みスタックサイズ（0 = 未確保）。
+    uint32_t wasm_saved_sp;   ///< 保存済み __stack_pointer 値（0 = 初回実行前）。
+
     /// @brief コンテキストを初期状態（`kTerminated`）にリセットします。
     void Reset() noexcept {
         id = 0;
@@ -121,6 +125,9 @@ struct WasmThreadContext {
         execution_result    = WasmResult::kOk;
         requires_destroy    = false;
         list_node.next = list_node.prev = nullptr;
+        wasm_stack_base = 0;
+        wasm_stack_size = 0;
+        wasm_saved_sp   = 0;
     }
 
     bool Init(WasmMemoryPool& pool, const WasmEngineConfig& cfg) noexcept;
@@ -134,6 +141,7 @@ struct WasmEngineConfig {
     uint32_t stack_size       = kDefaultUnifiedStackSize;
     uint32_t call_stack_size  = kDefaultWasmCallStackSize;
     uint32_t labels_pool_size = kDefaultLabelsPoolSize;
+    uint32_t thread_wasm_stack_size = 65536; ///< __data_end 未エクスポート時のフォールバックスタックサイズ。
 };
 
 /// @brief WASM 関数の種別。
@@ -275,6 +283,11 @@ struct WasmModuleInstance {
 
     int32_t start_function_index; ///< Start セクションで指定された関数インデックス（-1 = なし）。
     uint32_t self_index;          ///< modules_[] 上の自身のインデックス。EncodeFuncRef で使用。
+
+    uint32_t stack_ptr_global_idx;  ///< __stack_pointer グローバルのインデックス。UINT32_MAX = 不在。
+    uint32_t cabi_realloc_func_idx; ///< cabi_realloc 関数インデックス。UINT32_MAX = 不在。
+    uint32_t data_end_global_idx;   ///< __data_end グローバルのインデックス。UINT32_MAX = 不在。
+    uint32_t thread_stack_size;     ///< Validate 時に計算した 1 スレッド分のスタックサイズ（bytes）。
 
     /// @brief 線形メモリの先頭ポインタを返します。
     uint8_t *GetLinearMemory() const noexcept {
@@ -457,6 +470,9 @@ public:
     WasmResult Run() noexcept;
     void Stop() noexcept;
 
+    bool HasReadyThread() noexcept;
+    WasmResult Step() noexcept;
+
     uint32_t SetupMainThread(WasmModuleInstance* mod, uint32_t func_index) noexcept;
 
     WasmThreadContext* GetMainThreadContext() noexcept {
@@ -582,10 +598,13 @@ private:
     }
 
     WasmResult RunInternal(RunInternalFlags flags) noexcept;
-    WasmResult Step() noexcept;
-    bool HasReadyThread() noexcept;
     uint32_t ComputeMinSleepTimeout() noexcept;
     void PollSleeps() noexcept;
+
+    WasmResult AllocThreadWasmStack(WasmThreadContext* ctx) noexcept;
+    void FreeThreadWasmStack(WasmThreadContext* ctx) noexcept;
+    static void SaveThreadStackPointer(WasmThreadContext* ctx) noexcept;
+    static void RestoreThreadStackPointer(WasmThreadContext* ctx) noexcept;
 #else
     WasmThreadContext* ctx_;
 #endif

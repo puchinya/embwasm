@@ -9,8 +9,11 @@
 #include "wasm_engine.hpp"
 #include "wasm_platform.hpp"
 #include "wasm_types.hpp"
-#include "FreeRTOS.hpp"
-#include "task.hpp"
+
+extern "C" {
+#include "FreeRTOS.h"
+#include "task.h"
+}
 
 namespace embwasm {
 
