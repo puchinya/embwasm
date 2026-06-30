@@ -12,7 +12,7 @@ if(NOT DEFINED LLVM_ET)
 endif()
 
 # armv7m, soft-float, no FP, no OS syscalls (we provide write/_exit)
-set(MULTILIB armv7m_soft_nofp_nosys)
+set(MULTILIB armv7m_soft_nofp)
 set(RUNTIME_DIR ${LLVM_ET}/lib/clang-runtimes/arm-none-eabi/${MULTILIB})
 
 set(CMAKE_C_COMPILER   ${LLVM_ET}/bin/clang       CACHE STRING "")
@@ -42,5 +42,5 @@ set(CMAKE_EXE_LINKER_FLAGS
     -nostartfiles \
     -rtlib=compiler-rt \
     --unwindlib=none \
-    -Wl,--start-group -lc -lm -lc++ -lc++abi -Wl,--end-group"
+    -Wl,--start-group -lc -lm -lc++ -lc++abi -ldummyhost -Wl,--end-group"
     CACHE STRING "" FORCE)

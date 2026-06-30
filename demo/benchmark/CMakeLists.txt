@@ -145,7 +145,9 @@ target_include_directories(embwasm_demo_benchmark PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
 )
 
-if(MSVC)
+if(CMAKE_CROSSCOMPILING)
+    embwasm_cm3_freertos_setup_firmware(embwasm_demo_benchmark STACK_SIZE 8192)
+elseif(MSVC)
     target_compile_options(embwasm_demo_benchmark PRIVATE /W4 /WX)
 else()
     target_compile_options(embwasm_demo_benchmark PRIVATE -Wall -Wextra -Wpedantic -Werror -fstack-usage)

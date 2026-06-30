@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.11)
-project(embwasm CXX)
+cmake_minimum_required(VERSION 3.20)
+project(embwasm C CXX)
 
 cmake_policy(SET CMP0079 NEW)
 
@@ -14,9 +14,15 @@ if(EMBWASM_BUILD_OFFICIAL_SPEC_TESTS)
     add_compile_definitions(EMBWASM_USE_SPEC_CONFIG)
 endif()
 
-add_subdirectory(wasm_host_modules/src/sockets)
+if(NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(wasm_host_modules/src/sockets)
+endif()
 add_subdirectory(wasm_host_modules/src/sys_rt/stdio)
 add_subdirectory(wasm_host_modules/src/sys_rt/system)
+
+if(USE_FREERTOS)
+    add_subdirectory(targets/cm3-freertos)
+endif()
 
 add_subdirectory(src)
 
@@ -29,6 +35,12 @@ endif()
 if(TARGET embwasm_system)
     target_link_libraries(embwasm PUBLIC embwasm_system)
 endif()
+if(TARGET freertos)
+    # wasm_platform.cpp が FreeRTOS.h を必要とするため伝播 (CMP0079 NEW)
+    target_link_libraries(embwasm PUBLIC freertos)
+endif()
 
 add_subdirectory(demo)
-add_subdirectory(test)
+if(NOT CMAKE_CROSSCOMPILING)
+    add_subdirectory(test)
+endif()

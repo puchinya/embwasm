@@ -1,0 +1,52 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "macos-clang",
+      "displayName": "macOS – Clang",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "linux-clang",
+      "displayName": "Linux – Clang",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "windows-clang",
+      "displayName": "Windows – Clang",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "cortex_m3-free_rtos-clang_et",
+      "displayName": "Cortex-M3 + FreeRTOS (LLVM Embedded Toolchain)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "${sourceDir}/targets/cm3-freertos/cmake/arm-clang-toolchain.cmake",
+      "cacheVariables": {
+        "USE_FREERTOS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "macos-clang",                   "configurePreset": "macos-clang" },
+    { "name": "linux-clang",                   "configurePreset": "linux-clang" },
+    { "name": "windows-clang",                 "configurePreset": "windows-clang" },
+    { "name": "cortex_m3-free_rtos-clang_et",  "configurePreset": "cortex_m3-free_rtos-clang_et" }
+  ]
+}

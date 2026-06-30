@@ -137,8 +137,9 @@ add_executable(embwasm_demo_hello main.cpp host_apis.cpp ${GEN_CPP} ${GEN_H} ${W
 target_link_libraries(embwasm_demo_hello PRIVATE embwasm)
 target_include_directories(embwasm_demo_hello PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
 
-# 警告レベルを高く設定し、警告をエラーとして処理
-if(MSVC)
+if(CMAKE_CROSSCOMPILING)
+    embwasm_cm3_freertos_setup_firmware(embwasm_demo_hello)
+elseif(MSVC)
     target_compile_options(embwasm_demo_hello PRIVATE /W4 /WX)
 else()
     target_compile_options(embwasm_demo_hello PRIVATE -Wall -Wextra -Wpedantic -Werror -fstack-usage)

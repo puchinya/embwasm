@@ -1,7 +1,7 @@
 MEMORY
 {
-  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 1024K
-  SRAM  (rwx) : ORIGIN = 0x20000000, LENGTH = 512K
+  FLASH (rx)  : ORIGIN = 0x08000000, LENGTH = 4096K
+  SRAM  (rwx) : ORIGIN = 0x20000000, LENGTH = 4096K
 }
 
 ENTRY(Reset_Handler)
@@ -55,7 +55,7 @@ SECTIONS
     _end = .;
     PROVIDE(end = .);
     __heap_start = .;
-    . = . + 0x8000;
+    . = . + 0x100000;   /* 1MB */
     __heap_end = .;
     . = ALIGN(8);
     _estack = ORIGIN(SRAM) + LENGTH(SRAM);

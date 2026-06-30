@@ -1,0 +1,10 @@
+mach create "@FIRMWARE_NAME@"
+machine LoadPlatformDescription @targets/cm3-freertos/renode/custom_cm3.repl
+
+sysbus LoadELF "@ELF_ABSOLUTE_PATH@"
+
+showAnalyzer sysbus.usart1 Antmicro.Renode.Analyzers.LoggingUartAnalyzer
+
+emulation RunFor "00:01:00"
+
+quit

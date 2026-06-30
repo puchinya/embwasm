@@ -9,7 +9,7 @@ extern uint32_t _estack;
 extern uint32_t _init_array_start;
 extern uint32_t _init_array_end;
 
-extern int main(void);
+extern void freertos_start(void);
 
 void Reset_Handler(void);
 void Default_Handler(void);
@@ -68,7 +68,7 @@ void Reset_Handler(void) {
     while (dst < &_ebss) *dst++ = 0;
 
     call_init_array();
-    main();
+    freertos_start();
     while (1) {}
 }
 
