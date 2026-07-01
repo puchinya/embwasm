@@ -23,6 +23,7 @@
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
 #define configUSE_TIMERS                0
 #define configCHECK_FOR_STACK_OVERFLOW  2
+#define configUSE_MALLOC_FAILED_HOOK    1
 
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY       15
 #define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY   5

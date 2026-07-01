@@ -1,8 +1,9 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "uart.h"
+#include "renode_exit.h"
+#include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 
 #ifndef APP_TASK_STACK_SIZE
 #  define APP_TASK_STACK_SIZE 4096
@@ -24,7 +25,7 @@ static void app_main_task(void* param) {
     (void)param;
     call_init_array();
     main(0, NULL);
-    vTaskDelete(NULL);
+    renode_exit(RENODE_EXIT_OK);
 }
 
 void freertos_start(void) {
@@ -35,9 +36,10 @@ void freertos_start(void) {
 }
 
 void vApplicationMallocFailedHook(void) {
-    printf("MALLOC FAILED\r\n"); while (1) {}
+    renode_exit(RENODE_EXIT_MALLOC_FAILED);
 }
 void vApplicationStackOverflowHook(TaskHandle_t t, char* n) {
-    (void)t; (void)n; printf("STACK OVERFLOW\r\n"); while (1) {}
+    (void)t; (void)n;
+    renode_exit(RENODE_EXIT_STACK_OVERFLOW);
 }
 void vApplicationIdleHook(void) {}

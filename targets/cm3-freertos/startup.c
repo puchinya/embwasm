@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include "renode_exit.h"
 
 extern uint32_t _sidata;
 extern uint32_t _sdata;
@@ -64,9 +65,6 @@ void Reset_Handler(void) {
 
 void Default_Handler(void) { while (1) {} }
 
-extern void uart_putchar(char c);
 void HardFault_Handler(void) {
-    const char *msg = "HardFault!\r\n";
-    while (*msg) uart_putchar(*msg++);
-    while (1) {}
+    renode_exit(RENODE_EXIT_HARDFAULT);
 }

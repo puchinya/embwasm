@@ -5,6 +5,22 @@ sysbus LoadELF "@ELF_ABSOLUTE_PATH@"
 
 showAnalyzer sysbus.usart1 Antmicro.Renode.Analyzers.LoggingUartAnalyzer
 
-emulation RunFor "00:01:00"
+# main() returned normally -> stop the emulation and exit Renode.
+sysbus.usart1 AddLineHook "[RENODE_EXIT] OK" "self.Log(LogLevel.Info, 'demo finished normally'); monitor.Parse('quit')"
+
+# Fault paths (HardFault / FreeRTOS stack overflow / malloc failure) signal
+# the same way but are logged as errors so the abnormal exit is visible.
+sysbus.usart1 AddLineHook "[RENODE_EXIT] HARDFAULT" "self.Log(LogLevel.Error, 'demo terminated abnormally: HardFault'); monitor.Parse('quit')"
+sysbus.usart1 AddLineHook "[RENODE_EXIT] STACK_OVERFLOW" "self.Log(LogLevel.Error, 'demo terminated abnormally: FreeRTOS stack overflow'); monitor.Parse('quit')"
+sysbus.usart1 AddLineHook "[RENODE_EXIT] MALLOC_FAILED" "self.Log(LogLevel.Error, 'demo terminated abnormally: FreeRTOS malloc failed'); monitor.Parse('quit')"
+
+start
+
+# Keep this thread busy (instead of reading further commands from stdin,
+# which returns EOF immediately under non-interactive/CI invocation and
+# would quit before the firmware finishes). The line hooks above call
+# monitor.Parse('quit') as soon as a sentinel appears, so this only acts
+# as an upper bound.
+python "import time; time.sleep(600)"
 
 quit

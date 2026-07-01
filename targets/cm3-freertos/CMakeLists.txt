@@ -20,6 +20,7 @@ add_library(embwasm_cm3_bsp OBJECT
     ${CM3_DIR}/syscalls.c
     ${CM3_DIR}/uart.c
     ${CM3_DIR}/freertos_start.c
+    ${CM3_DIR}/renode_exit.c
 )
 target_include_directories(embwasm_cm3_bsp PUBLIC ${CM3_DIR})
 target_link_libraries(embwasm_cm3_bsp PUBLIC freertos)
