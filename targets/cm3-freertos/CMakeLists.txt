@@ -15,7 +15,7 @@ target_include_directories(freertos PUBLIC
 )
 target_compile_definitions(freertos INTERFACE USE_FREERTOS)
 
-add_library(embwasm_cm3_bsp STATIC
+add_library(embwasm_cm3_bsp OBJECT
     ${CM3_DIR}/startup.c
     ${CM3_DIR}/syscalls.c
     ${CM3_DIR}/uart.c

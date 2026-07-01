@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -5,6 +6,16 @@
 #include "task.h"
 
 extern void uart_putchar(char c);
+
+/* picolibc FILE backend — routes printf/std::cout to UART */
+static int uart_put(char c, FILE *fp) { (void)fp; uart_putchar(c); return (unsigned char)c; }
+static int uart_get(FILE *fp)          { (void)fp; return EOF; }
+static int uart_flush(FILE *fp)        { (void)fp; return 0; }
+
+static FILE uart_file = FDEV_SETUP_STREAM(uart_put, uart_get, uart_flush, __SWR | __SRD);
+FILE *const stdout = &uart_file;
+FILE *const stderr = &uart_file;
+FILE *const stdin  = &uart_file;
 
 ssize_t write(int fd, const void *buf, size_t count) {
     if (fd == 1 || fd == 2) {

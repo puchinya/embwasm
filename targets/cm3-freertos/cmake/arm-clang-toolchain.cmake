@@ -42,5 +42,5 @@ set(CMAKE_EXE_LINKER_FLAGS
     -nostartfiles \
     -rtlib=compiler-rt \
     --unwindlib=none \
-    -Wl,--start-group -lc -lm -lc++ -lc++abi -ldummyhost -Wl,--end-group"
+    -Wl,--start-group -lc -lm -lc++ -lc++abi -Wl,--end-group -ldummyhost"
     CACHE STRING "" FORCE)
