@@ -1573,9 +1573,12 @@ namespace embwasm {
 
                 case 0x1C: {
                     // select t*
+                    if (ip >= limit) { result = WasmResult::kErrorValidationFailed; goto cleanup; }
                     uint32_t tc = DecodeVarUint32(ip, limit);
-                    if (tc <= static_cast<uint32_t>(limit - ip)) ip += tc;
-                    else ip = limit;
+                    if (tc > static_cast<uint32_t>(limit - ip)) {
+                        result = WasmResult::kErrorValidationFailed; goto cleanup;
+                    }
+                    ip += tc;
                     if (stack_depth < 2) { if (!is_unreachable) { result = WasmResult::kErrorValidationFailed; goto cleanup; } } else {
                         stack_depth -= 2;
                     }
@@ -3518,15 +3521,7 @@ namespace embwasm {
 
                     case 0x1C: {
                         // select (t*)
-                        if (ip >= limit) {
-                            result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
-                            goto done;
-                        }
                         uint32_t type_count = DecodeVarUint32Fast(ip);
-                        if (type_count > static_cast<std::size_t>(limit - ip)) {
-                            result = OnTrap(WasmResult::kErrorExecuteRuntimeError);
-                            goto done;
-                        }
                         ip += type_count;
                         int32_t cond = stack[--sp].value.i32;
                         WasmValue val2 = stack[--sp];
